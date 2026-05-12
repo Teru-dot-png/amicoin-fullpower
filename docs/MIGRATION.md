@@ -31,7 +31,7 @@ If your old Pad is lost or destroyed but you have a written backup of the key, p
 On the new Ender Router Pad, run the installer:
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin/main/installpad.lua
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installpad.lua
 ```
 
 Reboot the Pad. The Wallet App will launch automatically.

@@ -3,9 +3,9 @@
 -- Run this script on the node computer to download all required files.
 -- Usage: paste this file into the computer then run it, or fetch it with:
 --   pastebin run <code>   (if hosted on Pastebin)
---   wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin/main/installnode.lua
+--   wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installnode.lua
 
-local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin/main"
+local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
     -- Shared library

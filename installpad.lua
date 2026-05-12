@@ -4,7 +4,7 @@
 -- Usage:
 --   wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin/main/installpad.lua
 
-local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin/main"
+local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
     -- Shared library

@@ -61,7 +61,7 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 On the Advanced Computer (with Ender Router attached):
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin/main/installnode.lua
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installnode.lua
 ```
 
 Type `YES` when prompted, then reboot. The node will print its **XTEA Node Key** — write this down.
@@ -71,7 +71,7 @@ Type `YES` when prompted, then reboot. The node will print its **XTEA Node Key**
 On each Ender Router Pad:
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin/main/installpad.lua
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installpad.lua
 ```
 
 Press Enter, then reboot. The Wallet App launches automatically.

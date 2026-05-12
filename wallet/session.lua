@@ -5,7 +5,7 @@
 -- The session file is encrypted with a device-derived key (based on the
 -- computer's ID) so it cannot trivially be copied to another Pad and read.
 
-local xtea = require("/shared/xtea")
+local xtea = require("shared.xtea")
 
 local session = {}
 

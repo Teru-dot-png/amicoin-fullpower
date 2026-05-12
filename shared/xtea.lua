@@ -13,13 +13,18 @@ local function u32(n)
     return n % 0x100000000
 end
 
+-- bit32.bxor is the XOR function in Lua 5.2 / CC:Tweaked.
+local bxor = bit32.bxor
+
 -- Encrypt a 64-bit block (two 32-bit halves v0, v1) with the 128-bit key.
 function xtea.encryptBlock(v0, v1, key)
     local sum = 0
     for _ = 1, NUM_ROUNDS do
-        v0 = u32(v0 + u32(u32(u32(v1 * 16) ~ u32(v1 / 32)) + v1) ~ u32(sum + key[u32(sum % 4) + 1]))
+        local t1 = bxor(u32(v1 * 16), math.floor(v1 / 32))
+        v0 = u32(v0 + bxor(u32(t1 + v1), u32(sum + key[(sum % 4) + 1])))
         sum = u32(sum + DELTA)
-        v1 = u32(v1 + u32(u32(u32(v0 * 16) ~ u32(v0 / 32)) + v0) ~ u32(sum + key[u32(math.floor(sum / 0x800) % 4) + 1]))
+        local t2 = bxor(u32(v0 * 16), math.floor(v0 / 32))
+        v1 = u32(v1 + bxor(u32(t2 + v0), u32(sum + key[(math.floor(sum / 0x800) % 4) + 1])))
     end
     return v0, v1
 end
@@ -28,9 +33,11 @@ end
 function xtea.decryptBlock(v0, v1, key)
     local sum = u32(DELTA * NUM_ROUNDS)
     for _ = 1, NUM_ROUNDS do
-        v1 = u32(v1 - u32(u32(u32(v0 * 16) ~ u32(v0 / 32)) + v0) ~ u32(sum + key[u32(math.floor(sum / 0x800) % 4) + 1]))
+        local t2 = bxor(u32(v0 * 16), math.floor(v0 / 32))
+        v1 = u32(v1 - bxor(u32(t2 + v0), u32(sum + key[(math.floor(sum / 0x800) % 4) + 1])))
         sum = u32(sum - DELTA)
-        v0 = u32(v0 - u32(u32(u32(v1 * 16) ~ u32(v1 / 32)) + v1) ~ u32(sum + key[u32(sum % 4) + 1]))
+        local t1 = bxor(u32(v1 * 16), math.floor(v1 / 32))
+        v0 = u32(v0 - bxor(u32(t1 + v1), u32(sum + key[(sum % 4) + 1])))
     end
     return v0, v1
 end

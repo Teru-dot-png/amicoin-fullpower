@@ -3,7 +3,7 @@
 -- Every outgoing packet is XTEA-encrypted with the wallet's own secret key.
 -- The node key (shared during node setup) is used to decrypt replies.
 
-local xtea = require("/shared/xtea")
+local xtea = require("shared.xtea")
 
 local comms = {}
 

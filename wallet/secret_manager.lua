@@ -44,7 +44,7 @@ local function deriveAddress(keyHex)
     end
     -- A second diffusion pass
     for i = 1, 64 do
-        expanded[i] = (expanded[i] ~ expanded[(i % 64) + 1]) % 256
+        expanded[i] = bit32.bxor(expanded[i], expanded[(i % 64) + 1]) % 256
     end
     local addr = ""
     for _, b in ipairs(expanded) do

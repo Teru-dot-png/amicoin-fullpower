@@ -188,7 +188,7 @@ local function screenDashboard(secretKey, address, nodeKey)
         msg("Address: " .. shortAddr, 5, colors.lightGray)
         if balance then
             local ami = balance / 1000000
-            msg(string.format("Balance: %.6f AMI  (%d µAMI)", ami, balance), 6, colors.green)
+            msg(string.format("Balance: %.6f AMI  (%d uAMI)", ami, balance), 6, colors.green)
         elseif balErr then
             msg("Balance: [" .. balErr .. "]", 6, colors.red)
         else

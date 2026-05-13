@@ -11,7 +11,7 @@
 -- Packet format (JSON, encrypted with sender's secret key, 128-bit):
 --   { cmd="HEARTBEAT", from="<64-hex address>" }
 --   { cmd="BALANCE",   from="<address>", nonce=<int> }
---   { cmd="TRANSFER",  from="<address>", to="<address>", amount=<int µAMI>, nonce=<int> }
+--   { cmd="TRANSFER",  from="<address>", to="<address>", amount=<int uAMI>, nonce=<int> }
 --
 -- Security note: XTEA here provides confidentiality in transit.
 -- The node does NOT store private keys.  Address authenticity relies on
@@ -140,7 +140,7 @@ local function statusLoop()
         local snap   = ledger.snapshot()
         local total  = 0
         for _, v in pairs(snap) do total = total + v end
-        print(string.format("[Node] Active wallets: %d | Total supply: %d µAMI", #active, total))
+        print(string.format("[Node] Active wallets: %d | Total supply: %d uAMI", #active, total))
     end
 end
 

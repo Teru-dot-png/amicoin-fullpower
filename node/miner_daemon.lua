@@ -45,7 +45,7 @@ end
 -- Main reward loop.  Call this once; it blocks forever using os.sleep().
 function daemon.run()
     print("[Miner] Proof-of-Uptime daemon started.")
-    print("[Miner] Reward interval: " .. REWARD_INTERVAL .. "s | Base rate: " .. BASE_RATE .. " µAMI/tick")
+    print("[Miner] Reward interval: " .. REWARD_INTERVAL .. "s | Base rate: " .. BASE_RATE .. " uAMI/tick")
 
     while true do
         os.sleep(REWARD_INTERVAL)
@@ -65,7 +65,7 @@ function daemon.run()
         end
 
         if rewarded > 0 then
-            print(string.format("[Miner] Tick #%d | Rate: %d µAMI | Rewarded %d wallet(s)",
+            print(string.format("[Miner] Tick #%d | Rate: %d uAMI | Rewarded %d wallet(s)",
                 totalTicks, rate, rewarded))
         end
     end

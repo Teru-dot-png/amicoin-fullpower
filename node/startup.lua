@@ -11,7 +11,9 @@
 -- Packet format (JSON, encrypted with sender's secret key, 128-bit):
 --   { cmd="HEARTBEAT", from="<64-hex address>" }
 --   { cmd="BALANCE",   from="<address>", nonce=<int> }
---   { cmd="TRANSFER",  from="<address>", to="<address>", amount=<int uAMI>, nonce=<int> }
+--   { cmd="TRANSFER",  from="<address>", to="<address>" OR toName="PlayerName", amount=<int uAMI>, nonce=<int> }
+--   { cmd="REGISTER",  from="<address>", name="PlayerName" }
+--   { cmd="LOOKUP",    from="<address>", name="PlayerName" }
 --
 -- Security note: XTEA here provides confidentiality in transit.
 -- The node does NOT store private keys.  Address authenticity relies on
@@ -106,8 +108,17 @@ local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
         router.transmit(replyChannel, MESH_CHANNEL, enc)
 
     elseif cmd == "TRANSFER" then
+        -- Recipient can be a raw 64-hex address OR a player name via toName.
         local to     = pkt.to
         local amount = pkt.amount
+        if not to and pkt.toName then
+            to = ledger.lookupName(pkt.toName)
+            if not to then
+                local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Player '" .. pkt.toName .. "' not found"}), nodeKey)
+                router.transmit(replyChannel, MESH_CHANNEL, err)
+                return
+            end
+        end
         if type(to) ~= "string" or #to ~= 64 then
             local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid recipient"}), nodeKey)
             router.transmit(replyChannel, MESH_CHANNEL, err)
@@ -127,8 +138,28 @@ local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
 
     elseif cmd == "REGISTER" then
         ledger.register(from)
+        if type(pkt.name) == "string" and #pkt.name > 0 then
+            ledger.registerName(pkt.name, from)
+            print("[Net] Registered: " .. pkt.name .. " -> " .. from:sub(1,12) .. "...")
+        end
         local resp = xtea.encrypt(textutils.serialiseJSON({ok=true}), nodeKey)
         router.transmit(replyChannel, MESH_CHANNEL, resp)
+
+    elseif cmd == "LOOKUP" then
+        local name = pkt.name
+        if type(name) ~= "string" or #name == 0 then
+            local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Missing name"}), nodeKey)
+            router.transmit(replyChannel, MESH_CHANNEL, err)
+            return
+        end
+        local addr = ledger.lookupName(name)
+        local resp
+        if addr then
+            resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
+        else
+            resp = textutils.serialiseJSON({ok=false, err="Player '" .. name .. "' not found"})
+        end
+        router.transmit(replyChannel, MESH_CHANNEL, xtea.encrypt(resp, nodeKey))
     end
 end
 

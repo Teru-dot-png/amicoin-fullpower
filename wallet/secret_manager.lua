@@ -14,6 +14,7 @@ local sm = {}
 
 local KEY_FILE     = "/wallet_data/secret.key"
 local ADDR_FILE    = "/wallet_data/address.txt"
+local NAME_FILE    = "/wallet_data/playername.txt"
 local DATA_DIR     = "/wallet_data"
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,7 +62,8 @@ function sm.exists()
 end
 
 -- Generate a fresh random 128-bit secret key, persist it, and return it.
-function sm.generate()
+-- name: the player's chosen display name (string).
+function sm.generate(name)
     ensureDir()
     math.randomseed(os.epoch("utc"))
     local key = ""
@@ -78,12 +80,18 @@ function sm.generate()
     af.write(addr)
     af.close()
 
+    if type(name) == "string" and #name > 0 then
+        local nf = fs.open(NAME_FILE, "w")
+        nf.write(name)
+        nf.close()
+    end
+
     return key, addr
 end
 
--- Load the existing secret key.  Returns key, address or nil, nil.
+-- Load the existing secret key.  Returns key, address, playerName or nil, nil, nil.
 function sm.load()
-    if not sm.exists() then return nil, nil end
+    if not sm.exists() then return nil, nil, nil end
     local kf = fs.open(KEY_FILE, "r")
     local key = kf.readAll():gsub("%s", "")
     kf.close()
@@ -99,7 +107,23 @@ function sm.load()
         af.write(addr)
         af.close()
     end
-    return key, addr
+
+    local name = nil
+    if fs.exists(NAME_FILE) then
+        local nf = fs.open(NAME_FILE, "r")
+        name = nf.readAll():gsub("%s+$", "")
+        nf.close()
+    end
+
+    return key, addr, name
+end
+
+-- Save or update the stored player name.
+function sm.saveName(name)
+    ensureDir()
+    local nf = fs.open(NAME_FILE, "w")
+    nf.write(name)
+    nf.close()
 end
 
 -- Import a secret key manually entered by the user (migration).
@@ -130,6 +154,7 @@ end
 function sm.wipe()
     if fs.exists(KEY_FILE)  then fs.delete(KEY_FILE)  end
     if fs.exists(ADDR_FILE) then fs.delete(ADDR_FILE) end
+    if fs.exists(NAME_FILE) then fs.delete(NAME_FILE) end
 end
 
 -- Derive address from key without storing anything.

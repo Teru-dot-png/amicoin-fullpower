@@ -67,7 +67,7 @@ end
 local function waitKey()
     term.setTextColor(colors.gray)
     term.setCursorPos(1, H)
-    term.write("Press any key…")
+    term.write("Press any key...")
     os.pullEvent("key")
 end
 
@@ -130,22 +130,29 @@ end
 
 local function screenCreate()
     banner("Create Wallet")
-    msg("Generating your Secret Key…", 5)
-    local secretKey, address = sm.generate()
+    msg("Enter your Minecraft player name:", 5)
+    local playerName = prompt("> ", 7)
+    playerName = playerName:gsub("^%s*(.-)%s*$", "%1")  -- trim
+    if #playerName == 0 then
+        msg("Name cannot be empty!", 9, colors.red)
+        waitKey()
+        return nil, nil, nil
+    end
+    msg("Generating your Secret Key...", 11, colors.yellow)
+    local secretKey, address = sm.generate(playerName)
     os.sleep(0.5)
     cls()
     banner("Your New Wallet")
-    msg("SECRET KEY (write this down!):", 5, colors.red)
-    -- Split key across two lines for readability
-    msg(secretKey:sub(1, 16), 6, colors.yellow)
-    msg(secretKey:sub(17, 32), 7, colors.yellow)
-    msg("PUBLIC ADDRESS:", 9, colors.lightGray)
-    msg(address:sub(1, 32), 10, colors.white)
-    msg(address:sub(33, 64), 11, colors.white)
-    msg("KEEP YOUR SECRET KEY SAFE.", 13, colors.red)
-    msg("Anyone with it controls your coins.", 14, colors.red)
+    msg("Player: " .. playerName, 5, colors.cyan)
+    msg("SECRET KEY (write this down!):", 7, colors.red)
+    msg(secretKey:sub(1, 16), 8, colors.yellow)
+    msg(secretKey:sub(17, 32), 9, colors.yellow)
+    msg("PUBLIC ADDRESS:", 11, colors.lightGray)
+    msg(address:sub(1, 32), 12, colors.white)
+    msg(address:sub(33, 64), 13, colors.white)
+    msg("KEEP YOUR SECRET KEY SAFE.", 15, colors.red)
     waitKey()
-    return secretKey, address
+    return secretKey, address, playerName
 end
 
 local function screenImport()
@@ -156,14 +163,20 @@ local function screenImport()
     if not addr then
         msg("Error: " .. (err or "unknown"), 9, colors.red)
         waitKey()
-        return nil, nil
+        return nil, nil, nil
     end
-    msg("Wallet imported!", 9, colors.green)
+    msg("Key imported! Enter your player name:", 9, colors.green)
+    local playerName = prompt("> ", 11)
+    playerName = playerName:gsub("^%s*(.-)%s*$", "%1")
+    if #playerName > 0 then
+        sm.saveName(playerName)
+    end
+    msg("Wallet ready!", 13, colors.green)
     os.sleep(1)
-    return raw:gsub("%s",""):lower(), addr
+    return raw:gsub("%s",""):lower(), addr, playerName
 end
 
-local function screenDashboard(secretKey, address, nodeKey)
+local function screenDashboard(secretKey, address, nodeKey, playerName)
     local balance = nil
     local balErr  = nil
 
@@ -184,22 +197,24 @@ local function screenDashboard(secretKey, address, nodeKey)
 
     local function draw()
         banner("Dashboard")
-        local shortAddr = address:sub(1, 16) .. "…"
-        msg("Address: " .. shortAddr, 5, colors.lightGray)
+        local nameStr = playerName and ("Player: " .. playerName) or "Player: (unknown)"
+        msg(nameStr, 5, colors.cyan)
+        local shortAddr = address:sub(1, 16) .. "..."
+        msg("Addr:   " .. shortAddr, 6, colors.lightGray)
         if balance then
             local ami = balance / 1000000
-            msg(string.format("Balance: %.6f AMI  (%d uAMI)", ami, balance), 6, colors.green)
+            msg(string.format("Balance: %.6f AMI (%d uAMI)", ami, balance), 7, colors.green)
         elseif balErr then
-            msg("Balance: [" .. balErr .. "]", 6, colors.red)
+            msg("Balance: [" .. balErr .. "]", 7, colors.red)
         else
-            msg("Balance: (press R to refresh)", 6, colors.gray)
+            msg("Balance: (press R to refresh)", 7, colors.gray)
         end
-        msg("", 8)
-        msg("  [S] Send coins", 9, colors.cyan)
-        msg("  [R] Refresh balance", 10, colors.cyan)
-        msg("  [E] Export / View Key", 11, colors.cyan)
-        msg("  [N] Set node key", 12, colors.cyan)
-        msg("  [L] Logout", 13, colors.gray)
+        msg("", 9)
+        msg("  [S] Send coins", 10, colors.cyan)
+        msg("  [R] Refresh balance", 11, colors.cyan)
+        msg("  [E] Export / View Key", 12, colors.cyan)
+        msg("  [N] Set node key", 13, colors.cyan)
+        msg("  [L] Logout", 14, colors.gray)
     end
 
     draw()
@@ -213,33 +228,57 @@ local function screenDashboard(secretKey, address, nodeKey)
                 draw()
 
             elseif p1 == keys.s then
-                -- Send screen
+                -- Send screen: accept player name OR raw 64-hex address
                 banner("Send AMI")
-                msg("Recipient address (64 hex):", 5)
-                local to = prompt("> ", 7)
-                to = to:gsub("%s", ""):lower()
-                if #to ~= 64 then
-                    msg("Invalid address.", 9, colors.red)
-                    waitKey()
+                msg("Recipient (player name or address):", 5)
+                local toRaw = prompt("> ", 7)
+                toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
+
+                local toAddr = nil
+                local toLabel = toRaw
+
+                if #toRaw == 64 and toRaw:match("^[0-9a-fA-F]+$") then
+                    -- Raw address
+                    toAddr = toRaw:lower()
                 else
-                    msg("Amount (in AMI):", 10)
-                    local rawAmt = prompt("> ", 12)
+                    -- Player name – look up via node
+                    if not nodeKey then
+                        msg("No node key set.", 9, colors.red)
+                        waitKey()
+                        draw()
+                    else
+                        msg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
+                        local ok, data, err = comms.lookup(secretKey, nodeKey, address, toRaw)
+                        if ok and data and data.address then
+                            toAddr = data.address
+                            msg("Found: " .. toAddr:sub(1,16) .. "...", 10, colors.green)
+                        else
+                            msg("Not found: " .. (err or "unknown"), 9, colors.red)
+                            waitKey()
+                            draw()
+                        end
+                    end
+                end
+
+                if toAddr then
+                    msg("Amount (in AMI):", 11)
+                    local rawAmt = prompt("> ", 13)
                     local amt = tonumber(rawAmt)
                     if not amt or amt <= 0 then
-                        msg("Invalid amount.", 14, colors.red)
+                        msg("Invalid amount.", 15, colors.red)
                         waitKey()
                     else
                         if not nodeKey then
-                            msg("No node key set.", 14, colors.red)
+                            msg("No node key set.", 15, colors.red)
                             waitKey()
                         else
                             local microAmt = math.floor(amt * 1000000)
-                            msg("Sending…", 14, colors.yellow)
-                            local ok, data, err = comms.transfer(secretKey, nodeKey, address, to, microAmt)
+                            msg("Sending to " .. toLabel .. "...", 15, colors.yellow)
+                            local ok, data, err = comms.transfer(secretKey, nodeKey, address, toAddr, microAmt)
                             if ok then
-                                msg("Transfer sent!", 14, colors.green)
+                                msg("Transfer sent!", 15, colors.green)
                             else
-                                msg("Failed: " .. (err or "unknown"), 14, colors.red)
+                                msg("Failed: " .. (err or "unknown"), 15, colors.red)
                             end
                             waitKey()
                             refreshBalance()
@@ -251,12 +290,15 @@ local function screenDashboard(secretKey, address, nodeKey)
             elseif p1 == keys.e then
                 -- Export / View Key
                 banner("Export Secret Key")
-                msg("Your SECRET KEY is:", 5, colors.red)
-                msg(secretKey:sub(1, 16), 7, colors.yellow)
-                msg(secretKey:sub(17, 32), 8, colors.yellow)
-                msg("", 10)
-                msg("Never share this with anyone.", 11, colors.red)
-                msg("Use it to migrate to a new Pad.", 12, colors.lightGray)
+                if playerName then
+                    msg("Player: " .. playerName, 5, colors.cyan)
+                end
+                msg("Your SECRET KEY is:", 7, colors.red)
+                msg(secretKey:sub(1, 16), 9, colors.yellow)
+                msg(secretKey:sub(17, 32), 10, colors.yellow)
+                msg("", 12)
+                msg("Never share this with anyone.", 13, colors.red)
+                msg("Use it to migrate to a new Pad.", 14, colors.lightGray)
                 waitKey()
                 draw()
 
@@ -291,15 +333,16 @@ end
 local function boot()
     cls()
 
-    local secretKey, address
+    local secretKey, address, playerName
 
     -- 1. Try to resume from saved session
     local savedSess = sess.load()
     if savedSess and savedSess.address and savedSess.logged_in then
-        local loadedKey, loadedAddr = sm.load()
+        local loadedKey, loadedAddr, loadedName = sm.load()
         if loadedKey then
-            secretKey = loadedKey
-            address   = loadedAddr
+            secretKey  = loadedKey
+            address    = loadedAddr
+            playerName = loadedName
         end
     end
 
@@ -307,21 +350,21 @@ local function boot()
     if not secretKey then
         if sm.exists() then
             -- Key exists but no session: just load it
-            secretKey, address = sm.load()
+            secretKey, address, playerName = sm.load()
         else
             local choice = screenWelcome()
             if choice == "QUIT" then return end
             if choice == "CREATE" then
-                secretKey, address = screenCreate()
+                secretKey, address, playerName = screenCreate()
             elseif choice == "IMPORT" then
-                secretKey, address = screenImport()
+                secretKey, address, playerName = screenImport()
             end
         end
     end
 
     if not secretKey then
         cls()
-        msg("No wallet available. Rebooting…", 1, colors.red)
+        msg("No wallet available. Rebooting...", 1, colors.red)
         os.sleep(2)
         os.reboot()
         return
@@ -336,16 +379,16 @@ local function boot()
         nodeKey = screenSetNodeKey()
     end
 
-    -- 5. Register wallet on node (idempotent)
+    -- 5. Register wallet (and player name) on node (idempotent)
     if nodeKey then
-        comms.register(secretKey, nodeKey, address)
+        comms.register(secretKey, nodeKey, address, playerName)
     end
 
     -- 6. Start heartbeat
     startHeartbeat(secretKey, address)
 
     -- 7. Main dashboard
-    screenDashboard(secretKey, address, nodeKey)
+    screenDashboard(secretKey, address, nodeKey, playerName)
 
     -- After logout, reboot to clear RAM
     os.reboot()

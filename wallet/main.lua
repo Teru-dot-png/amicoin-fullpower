@@ -105,6 +105,51 @@ local function saveNodes(nodes)
     f.close()
 end
 
+-- ── Self-update ──────────────────────────────────────────────────────────────
+local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+local UPDATE_FILES = {
+    { src="/shared/xtea.lua",       dst="/shared/xtea.lua"    },
+    { src="/wallet/main.lua",       dst="/startup.lua"        },
+    { src="/wallet/secret_manager.lua", dst="/secret_manager.lua" },
+    { src="/wallet/session.lua",    dst="/session.lua"        },
+    { src="/wallet/comms.lua",      dst="/comms.lua"          },
+}
+
+local function screenUpdate()
+    banner("Software Update")
+    pmsg("Downloading latest from GitHub...", 5, colors.yellow)
+    local failed = false
+    local row = 7
+    for _, entry in ipairs(UPDATE_FILES) do
+        pmsg(entry.dst .. "...", row, colors.white)
+        local ok, res = pcall(http.get, REPO_BASE .. entry.src)
+        if ok and res then
+            local content = res.readAll()
+            res.close()
+            local dir = entry.dst:match("^(.*)/[^/]+$")
+            if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+            if fs.exists(entry.dst) then fs.delete(entry.dst) end
+            local f = fs.open(entry.dst, "w")
+            f.write(content)
+            f.close()
+            pmsg(entry.dst .. " OK", row, colors.green)
+        else
+            pmsg(entry.dst .. " FAILED", row, colors.red)
+            failed = true
+        end
+        row = row + 1
+    end
+    if failed then
+        pmsg("Some files failed. Check connection.", row + 1, colors.red)
+        waitKey()
+    else
+        pmsg("Update complete! Rebooting...", row + 1, colors.green)
+        os.sleep(2)
+        os.reboot()
+    end
+end
+
+
 -- ── Screens ───────────────────────────────────────────────────────────────────
 
 local function screenWelcome()
@@ -325,7 +370,9 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         pmsg("  [R] Refresh balance",              base + 1, colors.cyan)
         pmsg("  [E] Export / View Key",            base + 2, colors.cyan)
         pmsg("  [N] Nodes (" .. #nodes .. ")",     base + 3, colors.cyan)
-        pmsg("  [L] Logout",                       base + 4, colors.gray)
+        pmsg("  [U] Update software",              base + 4, colors.cyan)
+        pmsg("  [L] Logout",                       base + 5, colors.gray)
+        pmsg("  [L] Logout",                       base + 5, colors.gray)
     end
 
     draw()
@@ -421,6 +468,10 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
             elseif p1 == keys.n then
                 nodes = screenNodeManager(nodes, secretKey, address)
+                draw()
+
+            elseif p1 == keys.u then
+                screenUpdate()
                 draw()
 
             elseif p1 == keys.l then

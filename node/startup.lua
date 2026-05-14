@@ -255,6 +255,47 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
     end
 end
 
+-- ── Self-update ─────────────────────────────────────────────────────────────
+local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+local UPDATE_FILES = {
+    { src="/shared/xtea.lua",       dst="/shared/xtea.lua"   },
+    { src="/node/startup.lua",      dst="/startup.lua"       },
+    { src="/node/ledger.lua",       dst="/ledger.lua"        },
+    { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
+    { src="/node/xtea.lua",         dst="/xtea.lua"          },
+}
+
+local function selfUpdate()
+    print("")
+    print("[Update] Fetching latest files from GitHub...")
+    local failed = false
+    for _, entry in ipairs(UPDATE_FILES) do
+        io.write("[Update] " .. entry.dst .. " ... ")
+        local ok, res = pcall(http.get, REPO_BASE .. entry.src)
+        if ok and res then
+            local content = res.readAll()
+            res.close()
+            local dir = entry.dst:match("^(.*)/[^/]+$")
+            if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+            if fs.exists(entry.dst) then fs.delete(entry.dst) end
+            local f = fs.open(entry.dst, "w")
+            f.write(content)
+            f.close()
+            print("OK")
+        else
+            print("FAILED")
+            failed = true
+        end
+    end
+    if failed then
+        print("[Update] Some files failed. Will retry on next reboot.")
+    else
+        print("[Update] Complete! Rebooting in 3s...")
+        os.sleep(3)
+        os.reboot()
+    end
+end
+
 -- ── Status display ───────────────────────────────────────────────────────────
 local function statusLoop()
     while true do

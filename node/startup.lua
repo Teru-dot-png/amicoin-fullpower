@@ -26,8 +26,11 @@ local ledger = require("ledger")
 local miner  = require("miner_daemon")
 
 -- ── Configuration ────────────────────────────────────────────────────────────
-local MESH_CHANNEL   = 1337          -- Ender Router channel all nodes share
-local NODE_VERSION   = "1.0.0"
+local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
+local NODE_VERSION    = "1.0.0"
+-- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
+-- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
+local nodeFingerprint = "unknown"
 -- The node's own XTEA key is used to encrypt replies.
 -- On first run a random key is generated and persisted to /data/node_key.txt
 -- Wallets must be told this key during setup (printed on first boot).
@@ -362,8 +365,7 @@ local function fnv1a(s)
 end
 
 -- Compute a combined FNV-1a hash of all running node files.
--- Called once at boot; result is returned to wallets on FINGERPRINT requests.
-local nodeFingerprint = "unknown"
+-- Called once at boot; result is stored in the module-level nodeFingerprint.
 local function computeNodeFingerprint()
     local checkFiles = {
         "/startup.lua", "/ledger.lua", "/miner_daemon.lua",

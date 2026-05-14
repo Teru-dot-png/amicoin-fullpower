@@ -311,7 +311,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                     if n.err then
                         pmsg(string.format("  %s: [err]", n.name:sub(1,12)), 7 + i, colors.red)
                     else
-                        pmsg(string.format("  %s: %.4f AMI", n.name:sub(1,12), n.balance/1000000), 7 + i, colors.lightGray)
+                        pmsg(string.format("  %s: %.6f AMI", n.name:sub(1,12), n.balance/1000000), 7 + i, colors.lightGray)
                     end
                 end
             end

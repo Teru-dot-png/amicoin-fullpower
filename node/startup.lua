@@ -143,17 +143,20 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
 
     local cmd  = pkt.cmd
     local from = pkt.from
+    local who  = from and from:sub(1,10) or "???"
 
     if not from or #from ~= 128 then
-        print("[Net] Missing/invalid 'from' address")
+        print("[Net] Bad 'from' in " .. tostring(cmd) .. " from key " .. senderKey:sub(1,8) .. "...")
         return
     end
 
     if cmd == "HEARTBEAT" then
         miner.heartbeat(from)
+        -- heartbeat is high-frequency, only log occasionally to avoid spam
 
     elseif cmd == "BALANCE" then
         local bal = ledger.getBalance(from)
+        print(string.format("[Net] BALANCE  %s... -> %d uAMI", who, bal))
         local resp = textutils.serialiseJSON({ ok=true, address=from, balance=bal })
         local enc  = xtea.encrypt(resp, nodeKey)
         router.transmit(replyChannel, MESH_CHANNEL, enc)
@@ -181,6 +184,11 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             return
         end
         local success, errMsg = ledger.transfer(from, to, amount)
+        if success then
+            print(string.format("[Net] TRANSFER %s... -> %s... %d uAMI OK", who, to:sub(1,10), amount))
+        else
+            print(string.format("[Net] TRANSFER %s... FAILED: %s", who, errMsg or "?"))
+        end
         local resp = xtea.encrypt(
             textutils.serialiseJSON({ ok=success, err=errMsg }),
             nodeKey
@@ -188,10 +196,12 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         router.transmit(replyChannel, MESH_CHANNEL, resp)
 
     elseif cmd == "REGISTER" then
-        ledger.register(from)
+        local isNew = ledger.register(from)
         if type(pkt.name) == "string" and #pkt.name > 0 then
             ledger.registerName(pkt.name, from)
-            print("[Net] Registered: " .. pkt.name .. " -> " .. from:sub(1,12) .. "...")
+            print(string.format("[Net] REGISTER %s (%s...)", pkt.name, who))
+        elseif isNew then
+            print(string.format("[Net] REGISTER %s... (anonymous)", who))
         end
         local resp = xtea.encrypt(textutils.serialiseJSON({ok=true}), nodeKey)
         router.transmit(replyChannel, MESH_CHANNEL, resp)
@@ -206,8 +216,10 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         local addr = ledger.lookupName(name)
         local resp
         if addr then
+            print(string.format("[Net] LOOKUP   '%s' -> %s...", name, addr:sub(1,10)))
             resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
         else
+            print(string.format("[Net] LOOKUP   '%s' -> not found", name))
             resp = textutils.serialiseJSON({ok=false, err="Player '" .. name .. "' not found"})
         end
         router.transmit(replyChannel, MESH_CHANNEL, xtea.encrypt(resp, nodeKey))
@@ -289,7 +301,11 @@ local function main()
                         local cipher    = rawMsg:sub(sep + 1)
                         if #senderKey == 32 then
                             handlePacket(nodeKey, setupPassword, router, senderKey, cipher, replyChan)
+                        else
+                            print("[Net] Ignored: bad wire format (key=" .. #senderKey .. " chars)")
                         end
+                    else
+                        print("[Net] Ignored: no | separator in message")
                     end
                 end
             end

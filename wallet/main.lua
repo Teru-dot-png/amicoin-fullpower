@@ -1,16 +1,16 @@
 -- wallet/main.lua
--- AmiCoin Wallet App – Ender Router Pad GUI
+-- AmiCoin Wallet App -- Ender Router Pad GUI
 --
 -- Screens:
---   WELCOME   – first run; offers "Create Wallet" or "Import Key"
---   LOGIN     – fast local PIN login (skipped if session is active)
---   DASHBOARD – balance, send, receive, export key, logout
+--   WELCOME      -- first run; Create or Import
+--   DASHBOARD    -- balance (all nodes summed), send, refresh, export key, nodes, logout
+--   NODE MANAGER -- list nodes, add, remove
 --
--- Navigation: use the arrow keys or number keys shown on each screen.
+-- Navigation: number/letter keys shown on each screen.
 
-local sm      = require("secret_manager")
-local sess    = require("session")
-local comms   = require("comms")
+local sm    = require("secret_manager")
+local sess  = require("session")
+local comms = require("comms")
 
 -- ── Display helpers ───────────────────────────────────────────────────────────
 local W, H = term.getSize()
@@ -46,175 +46,249 @@ local function banner(title)
     end
 end
 
-local function prompt(msg, y, secret)
-    term.setCursorPos(1, y)
-    term.setTextColor(colors.yellow)
-    term.write(msg)
-    term.setTextColor(colors.white)
-    if secret then
-        return read("*")
-    else
-        return read()
-    end
-end
-
-local function msg(text, y, color)
+local function pmsg(text, y, color)
     term.setCursorPos(1, y)
     term.setTextColor(color or colors.white)
+    if #text > W then text = text:sub(1, W) end
     term.write(text)
+end
+
+local function prompt(label, y, secret)
+    term.setCursorPos(1, y)
+    term.setTextColor(colors.yellow)
+    term.write(label)
+    term.setTextColor(colors.white)
+    if secret then return read("*") else return read() end
 end
 
 local function waitKey()
     term.setTextColor(colors.gray)
     term.setCursorPos(1, H)
+    term.write(string.rep(" ", W))
+    term.setCursorPos(1, H)
     term.write("Press any key...")
     os.pullEvent("key")
 end
 
--- ── Node key storage ──────────────────────────────────────────────────────────
-local NODE_KEY_FILE = "/wallet_data/node_key.txt"
+-- ── Node list storage ─────────────────────────────────────────────────────────
+-- Format: array of { name="...", key="..." }
+local NODES_FILE = "/wallet_data/nodes.json"
+local LEGACY_KEY = "/wallet_data/node_key.txt"
 
-local function loadNodeKey()
-    if not fs.exists(NODE_KEY_FILE) then return nil end
-    local f = fs.open(NODE_KEY_FILE, "r")
-    local k = f.readAll():gsub("%s", "")
+local function loadNodes()
+    -- Auto-migrate old single node_key.txt
+    if not fs.exists(NODES_FILE) and fs.exists(LEGACY_KEY) then
+        local f = fs.open(LEGACY_KEY, "r")
+        local k = f.readAll():gsub("%s", "")
+        f.close()
+        if #k == 32 then
+            local migrated = { { name="Default Node", key=k } }
+            if not fs.exists("/wallet_data") then fs.makeDir("/wallet_data") end
+            local out = fs.open(NODES_FILE, "w")
+            out.write(textutils.serialiseJSON(migrated))
+            out.close()
+            return migrated
+        end
+    end
+    if not fs.exists(NODES_FILE) then return {} end
+    local f = fs.open(NODES_FILE, "r")
+    local raw = f.readAll()
     f.close()
-    return #k == 32 and k or nil
+    local t = textutils.unserialiseJSON(raw)
+    return type(t) == "table" and t or {}
 end
 
-local function saveNodeKey(k)
+local function saveNodes(nodes)
     if not fs.exists("/wallet_data") then fs.makeDir("/wallet_data") end
-    local f = fs.open(NODE_KEY_FILE, "w")
-    f.write(k)
+    local f = fs.open(NODES_FILE, "w")
+    f.write(textutils.serialiseJSON(nodes))
     f.close()
 end
 
 -- ── Screens ───────────────────────────────────────────────────────────────────
 
-local function screenSetNodeKey()
-    banner("Node Setup")
-    msg("Enter the 32-char XTEA key", 5)
-    msg("shown on your AmiCoin Node.", 6)
-    local k = prompt("> ", 8)
-    k = k:gsub("%s", ""):lower()
-    if #k ~= 32 then
-        msg("Invalid key length!", 10, colors.red)
-        waitKey()
-        return nil
-    end
-    saveNodeKey(k)
-    msg("Node key saved.", 10, colors.green)
-    os.sleep(1)
-    return k
-end
-
 local function screenWelcome()
     banner("Welcome")
-    msg("No wallet found on this Pad.", 5)
-    msg("", 6)
-    msg("  [1] Create a new wallet", 7, colors.cyan)
-    msg("  [2] Import existing key", 8, colors.cyan)
-    msg("  [Q] Quit", 9, colors.gray)
-
+    pmsg("No wallet found on this Pad.", 5)
+    pmsg("", 6)
+    pmsg("  [1] Create a new wallet", 7, colors.cyan)
+    pmsg("  [2] Import existing key",  8, colors.cyan)
+    pmsg("  [Q] Quit",                 9, colors.gray)
     while true do
         local _, key = os.pullEvent("key")
-        if key == keys.one or key == keys.n1 then
-            return "CREATE"
-        elseif key == keys.two or key == keys.n2 then
-            return "IMPORT"
-        elseif key == keys.q then
-            return "QUIT"
+        if key == keys.one or key == keys.n1 then return "CREATE"
+        elseif key == keys.two or key == keys.n2 then return "IMPORT"
+        elseif key == keys.q then return "QUIT"
         end
     end
 end
 
 local function screenCreate()
     banner("Create Wallet")
-    msg("Enter your Minecraft player name:", 5)
+    pmsg("Enter your Minecraft player name:", 5)
     local playerName = prompt("> ", 7)
-    playerName = playerName:gsub("^%s*(.-)%s*$", "%1")  -- trim
+    playerName = playerName:gsub("^%s*(.-)%s*$", "%1")
     if #playerName == 0 then
-        msg("Name cannot be empty!", 9, colors.red)
+        pmsg("Name cannot be empty!", 9, colors.red)
         waitKey()
         return nil, nil, nil
     end
-    msg("Generating your Secret Key...", 11, colors.yellow)
+    pmsg("Generating your Secret Key...", 11, colors.yellow)
     local secretKey, address = sm.generate(playerName)
-    os.sleep(0.5)
+    os.sleep(0.3)
     cls()
     banner("Your New Wallet")
-    msg("Player: " .. playerName, 5, colors.cyan)
-    msg("SECRET KEY (write this down!):", 7, colors.red)
-    msg(secretKey:sub(1, 16), 8, colors.yellow)
-    msg(secretKey:sub(17, 32), 9, colors.yellow)
-    msg("PUBLIC ADDRESS:", 11, colors.lightGray)
-    msg(address:sub(1, 32), 12, colors.white)
-    msg(address:sub(33, 64), 13, colors.white)
-    msg("KEEP YOUR SECRET KEY SAFE.", 15, colors.red)
+    pmsg("Player: " .. playerName, 5, colors.cyan)
+    pmsg("SECRET KEY (write this down!):", 7, colors.red)
+    pmsg(secretKey:sub(1, 16),  8, colors.yellow)
+    pmsg(secretKey:sub(17, 32), 9, colors.yellow)
+    pmsg("PUBLIC ADDRESS:",          11, colors.lightGray)
+    pmsg(address:sub(1, 32),         12, colors.white)
+    pmsg(address:sub(33, 64),        13, colors.white)
+    pmsg("KEEP YOUR SECRET KEY SAFE.", 15, colors.red)
     waitKey()
     return secretKey, address, playerName
 end
 
 local function screenImport()
     banner("Import Key")
-    msg("Paste your 32-char Secret Key:", 5)
+    pmsg("Paste your 32-char Secret Key:", 5)
     local raw = prompt("> ", 7, true)
     local addr, err = sm.importKey(raw)
     if not addr then
-        msg("Error: " .. (err or "unknown"), 9, colors.red)
+        pmsg("Error: " .. (err or "unknown"), 9, colors.red)
         waitKey()
         return nil, nil, nil
     end
-    msg("Key imported! Enter your player name:", 9, colors.green)
+    pmsg("Key imported! Enter player name:", 9, colors.green)
     local playerName = prompt("> ", 11)
     playerName = playerName:gsub("^%s*(.-)%s*$", "%1")
-    if #playerName > 0 then
-        sm.saveName(playerName)
-    end
-    msg("Wallet ready!", 13, colors.green)
+    if #playerName > 0 then sm.saveName(playerName) end
+    pmsg("Wallet ready!", 13, colors.green)
     os.sleep(1)
     return raw:gsub("%s",""):lower(), addr, playerName
 end
 
-local function screenDashboard(secretKey, address, nodeKey, playerName)
-    local balance = nil
-    local balErr  = nil
+-- ── Node Manager ──────────────────────────────────────────────────────────────
+local function screenNodeManager(nodes)
+    while true do
+        banner("Node Manager")
+        if #nodes == 0 then
+            pmsg("No nodes configured.", 5, colors.gray)
+        else
+            for i, node in ipairs(nodes) do
+                local label = string.format("  [%d] %s  (%s...)", i, node.name, node.key:sub(1,8))
+                pmsg(label, 4 + i, colors.white)
+            end
+        end
+        local base = 6 + #nodes
+        pmsg("  [A] Add node",    base,     colors.cyan)
+        if #nodes > 0 then
+            pmsg("  [D] Remove node", base + 1, colors.red)
+        end
+        pmsg("  [B] Back",        base + 2, colors.gray)
+
+        local _, key = os.pullEvent("key")
+
+        if key == keys.a then
+            banner("Add Node")
+            pmsg("Node name (e.g. 'Main Server'):", 5)
+            local nodeName = prompt("> ", 7)
+            nodeName = nodeName:gsub("^%s*(.-)%s*$", "%1")
+            if #nodeName == 0 then nodeName = "Node " .. (#nodes + 1) end
+            pmsg("32-char XTEA key from node boot:", 9)
+            pmsg("(leave blank to cancel)", 10, colors.gray)
+            local k = prompt("> ", 12)
+            k = k:gsub("%s",""):lower()
+            if #k == 0 then
+                pmsg("Cancelled.", 14, colors.gray)
+                os.sleep(0.8)
+            elseif #k ~= 32 then
+                pmsg("Invalid key (must be 32 hex chars).", 14, colors.red)
+                waitKey()
+            else
+                nodes[#nodes + 1] = { name=nodeName, key=k }
+                saveNodes(nodes)
+                pmsg("Node '" .. nodeName .. "' added!", 14, colors.green)
+                os.sleep(0.8)
+            end
+
+        elseif key == keys.d and #nodes > 0 then
+            banner("Remove Node")
+            for i, node in ipairs(nodes) do
+                pmsg(string.format("  [%d] %s", i, node.name), 4 + i, colors.white)
+            end
+            local inp = prompt("Number to remove (0=cancel): ", 6 + #nodes)
+            local idx = tonumber(inp)
+            if idx and idx >= 1 and idx <= #nodes then
+                local removed = nodes[idx].name
+                table.remove(nodes, idx)
+                saveNodes(nodes)
+                pmsg("Removed '" .. removed .. "'.", 8 + #nodes, colors.green)
+                os.sleep(0.8)
+            end
+
+        elseif key == keys.b then
+            return nodes
+        end
+    end
+end
+
+-- ── Dashboard ─────────────────────────────────────────────────────────────────
+local function screenDashboard(secretKey, address, nodes, playerName)
+    local totalBalance = nil
+    local perNode      = {}
+    local balErr       = nil
 
     local function refreshBalance()
-        if not nodeKey then
-            balance = nil
-            balErr  = "Node key not configured"
+        if #nodes == 0 then
+            totalBalance = nil
+            balErr = "No nodes - press [N] to add one"
             return
         end
-        local ok, data, err = comms.getBalance(secretKey, nodeKey, address)
-        if ok and data then
-            balance = data.balance
-            balErr  = nil
-        else
-            balErr = err or "No response from node"
+        balErr = nil
+        local total, breakdown = comms.getAllBalances(secretKey, address, nodes)
+        totalBalance = total
+        perNode      = breakdown
+        local allFailed = true
+        for _, n in ipairs(perNode) do
+            if not n.err then allFailed = false end
+        end
+        if allFailed and #perNode > 0 then
+            balErr = "All nodes unreachable"
         end
     end
 
     local function draw()
         banner("Dashboard")
         local nameStr = playerName and ("Player: " .. playerName) or "Player: (unknown)"
-        msg(nameStr, 5, colors.cyan)
-        local shortAddr = address:sub(1, 16) .. "..."
-        msg("Addr:   " .. shortAddr, 6, colors.lightGray)
-        if balance then
-            local ami = balance / 1000000
-            msg(string.format("Balance: %.6f AMI (%d uAMI)", ami, balance), 7, colors.green)
-        elseif balErr then
-            msg("Balance: [" .. balErr .. "]", 7, colors.red)
+        pmsg(nameStr, 5, colors.cyan)
+        pmsg("Addr: " .. address:sub(1, 16) .. "...", 6, colors.lightGray)
+
+        if balErr then
+            pmsg("Balance: [" .. balErr .. "]", 7, colors.red)
+        elseif totalBalance then
+            local ami = totalBalance / 1000000
+            pmsg(string.format("Balance: %.6f AMI (%d uAMI)", ami, totalBalance), 7, colors.green)
+            if #perNode > 1 then
+                for i, n in ipairs(perNode) do
+                    if n.err then
+                        pmsg(string.format("  %s: [err]", n.name:sub(1,12)), 7 + i, colors.red)
+                    else
+                        pmsg(string.format("  %s: %.4f AMI", n.name:sub(1,12), n.balance/1000000), 7 + i, colors.lightGray)
+                    end
+                end
+            end
         else
-            msg("Balance: (press R to refresh)", 7, colors.gray)
+            pmsg("Balance: (press R to refresh)", 7, colors.gray)
         end
-        msg("", 9)
-        msg("  [S] Send coins", 10, colors.cyan)
-        msg("  [R] Refresh balance", 11, colors.cyan)
-        msg("  [E] Export / View Key", 12, colors.cyan)
-        msg("  [N] Set node key", 13, colors.cyan)
-        msg("  [L] Logout", 14, colors.gray)
+
+        local base = (#perNode > 1) and (8 + #perNode) or 9
+        pmsg("  [S] Send coins",                  base,     colors.cyan)
+        pmsg("  [R] Refresh balance",              base + 1, colors.cyan)
+        pmsg("  [E] Export / View Key",            base + 2, colors.cyan)
+        pmsg("  [N] Nodes (" .. #nodes .. ")",     base + 3, colors.cyan)
+        pmsg("  [L] Logout",                       base + 4, colors.gray)
     end
 
     draw()
@@ -223,133 +297,124 @@ local function screenDashboard(secretKey, address, nodeKey, playerName)
         local ev, p1 = os.pullEvent()
 
         if ev == "key" then
+
             if p1 == keys.r then
+                draw()  -- redraw first to clear stale per-node lines
+                pmsg("Refreshing...", 7, colors.yellow)
                 refreshBalance()
                 draw()
 
             elseif p1 == keys.s then
-                -- Send screen: accept player name OR raw 64-hex address
                 banner("Send AMI")
-                msg("Recipient (player name or address):", 5)
-                local toRaw = prompt("> ", 7)
-                toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
-
-                local toAddr = nil
-                local toLabel = toRaw
-
-                if #toRaw == 64 and toRaw:match("^[0-9a-fA-F]+$") then
-                    -- Raw address
-                    toAddr = toRaw:lower()
+                if #nodes == 0 then
+                    pmsg("No nodes configured.", 5, colors.red)
+                    pmsg("Add a node first with [N].", 6)
+                    waitKey()
+                    draw()
                 else
-                    -- Player name – look up via node
-                    if not nodeKey then
-                        msg("No node key set.", 9, colors.red)
-                        waitKey()
-                        draw()
+                    pmsg("Recipient (player name or address):", 5)
+                    local toRaw = prompt("> ", 7)
+                    toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
+                    local toAddr  = nil
+                    local toLabel = toRaw
+
+                    if #toRaw == 64 and toRaw:match("^[0-9a-fA-F]+$") then
+                        toAddr = toRaw:lower()
                     else
-                        msg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
-                        local ok, data, err = comms.lookup(secretKey, nodeKey, address, toRaw)
+                        pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
+                        local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
                         if ok and data and data.address then
                             toAddr = data.address
-                            msg("Found: " .. toAddr:sub(1,16) .. "...", 10, colors.green)
+                            pmsg("Found: " .. toAddr:sub(1,16) .. "...", 10, colors.green)
                         else
-                            msg("Not found: " .. (err or "unknown"), 9, colors.red)
+                            pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
                             waitKey()
                             draw()
                         end
                     end
-                end
 
-                if toAddr then
-                    msg("Amount (in AMI):", 11)
-                    local rawAmt = prompt("> ", 13)
-                    local amt = tonumber(rawAmt)
-                    if not amt or amt <= 0 then
-                        msg("Invalid amount.", 15, colors.red)
-                        waitKey()
-                    else
-                        if not nodeKey then
-                            msg("No node key set.", 15, colors.red)
+                    if toAddr then
+                        -- Node selection for multi-node setups
+                        local chosenNode = nodes[1]
+                        if #nodes > 1 then
+                            pmsg("Send via which node?", 11, colors.yellow)
+                            for i, n in ipairs(nodes) do
+                                pmsg(string.format("  [%d] %s", i, n.name), 11 + i, colors.white)
+                            end
+                            local inp = prompt("> ", 12 + #nodes)
+                            local idx = tonumber(inp)
+                            if idx and idx >= 1 and idx <= #nodes then
+                                chosenNode = nodes[idx]
+                            end
+                        end
+
+                        local amtRow = (#nodes > 1) and (14 + #nodes) or 12
+                        pmsg("Amount (in AMI):", amtRow)
+                        local rawAmt = prompt("> ", amtRow + 2)
+                        local amt = tonumber(rawAmt)
+                        if not amt or amt <= 0 then
+                            pmsg("Invalid amount.", amtRow + 4, colors.red)
                             waitKey()
                         else
                             local microAmt = math.floor(amt * 1000000)
-                            msg("Sending to " .. toLabel .. "...", 15, colors.yellow)
-                            local ok, data, err = comms.transfer(secretKey, nodeKey, address, toAddr, microAmt)
+                            pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 4, colors.yellow)
+                            local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
                             if ok then
-                                msg("Transfer sent!", 15, colors.green)
+                                pmsg("Transfer sent!", amtRow + 4, colors.green)
                             else
-                                msg("Failed: " .. (err or "unknown"), 15, colors.red)
+                                pmsg("Failed: " .. (err or "unknown"), amtRow + 4, colors.red)
                             end
                             waitKey()
                             refreshBalance()
                         end
                     end
+                    draw()
                 end
-                draw()
 
             elseif p1 == keys.e then
-                -- Export / View Key
                 banner("Export Secret Key")
-                if playerName then
-                    msg("Player: " .. playerName, 5, colors.cyan)
-                end
-                msg("Your SECRET KEY is:", 7, colors.red)
-                msg(secretKey:sub(1, 16), 9, colors.yellow)
-                msg(secretKey:sub(17, 32), 10, colors.yellow)
-                msg("", 12)
-                msg("Never share this with anyone.", 13, colors.red)
-                msg("Use it to migrate to a new Pad.", 14, colors.lightGray)
+                if playerName then pmsg("Player: " .. playerName, 5, colors.cyan) end
+                pmsg("Your SECRET KEY is:", 7, colors.red)
+                pmsg(secretKey:sub(1, 16),  9, colors.yellow)
+                pmsg(secretKey:sub(17, 32), 10, colors.yellow)
+                pmsg("Never share this with anyone.",  12, colors.red)
+                pmsg("Use it to migrate to a new Pad.", 13, colors.lightGray)
                 waitKey()
                 draw()
 
             elseif p1 == keys.n then
-                local nk = screenSetNodeKey()
-                if nk then nodeKey = nk end
+                nodes = screenNodeManager(nodes)
                 draw()
 
             elseif p1 == keys.l then
                 sess.clear()
-                msg("Logged out.", H - 1, colors.gray)
+                pmsg("Logged out.", H - 1, colors.gray)
                 os.sleep(1)
                 return
             end
 
         elseif ev == "timer" then
-            -- Heartbeat every 60 seconds (timer set below)
-            comms.heartbeat(secretKey, address)
+            comms.heartbeatAll(secretKey, address, nodes)
+            os.startTimer(60)
         end
     end
 end
 
--- ── Heartbeat timer ───────────────────────────────────────────────────────────
-local heartbeatTimer = nil
-
-local function startHeartbeat(secretKey, address)
-    heartbeatTimer = os.startTimer(60)
-    comms.heartbeat(secretKey, address)
-end
-
--- ── Boot flow ─────────────────────────────────────────────────────────────────
+-- ── Boot ──────────────────────────────────────────────────────────────────────
 local function boot()
     cls()
-
     local secretKey, address, playerName
 
-    -- 1. Try to resume from saved session
+    -- 1. Resume session
     local savedSess = sess.load()
-    if savedSess and savedSess.address and savedSess.logged_in then
-        local loadedKey, loadedAddr, loadedName = sm.load()
-        if loadedKey then
-            secretKey  = loadedKey
-            address    = loadedAddr
-            playerName = loadedName
-        end
+    if savedSess and savedSess.logged_in then
+        local k, a, n = sm.load()
+        if k then secretKey=k; address=a; playerName=n end
     end
 
-    -- 2. No session – go through welcome flow
+    -- 2. Welcome flow if no session
     if not secretKey then
         if sm.exists() then
-            -- Key exists but no session: just load it
             secretKey, address, playerName = sm.load()
         else
             local choice = screenWelcome()
@@ -364,33 +429,51 @@ local function boot()
 
     if not secretKey then
         cls()
-        msg("No wallet available. Rebooting...", 1, colors.red)
+        pmsg("No wallet available. Rebooting...", 1, colors.red)
         os.sleep(2)
         os.reboot()
         return
     end
 
     -- 3. Persist session
-    sess.save({ address = address, logged_in = true })
+    sess.save({ address=address, logged_in=true })
 
-    -- 4. Load node key
-    local nodeKey = loadNodeKey()
-    if not nodeKey then
-        nodeKey = screenSetNodeKey()
+    -- 4. Load nodes (auto-migrates legacy node_key.txt)
+    local nodes = loadNodes()
+
+    -- 5. First-run: prompt to add a node (skippable)
+    if #nodes == 0 then
+        banner("Add First Node")
+        pmsg("No nodes configured yet.", 5)
+        pmsg("Enter the XTEA key shown on the", 6)
+        pmsg("node at boot, or leave blank.", 7, colors.gray)
+        local k = prompt("> ", 9)
+        k = k:gsub("%s",""):lower()
+        if #k == 32 then
+            pmsg("Node name (e.g. 'Main Server'):", 11)
+            local nodeName = prompt("> ", 13)
+            nodeName = nodeName:gsub("^%s*(.-)%s*$", "%1")
+            if #nodeName == 0 then nodeName = "Node 1" end
+            nodes = { { name=nodeName, key=k } }
+            saveNodes(nodes)
+            pmsg("Node saved!", 15, colors.green)
+            os.sleep(0.8)
+        else
+            pmsg("Skipped. Add nodes via [N] on dashboard.", 11, colors.gray)
+            os.sleep(1.2)
+        end
     end
 
-    -- 5. Register wallet (and player name) on node (idempotent)
-    if nodeKey then
-        comms.register(secretKey, nodeKey, address, playerName)
-    end
+    -- 6. Register on all nodes (idempotent, fire-and-forget via timer)
+    comms.registerAll(secretKey, address, playerName, nodes)
 
-    -- 6. Start heartbeat
-    startHeartbeat(secretKey, address)
+    -- 7. First heartbeat + start 60s timer
+    comms.heartbeatAll(secretKey, address, nodes)
+    os.startTimer(60)
 
-    -- 7. Main dashboard
-    screenDashboard(secretKey, address, nodeKey, playerName)
+    -- 8. Main dashboard
+    screenDashboard(secretKey, address, nodes, playerName)
 
-    -- After logout, reboot to clear RAM
     os.reboot()
 end
 

@@ -53,6 +53,57 @@ local function loadOrCreateNodeKey()
     return hex
 end
 
+-- ── Password-based key exchange ─────────────────────────────────────────────
+-- Derives a 32-hex-char XTEA key from a plain-text password.
+-- MUST be identical to the copy in wallet/comms.lua.
+local function keyFromPassword(password)
+    local bytes = {}
+    for i = 1, #password do bytes[i] = string.byte(password, i) end
+    if #bytes == 0 then bytes = {0} end
+    local out = {}
+    for i = 1, 16 do
+        local a = bytes[((i - 1) % #bytes) + 1]
+        local b = bytes[(i       % #bytes) + 1]
+        local c = bytes[((i + 3) % #bytes) + 1]
+        out[i] = bit32.bxor(a * 31 + b * 17 + c * 7 + i * 13, i * 97) % 256
+    end
+    for i = 1, 16 do
+        out[i] = bit32.bxor(out[i], out[(i % 16) + 1]) % 256
+    end
+    local hex = ""
+    for _, b in ipairs(out) do hex = hex .. string.format("%02x", b) end
+    return hex
+end
+
+-- Prompt for (or load) the node setup password used for wallet auto-fetch.
+local function loadOrCreateSetupPassword()
+    local pwFile = "/data/setup_password.txt"
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    if fs.exists(pwFile) then
+        local f = fs.open(pwFile, "r")
+        local pw = f.readAll():gsub("%s+$", "")
+        f.close()
+        return pw
+    end
+    -- First boot: ask for a password
+    print("")
+    print("[!] Set a SETUP PASSWORD for this node.")
+    print("    Wallets can use it to auto-fetch your")
+    print("    node key without manual copy-paste.")
+    print("    Leave blank to disable auto-fetch.")
+    io.write("    Password: ")
+    local pw = read("*")
+    if #pw > 0 then
+        local f = fs.open(pwFile, "w")
+        f.write(pw)
+        f.close()
+        print("[!] Password saved. Security = password strength.")
+    else
+        print("[!] Auto-fetch disabled (manual key entry only).")
+    end
+    return pw
+end
+
 -- ── Ender Router setup ───────────────────────────────────────────────────────
 local function findRouter()
     for _, name in ipairs(peripheral.getNames()) do
@@ -74,7 +125,7 @@ local function findRouter()
 end
 
 -- ── Packet handling ──────────────────────────────────────────────────────────
-local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
+local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex, replyChannel)
     -- Try to decrypt using the sender's key (passed as the first 32 chars of
     -- the raw message before the '|' separator).
     -- Packet wire format: "<senderKeyHex>|<cipherhex>"
@@ -93,7 +144,7 @@ local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
     local cmd  = pkt.cmd
     local from = pkt.from
 
-    if not from or #from ~= 64 then
+    if not from or #from ~= 128 then
         print("[Net] Missing/invalid 'from' address")
         return
     end
@@ -119,7 +170,7 @@ local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
                 return
             end
         end
-        if type(to) ~= "string" or #to ~= 64 then
+        if type(to) ~= "string" or #to ~= 128 then
             local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid recipient"}), nodeKey)
             router.transmit(replyChannel, MESH_CHANNEL, err)
             return
@@ -160,6 +211,27 @@ local function handlePacket(nodeKey, router, senderKey, cipherhex, replyChannel)
             resp = textutils.serialiseJSON({ok=false, err="Player '" .. name .. "' not found"})
         end
         router.transmit(replyChannel, MESH_CHANNEL, xtea.encrypt(resp, nodeKey))
+
+    elseif cmd == "GETKEY" then
+        -- Password-based node key delivery.
+        -- Reply is encrypted with keyFromPassword(password), NOT the node key,
+        -- so the wallet can decrypt it before it has the node key.
+        if type(setupPassword) ~= "string" or #setupPassword == 0 then
+            local resp = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Auto-fetch disabled on this node"}), keyFromPassword("disabled"))
+            router.transmit(replyChannel, MESH_CHANNEL, resp)
+            return
+        end
+        local provided = pkt.password
+        if type(provided) ~= "string" or provided ~= setupPassword then
+            -- Use a dummy key so the wallet gets a decrypt error (not a hang)
+            local resp = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Wrong password"}), keyFromPassword("wrong"))
+            router.transmit(replyChannel, MESH_CHANNEL, resp)
+            return
+        end
+        local pwdKey = keyFromPassword(setupPassword)
+        local resp   = xtea.encrypt(textutils.serialiseJSON({ok=true, key=nodeKey}), pwdKey)
+        router.transmit(replyChannel, MESH_CHANNEL, resp)
+        print("[Net] Sent node key to " .. from:sub(1,12) .. "... (password auth)")
     end
 end
 
@@ -184,9 +256,14 @@ local function main()
     print("  Proof-of-Uptime Consensus")
     print("===========================================")
 
-    local nodeKey = loadOrCreateNodeKey()
-    print("\n[!] Node XTEA Key (share with wallets during setup):")
+    local nodeKey      = loadOrCreateNodeKey()
+    local setupPassword = loadOrCreateSetupPassword()
+    print("")
+    print("[!] Node XTEA Key (share with wallets during setup):")
     print("    " .. nodeKey)
+    if setupPassword and #setupPassword > 0 then
+        print("[!] Setup password active - wallets can auto-fetch key.")
+    end
     print("")
 
     local router = findRouter()
@@ -211,7 +288,7 @@ local function main()
                         local senderKey = rawMsg:sub(1, sep - 1)
                         local cipher    = rawMsg:sub(sep + 1)
                         if #senderKey == 32 then
-                            handlePacket(nodeKey, router, senderKey, cipher, replyChan)
+                            handlePacket(nodeKey, setupPassword, router, senderKey, cipher, replyChan)
                         end
                     end
                 end

@@ -27,7 +27,7 @@ end
 -- Register or update a player name -> address mapping.
 function ledger.registerName(name, address)
     if type(name) ~= "string" or #name == 0 then return false end
-    if type(address) ~= "string" or #address ~= 64 then return false end
+    if type(address) ~= "string" or #address ~= 128 then return false end
     local db = loadNames()
     db[name:lower()] = address
     saveNames(db)
@@ -77,7 +77,7 @@ end
 
 -- Credit microcoins to an address.
 function ledger.credit(address, amount)
-    assert(type(address) == "string" and #address == 64, "Invalid address")
+    assert(type(address) == "string" and #address == 128, "Invalid address")
     assert(type(amount) == "number" and amount > 0, "Amount must be positive")
     local db = load()
     db[address] = (db[address] or 0) + amount
@@ -87,8 +87,8 @@ end
 -- Transfer microcoins between two addresses.
 -- Returns true on success, or false + error string on failure.
 function ledger.transfer(fromAddress, toAddress, amount)
-    assert(type(fromAddress) == "string" and #fromAddress == 64, "Invalid sender address")
-    assert(type(toAddress) == "string" and #toAddress == 64, "Invalid recipient address")
+    assert(type(fromAddress) == "string" and #fromAddress == 128, "Invalid sender address")
+    assert(type(toAddress) == "string" and #toAddress == 128, "Invalid recipient address")
     assert(type(amount) == "number" and amount > 0, "Amount must be positive")
 
     local db = load()
@@ -109,7 +109,7 @@ end
 
 -- Register a new address with a zero balance if it doesn't exist yet.
 function ledger.register(address)
-    assert(type(address) == "string" and #address == 64, "Invalid address")
+    assert(type(address) == "string" and #address == 128, "Invalid address")
     local db = load()
     if not db[address] then
         db[address] = 0

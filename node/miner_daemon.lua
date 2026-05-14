@@ -36,7 +36,7 @@ end
 
 -- Called by startup.lua whenever a valid signed packet is received from a wallet.
 function daemon.heartbeat(address)
-    if type(address) == "string" and #address == 64 then
+    if type(address) == "string" and #address == 128 then
         activeWallets[address] = os.epoch("utc") / 1000
         ledger.register(address)  -- no-op if already registered
     end

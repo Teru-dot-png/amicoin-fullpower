@@ -170,7 +170,7 @@ local function screenImport()
 end
 
 -- ── Node Manager ──────────────────────────────────────────────────────────────
-local function screenNodeManager(nodes)
+local function screenNodeManager(nodes, secretKey, address)
     while true do
         banner("Node Manager")
         if #nodes == 0 then
@@ -196,20 +196,56 @@ local function screenNodeManager(nodes)
             local nodeName = prompt("> ", 7)
             nodeName = nodeName:gsub("^%s*(.-)%s*$", "%1")
             if #nodeName == 0 then nodeName = "Node " .. (#nodes + 1) end
-            pmsg("32-char XTEA key from node boot:", 9)
-            pmsg("(leave blank to cancel)", 10, colors.gray)
-            local k = prompt("> ", 12)
-            k = k:gsub("%s",""):lower()
-            if #k == 0 then
-                pmsg("Cancelled.", 14, colors.gray)
-                os.sleep(0.8)
-            elseif #k ~= 32 then
-                pmsg("Invalid key (must be 32 hex chars).", 14, colors.red)
-                waitKey()
-            else
-                nodes[#nodes + 1] = { name=nodeName, key=k }
+            pmsg("How to add?", 9, colors.yellow)
+            pmsg("  [1] Enter 32-char key manually", 10, colors.white)
+            pmsg("  [2] Fetch via setup password",   11, colors.cyan)
+
+            local addKey
+            while true do
+                local _, ak = os.pullEvent("key")
+                if ak == keys.one or ak == keys.n1 then
+                    -- Manual entry
+                    pmsg("32-char XTEA key from node boot:", 13)
+                    local k = prompt("> ", 15)
+                    k = k:gsub("%s",""):lower()
+                    if #k == 0 then
+                        pmsg("Cancelled.", 17, colors.gray)
+                        os.sleep(0.8)
+                    elseif #k ~= 32 then
+                        pmsg("Invalid (must be 32 hex chars).", 17, colors.red)
+                        waitKey()
+                    else
+                        addKey = k
+                    end
+                    break
+                elseif ak == keys.two or ak == keys.n2 then
+                    -- Password-based auto-fetch
+                    pmsg("Setup password for this node:", 13, colors.cyan)
+                    local pw = prompt("> ", 15, true)
+                    if #pw == 0 then
+                        pmsg("Cancelled.", 17, colors.gray)
+                        os.sleep(0.8)
+                    else
+                        pmsg("Contacting node...", 17, colors.yellow)
+                        -- secretKey/address not in scope here; passed via closure
+                        local ok, k, err = comms.fetchNodeKey(secretKey, address, pw)
+                        if ok and k then
+                            addKey = k
+                            pmsg("Got key!", 17, colors.green)
+                            os.sleep(0.5)
+                        else
+                            pmsg("Failed: " .. (err or "unknown"), 17, colors.red)
+                            waitKey()
+                        end
+                    end
+                    break
+                end
+            end
+
+            if addKey then
+                nodes[#nodes + 1] = { name=nodeName, key=addKey }
                 saveNodes(nodes)
-                pmsg("Node '" .. nodeName .. "' added!", 14, colors.green)
+                pmsg("Node '" .. nodeName .. "' added!", 19, colors.green)
                 os.sleep(0.8)
             end
 
@@ -318,7 +354,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                     local toAddr  = nil
                     local toLabel = toRaw
 
-                    if #toRaw == 64 and toRaw:match("^[0-9a-fA-F]+$") then
+                    if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
                         toAddr = toRaw:lower()
                     else
                         pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
@@ -383,7 +419,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 draw()
 
             elseif p1 == keys.n then
-                nodes = screenNodeManager(nodes)
+                nodes = screenNodeManager(nodes, secretKey, address)
                 draw()
 
             elseif p1 == keys.l then
@@ -445,22 +481,54 @@ local function boot()
     if #nodes == 0 then
         banner("Add First Node")
         pmsg("No nodes configured yet.", 5)
-        pmsg("Enter the XTEA key shown on the", 6)
-        pmsg("node at boot, or leave blank.", 7, colors.gray)
-        local k = prompt("> ", 9)
-        k = k:gsub("%s",""):lower()
-        if #k == 32 then
-            pmsg("Node name (e.g. 'Main Server'):", 11)
-            local nodeName = prompt("> ", 13)
+        pmsg("  [1] Enter 32-char key manually", 7, colors.white)
+        pmsg("  [2] Fetch via setup password",   8, colors.cyan)
+        pmsg("  [S] Skip for now",               9, colors.gray)
+
+        local firstKey, firstName
+        while true do
+            local _, fk = os.pullEvent("key")
+            if fk == keys.s then
+                pmsg("Skipped. Add nodes via [N].", 11, colors.gray)
+                os.sleep(1.2)
+                break
+            elseif fk == keys.one or fk == keys.n1 then
+                pmsg("32-char key from node boot:", 11)
+                local k = prompt("> ", 13)
+                k = k:gsub("%s",""):lower()
+                if #k == 32 then
+                    firstKey = k
+                else
+                    pmsg("Invalid key.", 15, colors.red); os.sleep(1)
+                end
+                break
+            elseif fk == keys.two or fk == keys.n2 then
+                pmsg("Setup password for the node:", 11, colors.cyan)
+                local pw = prompt("> ", 13, true)
+                if #pw > 0 then
+                    pmsg("Contacting node...", 15, colors.yellow)
+                    local ok, k, err = comms.fetchNodeKey(secretKey, address, pw)
+                    if ok and k then
+                        firstKey = k
+                        pmsg("Got key!", 15, colors.green); os.sleep(0.5)
+                    else
+                        pmsg("Failed: " .. (err or "?"), 15, colors.red); os.sleep(1.2)
+                    end
+                end
+                break
+            end
+        end
+
+        if firstKey then
+            banner("Name this node")
+            pmsg("Node name (e.g. 'Main Server'):", 5)
+            local nodeName = prompt("> ", 7)
             nodeName = nodeName:gsub("^%s*(.-)%s*$", "%1")
             if #nodeName == 0 then nodeName = "Node 1" end
-            nodes = { { name=nodeName, key=k } }
+            nodes = { { name=nodeName, key=firstKey } }
             saveNodes(nodes)
-            pmsg("Node saved!", 15, colors.green)
+            pmsg("Node saved!", 9, colors.green)
             os.sleep(0.8)
-        else
-            pmsg("Skipped. Add nodes via [N] on dashboard.", 11, colors.gray)
-            os.sleep(1.2)
         end
     end
 

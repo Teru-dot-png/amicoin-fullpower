@@ -8,12 +8,33 @@ local xtea = require("shared.xtea")
 local comms = {}
 
 local MESH_CHANNEL = 1337
-local REPLY_BASE   = 2000   -- Pad listens on 2000 + math.random(0,999)
-local TIMEOUT      = 8      -- seconds to wait for a node reply
+local REPLY_BASE   = 2000
+local TIMEOUT      = 8
 
 local router = nil
 
 -- ── Internal ──────────────────────────────────────────────────────────────────
+
+-- Derives a 32-hex-char XTEA key from a plain-text password.
+-- MUST be identical to the copy in node/startup.lua.
+local function keyFromPassword(password)
+    local bytes = {}
+    for i = 1, #password do bytes[i] = string.byte(password, i) end
+    if #bytes == 0 then bytes = {0} end
+    local out = {}
+    for i = 1, 16 do
+        local a = bytes[((i - 1) % #bytes) + 1]
+        local b = bytes[(i       % #bytes) + 1]
+        local c = bytes[((i + 3) % #bytes) + 1]
+        out[i] = bit32.bxor(a * 31 + b * 17 + c * 7 + i * 13, i * 97) % 256
+    end
+    for i = 1, 16 do
+        out[i] = bit32.bxor(out[i], out[(i % 16) + 1]) % 256
+    end
+    local hex = ""
+    for _, b in ipairs(out) do hex = hex .. string.format("%02x", b) end
+    return hex
+end
 
 local function getRouter()
     if router then return router end
@@ -177,6 +198,55 @@ function comms.lookupAll(secretKey, address, name, nodes)
         end
     end
     return false, nil, "Player '" .. name .. "' not found on any node"
+end
+
+-- Fetch a node's XTEA key using a setup password instead of the key itself.
+-- The reply is encrypted with keyFromPassword(password), not the node key,
+-- so the wallet can decrypt it before knowing the key.
+-- Returns: ok (bool), nodeKey (string or nil), errMsg (string or nil)
+function comms.fetchNodeKey(secretKey, address, password)
+    local r = getRouter()
+    if not r then return false, nil, "No Ender Router found" end
+
+    local pkt    = { cmd="GETKEY", from=address, password=password, nonce=os.epoch("utc") }
+    local plain  = textutils.serialiseJSON(pkt)
+    local cipher = xtea.encrypt(plain, secretKey)
+    local wire   = secretKey .. "|" .. cipher
+
+    local replyChannel = REPLY_BASE + math.random(0, 999)
+    r.open(MESH_CHANNEL)
+    r.open(replyChannel)
+    r.transmit(MESH_CHANNEL, replyChannel, wire)
+
+    local pwdKey = keyFromPassword(password)
+    local timer  = os.startTimer(TIMEOUT)
+    local result_ok, result_key, result_err = false, nil, "Timeout"
+
+    while true do
+        local ev, p1, p2, p3, p4 = os.pullEvent()
+        if ev == "modem_message" and p3 == replyChannel and type(p4) == "string" then
+            os.cancelTimer(timer)
+            local ok2, plain2 = pcall(xtea.decrypt, p4, pwdKey)
+            if ok2 then
+                local data = textutils.unserialiseJSON(plain2)
+                if type(data) == "table" and data.ok and type(data.key) == "string" then
+                    result_ok  = true
+                    result_key = data.key
+                else
+                    result_err = (data and data.err) or "Node refused (wrong password?)"
+                end
+            else
+                result_err = "Wrong password or no node response"
+            end
+            break
+        elseif ev == "timer" and p1 == timer then
+            result_err = "Timeout - no node responded"
+            break
+        end
+    end
+
+    r.close(replyChannel)
+    return result_ok, result_key, result_err
 end
 
 return comms

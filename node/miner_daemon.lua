@@ -103,4 +103,8 @@ function daemon.getActive()
     return list
 end
 
+-- Expose the current reward rate and tick count for STATS queries.
+function daemon.getCurrentRate() return currentRate() end
+function daemon.getTotalTicks()  return totalTicks      end
+
 return daemon

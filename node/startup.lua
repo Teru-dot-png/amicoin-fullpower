@@ -300,6 +300,23 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         print(string.format("[Net] VAULT_LIST  %s... -> %d vault(s)", who, #vaults))
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON({ok=true, vaults=vaults}), nodeKey))
+
+    elseif cmd == "STATS" then
+        -- Returns network-wide stats: active wallets, total supply, current rate, tick count.
+        local active = miner.getActive()
+        local snap   = ledger.snapshot()
+        local total  = 0
+        for _, v in pairs(snap) do total = total + v end
+        local payload = {
+            ok            = true,
+            active_wallets = #active,
+            total_supply   = total,
+            current_rate   = miner.getCurrentRate(),
+            total_ticks    = miner.getTotalTicks(),
+            node_key_hint  = nodeKey:sub(1, 8),
+        }
+        router.transmit(replyChannel, MESH_CHANNEL,
+            xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
     end
 end
 
@@ -313,23 +330,40 @@ local UPDATE_FILES = {
     { src="/node/xtea.lua",         dst="/xtea.lua"          },
 }
 
+local function fnv1a(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit32.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
 local function selfUpdate()
     print("")
     print("[Update] Fetching latest files from GitHub...")
-    local failed = false
+    local failed  = false
+    local hashes  = {}
     for _, entry in ipairs(UPDATE_FILES) do
         io.write("[Update] " .. entry.dst .. " ... ")
         local ok, res = pcall(http.get, REPO_BASE .. entry.src)
         if ok and res then
             local content = res.readAll()
             res.close()
-            local dir = entry.dst:match("^(.*)/[^/]+$")
-            if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
-            if fs.exists(entry.dst) then fs.delete(entry.dst) end
-            local f = fs.open(entry.dst, "w")
-            f.write(content)
-            f.close()
-            print("OK")
+            if #content < 64 then
+                print("REJECTED (too small - possible 404)")
+                failed = true
+            else
+                local hash = fnv1a(content)
+                hashes[#hashes + 1] = hash
+                local dir = entry.dst:match("^(.*)/[^/]+$")
+                if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+                if fs.exists(entry.dst) then fs.delete(entry.dst) end
+                local f = fs.open(entry.dst, "w")
+                f.write(content)
+                f.close()
+                print("OK [" .. hash .. "]")
+            end
         else
             print("FAILED")
             failed = true
@@ -338,6 +372,8 @@ local function selfUpdate()
     if failed then
         print("[Update] Some files failed. Will retry on next reboot.")
     else
+        local fp = fnv1a(table.concat(hashes, ":"))
+        print("[Update] Fingerprint: " .. fp)
         print("[Update] Complete! Rebooting in 3s...")
         os.sleep(3)
         os.reboot()

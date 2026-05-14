@@ -85,8 +85,7 @@ local function send(secretKey, nodeKey, packet, expectReply)
         return true, nil, nil
     end
 
-    -- Timer-based timeout: os.pullEvent with a modem filter never fires
-    -- on its own if no message comes, so we use an unfiltered pull + timer.
+    local sendTime = os.epoch("utc")   -- milliseconds, for latency measurement
     local timer = os.startTimer(TIMEOUT)
     local result_ok, result_data, result_err = false, nil, "Timeout"
 
@@ -98,9 +97,10 @@ local function send(secretKey, nodeKey, packet, expectReply)
             if ok2 then
                 local data = textutils.unserialiseJSON(plain2)
                 if type(data) == "table" then
-                    result_ok   = data.ok ~= false
-                    result_data = data
-                    result_err  = data.err
+                    result_ok            = data.ok ~= false
+                    result_data          = data
+                    result_data._latency = os.epoch("utc") - sendTime  -- ms RTT
+                    result_err           = data.err
                 else
                     result_err = "Bad response format"
                 end
@@ -252,6 +252,12 @@ function comms.fetchNodeKey(secretKey, address, password)
 
     r.close(replyChannel)
     return result_ok, result_key, result_err
+end
+
+-- Query stats (active wallets, supply, rate) from a single node.
+-- _latency is included in the returned data table.
+function comms.getStats(secretKey, nodeKey, address)
+    return send(secretKey, nodeKey, { cmd="STATS", from=address, nonce=os.epoch("utc") }, true)
 end
 
 -- ── AmiVault ──────────────────────────────────────────────────────────────────

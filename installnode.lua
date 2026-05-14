@@ -25,6 +25,18 @@ local function printBanner()
     term.setTextColor(colors.white)
 end
 
+-- ── Source verification (FNV-1a 32-bit) ─────────────────────────────────────
+-- Computes a fast hash of downloaded content.  After install the combined
+-- fingerprint is shown so you can verify it matches the published checksum.
+local function fnv1a(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit32.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
 local function download(url, path)
     local dir = path:match("^(.*)/[^/]+$")
     if dir and dir ~= "" and not fs.exists(dir) then
@@ -33,16 +45,22 @@ local function download(url, path)
 
     local res = http.get(url)
     if not res then
-        return false, "HTTP request failed for: " .. url
+        return false, nil, "HTTP request failed for: " .. url
     end
     local content = res.readAll()
     res.close()
+
+    -- Minimum size guard: a valid Lua file is never < 64 bytes.
+    -- Smaller responses are almost certainly 404 HTML error pages.
+    if #content < 64 then
+        return false, nil, "Response too small (" .. #content .. " bytes) - likely a 404"
+    end
 
     if fs.exists(path) then fs.delete(path) end
     local f = fs.open(path, "w")
     f.write(content)
     f.close()
-    return true
+    return true, fnv1a(content), nil
 end
 
 printBanner()
@@ -74,13 +92,15 @@ print("")
 print("Downloading files from GitHub…")
 
 local failed = false
+local fileHashes = {}
 for _, entry in ipairs(FILES) do
     local url = REPO_BASE .. entry.src
-    io.write("  " .. entry.dst .. " … ")
-    local ok, err = download(url, entry.dst)
+    io.write("  " .. entry.dst .. " ... ")
+    local ok, hash, err = download(url, entry.dst)
     if ok then
         term.setTextColor(colors.green)
-        print("OK")
+        print("OK  [" .. hash .. "]")
+        fileHashes[#fileHashes + 1] = hash
     else
         term.setTextColor(colors.red)
         print("FAILED")
@@ -98,6 +118,13 @@ if failed then
 else
     term.setTextColor(colors.green)
     print("Installation complete!")
+    print("")
+    -- Display combined fingerprint for the user to verify
+    local combined = table.concat(fileHashes, ":")
+    local fingerprint = fnv1a(combined)
+    term.setTextColor(colors.yellow)
+    print("Install fingerprint: " .. fingerprint)
+    print("Compare against: github.com/Teru-dot-png/amicoin-fullpower")
     print("")
     term.setTextColor(colors.orange)
     print("Next steps:")

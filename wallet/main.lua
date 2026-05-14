@@ -96,8 +96,44 @@ end
 
 -- ── Node list storage ─────────────────────────────────────────────────────────
 -- Format: array of { name="...", key="..." }
-local NODES_FILE = "/wallet_data/nodes.json"
-local LEGACY_KEY = "/wallet_data/node_key.txt"
+local NODES_FILE  = "/wallet_data/nodes.json"
+local LEGACY_KEY  = "/wallet_data/node_key.txt"
+local NAMES_CACHE = "/wallet_data/names_cache.json"
+
+-- ── Ami-DNS name cache ────────────────────────────────────────────────────────
+-- Maps address (128-hex) -> player name, persisted locally.
+local _nameCache = nil
+local function loadNameCache()
+    if _nameCache then return _nameCache end
+    if not fs.exists(NAMES_CACHE) then _nameCache = {} return _nameCache end
+    local f = fs.open(NAMES_CACHE, "r")
+    local raw = f.readAll()
+    f.close()
+    _nameCache = textutils.unserialiseJSON(raw) or {}
+    return _nameCache
+end
+local function saveNameCache()
+    if not _nameCache then return end
+    if not fs.exists("/wallet_data") then fs.makeDir("/wallet_data") end
+    local f = fs.open(NAMES_CACHE, "w")
+    f.write(textutils.serialiseJSON(_nameCache))
+    f.close()
+end
+-- Cache address -> name (call after any successful REGISTER or LOOKUP)
+local function cacheName(addr, name)
+    if type(addr) ~= "string" or #addr ~= 128 then return end
+    if type(name) ~= "string" or #name == 0 then return end
+    local c = loadNameCache()
+    c[addr] = name
+    saveNameCache()
+end
+-- Resolve address to display string: "Name" if known, else "38de...3e9f"
+local function resolveAddr(addr)
+    if type(addr) ~= "string" or #addr < 16 then return tostring(addr) end
+    local c = loadNameCache()
+    if c[addr] then return c[addr] end
+    return addr:sub(1, 8) .. "..." .. addr:sub(-4)
+end
 
 local function loadNodes()
     -- Auto-migrate old single node_key.txt
@@ -139,10 +175,20 @@ local UPDATE_FILES = {
     { src="/wallet/comms.lua",      dst="/comms.lua"          },
 }
 
+local function fnv1a(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit32.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
 local function screenUpdate()
     banner("Software Update")
     pmsg("Downloading latest from GitHub...", 5, colors.yellow)
     local failed = false
+    local hashes = {}
     local row = 7
     for _, entry in ipairs(UPDATE_FILES) do
         pmsg(entry.dst .. "...", row, colors.white)
@@ -150,13 +196,20 @@ local function screenUpdate()
         if ok and res then
             local content = res.readAll()
             res.close()
-            local dir = entry.dst:match("^(.*)/[^/]+$")
-            if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
-            if fs.exists(entry.dst) then fs.delete(entry.dst) end
-            local f = fs.open(entry.dst, "w")
-            f.write(content)
-            f.close()
-            pmsg(entry.dst .. " OK", row, colors.green)
+            if #content < 64 then
+                pmsg(entry.dst .. " REJECTED (too small)", row, colors.red)
+                failed = true
+            else
+                local hash = fnv1a(content)
+                hashes[#hashes + 1] = hash
+                local dir = entry.dst:match("^(.*)/[^/]+$")
+                if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+                if fs.exists(entry.dst) then fs.delete(entry.dst) end
+                local f = fs.open(entry.dst, "w")
+                f.write(content)
+                f.close()
+                pmsg(entry.dst .. " OK [" .. hash .. "]", row, colors.green)
+            end
         else
             pmsg(entry.dst .. " FAILED", row, colors.red)
             failed = true
@@ -167,8 +220,10 @@ local function screenUpdate()
         pmsg("Some files failed. Check connection.", row + 1, colors.red)
         waitKey()
     else
-        pmsg("Update complete! Rebooting...", row + 1, colors.green)
-        os.sleep(2)
+        local fp = fnv1a(table.concat(hashes, ":"))
+        pmsg("Fingerprint: " .. fp, row + 1, colors.yellow)
+        pmsg("Update complete! Rebooting...", row + 2, colors.green)
+        os.sleep(3)
         os.reboot()
     end
 end
@@ -454,64 +509,149 @@ local function screenVault(secretKey, address, nodes)
     end
 end
 
--- ── Dashboard ─────────────────────────────────────────────────────────────────
+-- ── Dashboard (Glass Cockpit) ─────────────────────────────────────────────────
 local function screenDashboard(secretKey, address, nodes, playerName)
-    local totalBalance = nil
-    local perNode      = {}
-    local balErr       = nil
+    -- Cache our own name immediately
+    if playerName then cacheName(address, playerName) end
 
+    -- ── State ────────────────────────────────────────────────────────────────
+    local totalBalance = nil
+    local perNode      = {}   -- {name, balance, err, latency, stats}
+    local balErr       = nil
+    local netStats     = nil  -- {active_wallets, total_supply, current_rate, total_ticks}
+
+    -- ── Data refresh ─────────────────────────────────────────────────────────
     local function refreshBalance()
         if #nodes == 0 then
-            totalBalance = nil
-            balErr = "No nodes - press [N] to add one"
-            return
+            totalBalance = nil; balErr = "No nodes - press [N]"; return
         end
         balErr = nil
-        local total, breakdown = comms.getAllBalances(secretKey, address, nodes)
+        local total   = 0
+        local newNodes = {}
+        local anyOk   = false
+        for _, node in ipairs(nodes) do
+            local ok, data, err = comms.getBalance(secretKey, node.key, address)
+            local entry = { name=node.name, balance=0, err=nil, latency=nil, stats=nil }
+            if ok and data and data.balance then
+                entry.balance = data.balance
+                entry.latency = data._latency
+                total = total + data.balance
+                anyOk = true
+                -- Piggyback STATS from first healthy node
+                if not netStats then
+                    local sok, sdata = comms.getStats(secretKey, node.key, address)
+                    if sok and sdata then netStats = sdata end
+                end
+            else
+                entry.err = err or "no response"
+            end
+            newNodes[#newNodes + 1] = entry
+        end
         totalBalance = total
-        perNode      = breakdown
-        local allFailed = true
-        for _, n in ipairs(perNode) do
-            if not n.err then allFailed = false end
-        end
-        if allFailed and #perNode > 0 then
-            balErr = "All nodes unreachable"
-        end
+        perNode      = newNodes
+        if not anyOk then balErr = "All nodes unreachable" end
     end
 
+    -- ── Drawing helpers ───────────────────────────────────────────────────────
+    local function hRule(y)
+        term.setCursorPos(1, y)
+        term.setTextColor(colors.gray)
+        term.write(string.rep("-", W))
+    end
+
+    local function rjust(s, w)
+        s = tostring(s)
+        if #s >= w then return s:sub(1, w) end
+        return string.rep(" ", w - #s) .. s
+    end
+
+    -- ── Draw ─────────────────────────────────────────────────────────────────
     local function draw()
         banner("Dashboard")
-        local nameStr = playerName and ("Player: " .. playerName) or "Player: (unknown)"
-        pmsg(nameStr, 5, colors.orange)
-        pmsg("Addr: " .. address:sub(1, 16) .. "...", 6, colors.lightGray)
 
+        -- Row 4: divider
+        hRule(4)
+
+        -- Row 5: player + short address
+        local dispAddr = address:sub(1,8) .. ".." .. address:sub(-4)
+        local nameStr  = (playerName or "(unknown)") .. " | " .. dispAddr
+        term.setCursorPos(1, 5)
+        term.setTextColor(colors.orange)
+        term.write(nameStr:sub(1, W))
+
+        -- Rows 6-7: balance
         if balErr then
-            pmsg("Balance: [" .. balErr .. "]", 7, colors.red)
+            term.setCursorPos(1, 6); term.setTextColor(colors.red)
+            term.write(("Balance: [" .. balErr .. "]"):sub(1, W))
+            term.setCursorPos(1, 7); term.write(string.rep(" ", W))
         elseif totalBalance then
-            local ami = totalBalance / 1000000
-            pmsg(string.format("Balance: %.6f AMI (%d uAMI)", ami, totalBalance), 7, colors.green)
-            if #perNode > 1 then
-                for i, n in ipairs(perNode) do
-                    if n.err then
-                        local short = tostring(n.err):sub(1, W - 16)
-                        pmsg(string.format("  %s: %s", n.name:sub(1,12), short), 7 + i, colors.red)
-                    else
-                        pmsg(string.format("  %s: %.6f AMI", n.name:sub(1,12), n.balance/1000000), 7 + i, colors.lightGray)
-                    end
-                end
-            end
+            term.setCursorPos(1, 6); term.setTextColor(colors.green)
+            local ami = string.format("%.4f AMI", totalBalance / 1000000)
+            term.write(ami:sub(1, W))
+            term.setCursorPos(1, 7); term.setTextColor(colors.lime)
+            term.write(rjust(totalBalance .. " uAMI", W))
         else
-            pmsg("Balance: (press R to refresh)", 7, colors.gray)
+            term.setCursorPos(1, 6); term.setTextColor(colors.gray)
+            term.write("Balance: press [R]")
+            term.setCursorPos(1, 7); term.write(string.rep(" ", W))
         end
 
-        local base = (#perNode > 1) and (8 + #perNode) or 9
-        pmsg("  [S] Send coins",                  base,     colors.orange)
-        pmsg("  [R] Refresh balance",              base + 1, colors.orange)
-        pmsg("  [E] Export / View Key",            base + 2, colors.orange)
-        pmsg("  [N] Nodes (" .. #nodes .. ")",     base + 3, colors.orange)
-        pmsg("  [V] AmiVault",                     base + 4, colors.pink)
-        pmsg("  [U] Update software",              base + 5, colors.orange)
-        pmsg("  [L] Logout",                       base + 6, colors.gray)
+        -- Row 8: divider + node header
+        hRule(8)
+        term.setCursorPos(1, 9); term.setTextColor(colors.gray)
+        local nodeHdr = string.format("%-12s %9s %6s  %s", "Node", "Balance", "Ping", "St")
+        term.write(nodeHdr:sub(1, W))
+
+        -- Rows 10..: per-node table
+        local nodeRows = math.max(1, #perNode)
+        for i = 1, nodeRows do
+            local row = 9 + i
+            local n   = perNode[i]
+            if not n then
+                term.setCursorPos(1, row); term.setTextColor(colors.gray)
+                term.write("  (no nodes)")
+            elseif n.err then
+                term.setCursorPos(1, row); term.setTextColor(colors.red)
+                local line = string.format("%-12s %9s %6s  [!]",
+                    n.name:sub(1,12), "---", "---")
+                term.write(line:sub(1, W))
+            else
+                local bal     = string.format("%.4f", n.balance / 1000000)
+                local ping    = n.latency and (n.latency .. "ms") or "---"
+                term.setCursorPos(1, row); term.setTextColor(colors.white)
+                local line = string.format("%-12s %9s %6s  ", n.name:sub(1,12), bal, ping)
+                term.write(line:sub(1, W - 4))
+                term.setTextColor(colors.lime); term.write("[OK]")
+            end
+        end
+
+        -- Network stats row
+        local statsRow = 10 + nodeRows
+        hRule(statsRow)
+        term.setCursorPos(1, statsRow + 1)
+        if netStats then
+            term.setTextColor(colors.lightGray)
+            local earn_hr = (netStats.current_rate or 0) * 60
+            local line = string.format("Net %d active  %d uAMI/tick  +%d/hr",
+                netStats.active_wallets or 0,
+                netStats.current_rate   or 0,
+                earn_hr)
+            term.write(line:sub(1, W))
+        else
+            term.setTextColor(colors.gray)
+            term.write("[R] to load network stats")
+        end
+
+        -- Menu rows
+        local menuRow = statsRow + 2
+        hRule(menuRow)
+        term.setCursorPos(1, menuRow + 1); term.setTextColor(colors.orange)
+        term.write("[S]end [R]efresh [E]xport [N]odes(" .. #nodes .. ")")
+        term.setCursorPos(1, menuRow + 2)
+        term.setTextColor(colors.pink);   term.write("[V]")
+        term.setTextColor(colors.orange); term.write("ault  ")
+        term.setTextColor(colors.orange); term.write("[U]pdate  ")
+        term.setTextColor(colors.gray);   term.write("[L]ogout")
     end
 
     refreshBalance()
@@ -523,24 +663,22 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         if ev == "key" then
 
             if p1 == keys.r then
-                draw()  -- redraw first to clear stale per-node lines
-                pmsg("Refreshing...", 7, colors.yellow)
-                refreshBalance()
-                draw()
+                cls(); banner("Dashboard")
+                term.setCursorPos(1, 6); term.setTextColor(colors.yellow)
+                term.write("Refreshing...")
+                refreshBalance(); draw()
 
             elseif p1 == keys.s then
                 banner("Send AMI")
                 if #nodes == 0 then
                     pmsg("No nodes configured.", 5, colors.red)
                     pmsg("Add a node first with [N].", 6)
-                    waitKey()
-                    draw()
+                    waitKey(); draw()
                 else
                     pmsg("Recipient (player name or address):", 5)
                     local toRaw = prompt("> ", 7)
                     toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
-                    local toAddr  = nil
-                    local toLabel = toRaw
+                    local toAddr = nil
 
                     if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
                         toAddr = toRaw:lower()
@@ -549,16 +687,15 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                         local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
                         if ok and data and data.address then
                             toAddr = data.address
-                            pmsg("Found: " .. toAddr:sub(1,16) .. "...", 10, colors.green)
+                            cacheName(toAddr, toRaw)  -- Ami-DNS: cache resolved name
+                            pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
                         else
                             pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
-                            waitKey()
-                            draw()
+                            waitKey(); draw()
                         end
                     end
 
                     if toAddr then
-                        -- Node selection for multi-node setups
                         local chosenNode = nodes[1]
                         if #nodes > 1 then
                             pmsg("Send via which node?", 11, colors.yellow)
@@ -571,25 +708,22 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                                 chosenNode = nodes[idx]
                             end
                         end
-
                         local amtRow = (#nodes > 1) and (14 + #nodes) or 12
-                        pmsg("Amount (in AMI):", amtRow)
+                        pmsg("Amount (AMI):", amtRow)
                         local rawAmt = prompt("> ", amtRow + 2)
                         local amt = tonumber(rawAmt)
                         if not amt or amt <= 0 then
-                            pmsg("Invalid amount.", amtRow + 4, colors.red)
-                            waitKey()
+                            pmsg("Invalid amount.", amtRow + 4, colors.red); waitKey()
                         else
                             local microAmt = math.floor(amt * 1000000)
                             pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 4, colors.yellow)
                             local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
                             if ok then
-                                pmsg("Transfer sent!", amtRow + 4, colors.green)
+                                pmsg(string.format("Sent %.4f AMI to %s", amt, resolveAddr(toAddr)), amtRow + 4, colors.green)
                             else
                                 pmsg("Failed: " .. (err or "unknown"), amtRow + 4, colors.red)
                             end
-                            waitKey()
-                            refreshBalance()
+                            waitKey(); refreshBalance()
                         end
                     end
                     draw()
@@ -603,20 +737,17 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 pmsg(secretKey:sub(17, 32), 10, colors.yellow)
                 pmsg("Never share this with anyone.",  12, colors.red)
                 pmsg("Use it to migrate to a new Pad.", 13, colors.lightGray)
-                waitKey()
-                draw()
+                waitKey(); draw()
 
             elseif p1 == keys.n then
                 nodes = screenNodeManager(nodes, secretKey, address)
                 draw()
 
             elseif p1 == keys.v then
-                screenVault(secretKey, address, nodes)
-                draw()
+                screenVault(secretKey, address, nodes); draw()
 
             elseif p1 == keys.u then
-                screenUpdate()
-                draw()
+                screenUpdate(); draw()
 
             elseif p1 == keys.l then
                 sess.clear()
@@ -628,6 +759,9 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         elseif ev == "timer" then
             comms.heartbeatAll(secretKey, address, nodes)
             os.startTimer(60)
+        end
+    end
+end
         end
     end
 end
@@ -730,6 +864,7 @@ local function boot()
 
     -- 6. Register on all nodes (idempotent, fire-and-forget via timer)
     comms.registerAll(secretKey, address, playerName, nodes)
+    if playerName then cacheName(address, playerName) end  -- Ami-DNS: seed local cache
 
     -- 7. First heartbeat + start 60s timer
     comms.heartbeatAll(secretKey, address, nodes)

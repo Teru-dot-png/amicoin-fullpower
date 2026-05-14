@@ -34,11 +34,11 @@ end
 
 local function banner(title)
     cls()
-    term.setBackgroundColor(colors.blue)
-    term.setTextColor(colors.yellow)
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
     term.setCursorPos(1, 1)
     term.clearLine()
-    center(" AmiCoin Wallet ", 1, colors.yellow, colors.blue)
+    center(" AmiCoin Wallet ", 1, colors.white, colors.red)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
     if title then

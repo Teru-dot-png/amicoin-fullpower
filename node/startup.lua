@@ -308,6 +308,66 @@ local function statusLoop()
     end
 end
 
+-- ── Monitor display ──────────────────────────────────────────────────────────
+-- Draws live stats on an attached monitor every 10 s.
+-- If no monitor is connected the loop simply sleeps and checks again later.
+local function monitorLoop(nodeKey)
+    while true do
+        local mon = peripheral.find("monitor")
+        if mon then
+            pcall(function()
+                pcall(function() mon.setTextScale(0.5) end)
+                local mw = mon.getSize()
+                mon.setBackgroundColor(colors.black)
+                mon.clear()
+
+                -- Header bar
+                mon.setBackgroundColor(colors.red)
+                mon.setTextColor(colors.white)
+                mon.setCursorPos(1, 1)
+                mon.clearLine()
+                local title = " AmiCoin Node v" .. NODE_VERSION
+                mon.setCursorPos(math.floor((mw - #title) / 2) + 1, 1)
+                mon.write(title)
+                mon.setBackgroundColor(colors.black)
+
+                -- Divider
+                mon.setTextColor(colors.gray)
+                mon.setCursorPos(1, 2)
+                mon.write(string.rep("-", mw))
+
+                -- Stats
+                local active = miner.getActive()
+                local snap   = ledger.snapshot()
+                local total  = 0
+                for _, v in pairs(snap) do total = total + v end
+                local ami = string.format("%.6f AMI", total / 1000000)
+
+                mon.setCursorPos(1, 3)
+                mon.setTextColor(colors.lightGray)
+                mon.write("Key:    " .. nodeKey:sub(1, 16) .. "...")
+
+                mon.setCursorPos(1, 4)
+                mon.setTextColor(colors.lime)
+                mon.write("Active: " .. #active .. " wallet(s)")
+
+                mon.setCursorPos(1, 5)
+                mon.setTextColor(colors.yellow)
+                mon.write("Supply: " .. total .. " uAMI")
+
+                mon.setCursorPos(1, 6)
+                mon.setTextColor(colors.cyan)
+                mon.write("      = " .. ami)
+
+                mon.setCursorPos(1, 7)
+                mon.setTextColor(colors.gray)
+                mon.write("Chan:   " .. MESH_CHANNEL)
+            end)
+        end
+        os.sleep(10)
+    end
+end
+
 -- ── Main ─────────────────────────────────────────────────────────────────────
 local function main()
     term.clear()
@@ -333,17 +393,19 @@ local function main()
     end
     router.open(MESH_CHANNEL)
     print("[Net] Ender Router opened on channel " .. MESH_CHANNEL)
+    print("[Tip] Press U at any time to update from GitHub.")
+    local monAttached = peripheral.find("monitor") ~= nil
+    print("[Mon] Monitor: " .. (monAttached and "found" or "not found"))
 
-    -- Run the miner daemon and the network listener in parallel.
+    -- Run all coroutines in parallel; all loop forever.
     parallel.waitForAll(
         function() miner.run() end,
         function() statusLoop() end,
         function()
-            print("[Net] Listening for wallet packets…")
+            print("[Net] Listening for wallet packets...")
             while true do
                 local event, side, senderChan, replyChan, rawMsg = os.pullEvent("modem_message")
                 if rawMsg and type(rawMsg) == "string" then
-                    -- Wire format: senderKeyHex .. "|" .. cipherhex
                     local sep = rawMsg:find("|")
                     if sep then
                         local senderKey = rawMsg:sub(1, sep - 1)
@@ -357,6 +419,13 @@ local function main()
                         print("[Net] Ignored: no | separator in message")
                     end
                 end
+            end
+        end,
+        function() monitorLoop(nodeKey) end,
+        function()
+            while true do
+                local _, key = os.pullEvent("key")
+                if key == keys.u then selfUpdate() end
             end
         end
     )

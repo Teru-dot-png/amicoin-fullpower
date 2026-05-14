@@ -18,7 +18,7 @@ local FILES = {
 }
 
 local function printBanner()
-    term.setTextColor(colors.yellow)
+    term.setTextColor(colors.red)
     print("===========================================")
     print("  AmiCoin Node Installer")
     print("===========================================")

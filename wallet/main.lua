@@ -309,7 +309,8 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             if #perNode > 1 then
                 for i, n in ipairs(perNode) do
                     if n.err then
-                        pmsg(string.format("  %s: [err]", n.name:sub(1,12)), 7 + i, colors.red)
+                        local short = tostring(n.err):sub(1, W - 16)
+                        pmsg(string.format("  %s: %s", n.name:sub(1,12), short), 7 + i, colors.red)
                     else
                         pmsg(string.format("  %s: %.6f AMI", n.name:sub(1,12), n.balance/1000000), 7 + i, colors.lightGray)
                     end

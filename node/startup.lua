@@ -150,6 +150,14 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         return
     end
 
+    -- Targeted routing: if the wallet included a targetKey hint, only respond
+    -- if our key starts with that prefix. Stops all nodes replying to one broadcast.
+    if type(pkt.targetKey) == "string" and #pkt.targetKey > 0 then
+        if nodeKey:sub(1, #pkt.targetKey) ~= pkt.targetKey then
+            return  -- packet is for a different node
+        end
+    end
+
     if cmd == "HEARTBEAT" then
         miner.heartbeat(from)
         -- heartbeat is high-frequency, only log occasionally to avoid spam

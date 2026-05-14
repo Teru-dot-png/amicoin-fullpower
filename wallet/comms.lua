@@ -66,6 +66,11 @@ local function send(secretKey, nodeKey, packet, expectReply)
         return false, nil, "No Ender Router found on this Pad"
     end
 
+    -- Stamp target hint so only the intended node responds
+    if nodeKey and type(nodeKey) == "string" and #nodeKey >= 8 then
+        packet.targetKey = nodeKey:sub(1, 8)
+    end
+
     local plain  = textutils.serialiseJSON(packet)
     local cipher = xtea.encrypt(plain, secretKey)
     local wire   = secretKey .. "|" .. cipher

@@ -34,7 +34,7 @@ On the new Ender Router Pad, run the installer:
 wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installpad.lua
 ```
 
-Reboot the Pad. The Wallet App will launch automatically.
+The installer will print a per-file hash and a combined **install fingerprint** when it finishes. You can compare this fingerprint against the value published on the GitHub repository to confirm the files were not altered in transit. Reboot the Pad. The Wallet App launches automatically.
 
 ---
 
@@ -50,26 +50,40 @@ The app will derive your public address from the key and confirm the import.
 
 ---
 
-## Step 4 — Enter the Node Key
+## Step 4 — Configure Your Nodes
 
-When prompted, enter the 32-character **Node XTEA Key** (displayed on the node computer when it first booted). This is required so the Pad can decrypt replies from the node.
+When prompted, add at least one **Node XTEA Key** (the 32-character key displayed on the node computer when it first booted). If you have lost the node key, reboot the node — it prints the stored key again on startup.
 
-If you have lost the node key, reboot the node — it will print the stored key again on startup.
+You can manage nodes at any time from the Dashboard by pressing **`[N]`**. Multiple nodes can be added; the wallet aggregates your balance across all of them and shows per-node latency on the Glass Cockpit.
 
 ---
 
 ## Step 5 — Verify Your Balance
 
-On the Dashboard, press **`[R]`** to refresh your balance. Your full coin balance will be restored from the node's ledger.
+On the Dashboard, press **`[R]`** to refresh. Your balance is fetched from all configured nodes and the total is displayed. Per-node balances appear in the node table below the total.
+
+---
+
+## What Transfers with the Key
+
+| Data | Stored on node | Stored on Pad | Migrates with key? |
+|------|---------------|---------------|--------------------|
+| Coin balance | ✅ Yes | ❌ No | ✅ Automatically |
+| Registered player name | ✅ Yes | ❌ No | ✅ Automatically |
+| AmiVault locks | ✅ Yes | ❌ No | ✅ Automatically |
+| Node list | ❌ No | ✅ Yes (`/wallet_data/nodes.json`) | ⚠️ Re-enter manually |
+| Ami-DNS name cache | ❌ No | ✅ Yes (`/wallet_data/names_cache.json`) | ⚠️ Rebuilt automatically over time |
+| Auto-login session | ❌ No | ✅ Yes (hardware-bound) | ❌ New session created on first login |
 
 ---
 
 ## Using the Same Key on Multiple Pads
 
-Running the same Secret Key on more than one Pad is **supported** — all Pads will share the same wallet address and balance. However:
+Running the same Secret Key on more than one Pad is **supported** — all Pads share the same wallet address and balance. However:
 
 - Each active Pad sends its own heartbeats, but the node de-duplicates by address — you earn uptime rewards once per address, not once per Pad.
 - Sending a transfer from one Pad while another Pad is also online is safe; the ledger is authoritative on the node.
+- Each Pad maintains its own node list and Ami-DNS cache independently.
 
 ---
 
@@ -86,3 +100,11 @@ Not directly — the public address is derived from the key, so changing the key
 **Q: Is it safe to type my key into the Import screen?**
 
 The key is entered through a password-masked input (`read("*")`), so it will not be visible on screen. Ensure no one is watching your physical screen when entering it.
+
+**Q: My AmiVault locks did not show up after migrating. What do I do?**
+
+AmiVault data is stored on the node's ledger and is tied to your address, not your Pad. Press **`[V]`** on the Dashboard and the vault screen will fetch them from the node automatically. If vaults are missing, confirm the node key is correct and press Refresh.
+
+**Q: Do I need to re-register my player name after migrating?**
+
+No. Your name is registered on the node's ledger against your address. As long as you import the same Secret Key (which derives the same address), your name is automatically associated on the node side. The new Pad will cache your name locally the first time it appears in a lookup or heartbeat response.

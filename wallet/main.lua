@@ -152,6 +152,17 @@ local function cacheName(addr, name)
     c[addr] = name
     saveNameCache()
 end
+-- Reverse-resolve: scan the cache for a name match (case-insensitive).
+-- Returns the 128-hex address string, or nil if not found.
+local function reverseResolve(name)
+    if type(name) ~= "string" or #name == 0 then return nil end
+    local c = loadNameCache()
+    local lower = name:lower()
+    for addr, n in pairs(c) do
+        if n:lower() == lower then return addr end
+    end
+    return nil
+end
 -- Resolve address to display string: "Name" if known, else "38de...3e9f"
 local function resolveAddr(addr)
     if type(addr) ~= "string" or #addr < 16 then return tostring(addr) end
@@ -648,10 +659,13 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     if playerName then cacheName(address, playerName) end
 
     -- ── State ────────────────────────────────────────────────────────────────
-    local totalBalance = nil
-    local perNode      = {}   -- {name, balance, err, latency, stats}
-    local balErr       = nil
-    local netStats     = nil  -- {active_wallets, total_supply, current_rate, total_ticks}
+    local totalBalance  = nil
+    local perNode       = {}   -- {name, balance, err, latency, stats}
+    local balErr        = nil
+    local netStats      = nil  -- {active_wallets, total_supply, current_rate, total_ticks}
+    -- Track which nodes we've successfully registered on so we can retry
+    -- nodes that were offline at boot.
+    local registered    = {}
 
     -- ── Data refresh ─────────────────────────────────────────────────────────
     local function refreshBalance()
@@ -671,6 +685,12 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 entry.latency = data._latency
                 total = total + data.balance
                 anyOk = true
+                -- Re-register on any node we haven't confirmed yet (catches nodes
+                -- that were offline when the wallet first booted).
+                if not registered[node.key] then
+                    comms.register(secretKey, node.key, address, playerName)
+                    registered[node.key] = true
+                end
                 -- Fetch STATS per-node so every node gets its fingerprint checked.
                 -- netStats keeps the first healthy node's aggregate data for the
                 -- dashboard network row; fingerprint is validated independently.
@@ -850,16 +870,24 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                     if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
                         toAddr = toRaw:lower()
                     else
-                        pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
-                        local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
-                        if ok and data and data.address then
-                            toAddr = data.address
-                            cacheName(toAddr, toRaw)  -- Ami-DNS: cache resolved name
-                            comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
-                            pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
+                        -- 1. Check local Ami-DNS cache first (instant, works offline)
+                        local cached = reverseResolve(toRaw)
+                        if cached then
+                            toAddr = cached
+                            pmsg("Found (local): " .. resolveAddr(toAddr), 9, colors.lime)
                         else
-                            pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
-                            waitKey(); draw()
+                            -- 2. Fall back to querying all nodes
+                            pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
+                            local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
+                            if ok and data and data.address then
+                                toAddr = data.address
+                                cacheName(toAddr, toRaw)
+                                comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
+                                pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
+                            else
+                                pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
+                                waitKey(); draw()
+                            end
                         end
                     end
 

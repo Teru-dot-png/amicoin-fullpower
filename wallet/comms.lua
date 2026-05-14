@@ -254,4 +254,36 @@ function comms.fetchNodeKey(secretKey, address, password)
     return result_ok, result_key, result_err
 end
 
+-- ── AmiVault ──────────────────────────────────────────────────────────────────
+
+-- Lock `amountMicro` uAMI for `durationSecs` real seconds.
+function comms.vaultLock(secretKey, nodeKey, address, amountMicro, durationSecs)
+    return send(secretKey, nodeKey, {
+        cmd      = "VAULT_LOCK",
+        from     = address,
+        amount   = amountMicro,
+        duration = durationSecs,
+        nonce    = os.epoch("utc"),
+    }, true)
+end
+
+-- Attempt to unlock a previously created vault by ID.
+function comms.vaultUnlock(secretKey, nodeKey, address, vaultId)
+    return send(secretKey, nodeKey, {
+        cmd      = "VAULT_UNLOCK",
+        from     = address,
+        vault_id = vaultId,
+        nonce    = os.epoch("utc"),
+    }, true)
+end
+
+-- Fetch the list of vaults for this address from a node.
+function comms.listVaults(secretKey, nodeKey, address)
+    return send(secretKey, nodeKey, {
+        cmd   = "VAULT_LIST",
+        from  = address,
+        nonce = os.epoch("utc"),
+    }, true)
+end
+
 return comms

@@ -94,7 +94,7 @@ else
     term.setTextColor(colors.green)
     print("Wallet installed!")
     print("")
-    term.setTextColor(colors.cyan)
+    term.setTextColor(colors.orange)
     print("Next steps:")
     print("  1. Reboot this Pad (type: reboot)")
     print("  2. The wallet will launch automatically.")

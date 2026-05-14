@@ -119,4 +119,87 @@ function ledger.register(address)
     return false -- already exists
 end
 
+-- ── AmiVault ─────────────────────────────────────────────────────────────────
+-- Time-locked savings.  Coins are deducted immediately and returned only once
+-- the real-time unlock timestamp has passed.  Stored in /data/vaults.json.
+
+local VAULTS_FILE = "/data/vaults.json"
+
+local function loadVaults()
+    if not fs.exists(VAULTS_FILE) then return {} end
+    local f = fs.open(VAULTS_FILE, "r")
+    local raw = f.readAll()
+    f.close()
+    return textutils.unserialiseJSON(raw) or {}
+end
+
+local function saveVaults(v)
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(VAULTS_FILE, "w")
+    f.write(textutils.serialiseJSON(v))
+    f.close()
+end
+
+-- Lock `amount` uAMI from `address` for `durationSecs` real seconds.
+-- Returns: true, vaultId  OR  false, errMsg
+function ledger.vaultLock(address, amount, durationSecs)
+    assert(type(address) == "string" and #address == 128, "Invalid address")
+    assert(type(amount) == "number" and amount > 0, "Invalid amount")
+    assert(type(durationSecs) == "number" and durationSecs > 0, "Invalid duration")
+    local db = load()
+    if (db[address] or 0) < amount then
+        return false, "Insufficient funds"
+    end
+    db[address] = db[address] - amount
+    save(db)
+    local now     = math.floor(os.epoch("utc") / 1000)
+    local vaultId = string.format("%08x%08x", math.random(0, 2147483647), math.random(0, 2147483647))
+    local vaults  = loadVaults()
+    vaults[vaultId] = {
+        owner      = address,
+        amount     = amount,
+        created_at = now,
+        unlock_at  = now + math.floor(durationSecs),
+    }
+    saveVaults(vaults)
+    return true, vaultId
+end
+
+-- Attempt to unlock a vault.  Returns: true, amount  OR  false, errMsg
+function ledger.vaultUnlock(address, vaultId)
+    local vaults = loadVaults()
+    local vault  = vaults[vaultId]
+    if not vault then return false, "Vault not found" end
+    if vault.owner ~= address then return false, "Not your vault" end
+    local now = math.floor(os.epoch("utc") / 1000)
+    if now < vault.unlock_at then
+        return false, "Locked for " .. (vault.unlock_at - now) .. "s more"
+    end
+    local db = load()
+    db[address]  = (db[address] or 0) + vault.amount
+    save(db)
+    vaults[vaultId] = nil
+    saveVaults(vaults)
+    return true, vault.amount
+end
+
+-- Return all vaults belonging to `address` as an array of info tables.
+function ledger.listVaults(address)
+    local vaults = loadVaults()
+    local now    = math.floor(os.epoch("utc") / 1000)
+    local result = {}
+    for id, v in pairs(vaults) do
+        if v.owner == address then
+            result[#result + 1] = {
+                id        = id,
+                amount    = v.amount,
+                unlock_at = v.unlock_at,
+                locked    = (now < v.unlock_at),
+                remaining = math.max(0, v.unlock_at - now),
+            }
+        end
+    end
+    return result
+end
+
 return ledger

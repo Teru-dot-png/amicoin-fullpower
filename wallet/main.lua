@@ -42,15 +42,39 @@ local function banner(title)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
     if title then
-        center(title, 3, colors.cyan, colors.black)
+        center(title, 3, colors.orange, colors.black)
     end
 end
 
+-- Write text at (1,y) with inline AMI/uAMI token coloring.
+-- "uAMI"  → u=lime  A=pink  M=red    I=pink
+-- "AMI"   →         A=pink  M=red    I=pink
+-- Everything else is rendered in `color`.
 local function pmsg(text, y, color)
+    color = color or colors.white
     term.setCursorPos(1, y)
-    term.setTextColor(color or colors.white)
     if #text > W then text = text:sub(1, W) end
-    term.write(text)
+    local i = 1
+    while i <= #text do
+        if text:sub(i, i + 3) == "uAMI" then
+            term.setTextColor(colors.lime);  term.write("u")
+            term.setTextColor(colors.pink);  term.write("A")
+            term.setTextColor(colors.red);   term.write("M")
+            term.setTextColor(colors.pink);  term.write("I")
+            term.setTextColor(color)
+            i = i + 4
+        elseif text:sub(i, i + 2) == "AMI" then
+            term.setTextColor(colors.pink);  term.write("A")
+            term.setTextColor(colors.red);   term.write("M")
+            term.setTextColor(colors.pink);  term.write("I")
+            term.setTextColor(color)
+            i = i + 3
+        else
+            term.setTextColor(color)
+            term.write(text:sub(i, i))
+            i = i + 1
+        end
+    end
 end
 
 local function prompt(label, y, secret)
@@ -156,8 +180,8 @@ local function screenWelcome()
     banner("Welcome")
     pmsg("No wallet found on this Pad.", 5)
     pmsg("", 6)
-    pmsg("  [1] Create a new wallet", 7, colors.cyan)
-    pmsg("  [2] Import existing key",  8, colors.cyan)
+    pmsg("  [1] Create a new wallet", 7, colors.orange)
+    pmsg("  [2] Import existing key",  8, colors.orange)
     pmsg("  [Q] Quit",                 9, colors.gray)
     while true do
         local _, key = os.pullEvent("key")
@@ -183,7 +207,7 @@ local function screenCreate()
     os.sleep(0.3)
     cls()
     banner("Your New Wallet")
-    pmsg("Player: " .. playerName, 5, colors.cyan)
+    pmsg("Player: " .. playerName, 5, colors.orange)
     pmsg("SECRET KEY (write this down!):", 7, colors.red)
     pmsg(secretKey:sub(1, 16),  8, colors.yellow)
     pmsg(secretKey:sub(17, 32), 9, colors.yellow)
@@ -227,7 +251,7 @@ local function screenNodeManager(nodes, secretKey, address)
             end
         end
         local base = 6 + #nodes
-        pmsg("  [A] Add node",    base,     colors.cyan)
+        pmsg("  [A] Add node",    base,     colors.orange)
         if #nodes > 0 then
             pmsg("  [D] Remove node", base + 1, colors.red)
         end
@@ -243,7 +267,7 @@ local function screenNodeManager(nodes, secretKey, address)
             if #nodeName == 0 then nodeName = "Node " .. (#nodes + 1) end
             pmsg("How to add?", 9, colors.yellow)
             pmsg("  [1] Enter 32-char key manually", 10, colors.white)
-            pmsg("  [2] Fetch via setup password",   11, colors.cyan)
+            pmsg("  [2] Fetch via setup password",   11, colors.orange)
 
             local addKey
             while true do
@@ -265,7 +289,7 @@ local function screenNodeManager(nodes, secretKey, address)
                     break
                 elseif ak == keys.two or ak == keys.n2 then
                     -- Password-based auto-fetch
-                    pmsg("Setup password for this node:", 13, colors.cyan)
+                    pmsg("Setup password for this node:", 13, colors.orange)
                     local pw = prompt("> ", 15, true)
                     if #pw == 0 then
                         pmsg("Cancelled.", 17, colors.gray)
@@ -315,6 +339,121 @@ local function screenNodeManager(nodes, secretKey, address)
     end
 end
 
+-- ── AmiVault ──────────────────────────────────────────────────────────────────
+local function screenVault(secretKey, address, nodes)
+    if #nodes == 0 then
+        banner("AmiVault")
+        pmsg("No nodes configured.", 5, colors.red)
+        pmsg("Add a node first with [N].", 6)
+        waitKey()
+        return
+    end
+    local node = nodes[1]
+
+    local NKEYS = { keys.one, keys.two, keys.three, keys.four, keys.five,
+                    keys.six, keys.seven, keys.eight, keys.nine }
+
+    while true do
+        banner("AmiVault")
+        pmsg("Fetching vaults from " .. node.name .. "...", 5, colors.yellow)
+        local ok, data, err = comms.listVaults(secretKey, node.key, address)
+        local vaults = (ok and data and type(data.vaults) == "table") and data.vaults or {}
+        cls()
+        banner("AmiVault")
+        pmsg("Node: " .. node.name, 4, colors.gray)
+
+        if not ok then
+            pmsg("Error: " .. (err or "failed"), 5, colors.red)
+        elseif #vaults == 0 then
+            pmsg("No active vaults.", 5, colors.gray)
+        else
+            for i, v in ipairs(vaults) do
+                local ami = string.format("%.4f AMI", v.amount / 1000000)
+                if v.locked then
+                    local m = math.floor(v.remaining / 60)
+                    local s = v.remaining % 60
+                    pmsg(string.format("  %d: %s  LOCKED %dm %ds", i, ami, m, s), 5 + i, colors.yellow)
+                else
+                    pmsg(string.format("  %d: %s  READY [%d] to unlock", i, ami, i), 5 + i, colors.lime)
+                end
+            end
+        end
+
+        local base = 6 + math.max(1, #vaults)
+        pmsg("  [L] Lock new coins", base,     colors.orange)
+        pmsg("  [B] Back",           base + 1, colors.gray)
+
+        local _, key = os.pullEvent("key")
+
+        if key == keys.l then
+            -- Lock flow
+            banner("AmiVault - Lock")
+            pmsg("Duration:", 5)
+            pmsg("  [1] 5 minutes  (300s)",    6, colors.white)
+            pmsg("  [2] 30 minutes (1800s)",   7, colors.white)
+            pmsg("  [3] 2 hours    (7200s)",   8, colors.white)
+            pmsg("  [4] Custom",               9, colors.white)
+            local dur = nil
+            while not dur do
+                local _, dk = os.pullEvent("key")
+                if     dk == keys.one  or dk == keys.n1 then dur = 300
+                elseif dk == keys.two  or dk == keys.n2 then dur = 1800
+                elseif dk == keys.three or dk == keys.n3 then dur = 7200
+                elseif dk == keys.four or dk == keys.n4 then
+                    local sStr = prompt("Duration (seconds): ", 11)
+                    dur = tonumber(sStr)
+                    if not dur or dur <= 0 then
+                        pmsg("Invalid.", 13, colors.red)
+                        os.sleep(1)
+                        dur = nil
+                    end
+                end
+            end
+            pmsg("Amount to lock (AMI):", 11)
+            local rawAmt = prompt("> ", 13)
+            local amt = tonumber(rawAmt)
+            if not amt or amt <= 0 then
+                pmsg("Invalid amount.", 15, colors.red)
+                waitKey()
+            else
+                local micro = math.floor(amt * 1000000)
+                local m = math.floor(dur / 60)
+                local s = dur % 60
+                pmsg(string.format("Locking %.4f AMI for %dm %ds...", amt, m, s), 15, colors.yellow)
+                local ok2, data2, err2 = comms.vaultLock(secretKey, node.key, address, micro, dur)
+                if ok2 then
+                    local vid = (data2 and data2.vault_id) or "?"
+                    pmsg("Vault created! ID: " .. vid:sub(1, 12) .. "...", 16, colors.green)
+                else
+                    pmsg("Failed: " .. (err2 or "unknown"), 16, colors.red)
+                end
+                waitKey()
+            end
+
+        elseif key == keys.b then
+            return
+
+        else
+            -- Number keys unlock ready vaults
+            for i, nk in ipairs(NKEYS) do
+                if key == nk and vaults[i] and not vaults[i].locked then
+                    banner("AmiVault - Unlock")
+                    pmsg("Unlocking vault #" .. i .. "...", 5, colors.yellow)
+                    local ok2, data2, err2 = comms.vaultUnlock(secretKey, node.key, address, vaults[i].id)
+                    if ok2 then
+                        local returned = (data2 and data2.amount) or 0
+                        pmsg(string.format("Unlocked! +%.6f AMI", returned / 1000000), 6, colors.green)
+                    else
+                        pmsg("Failed: " .. (err2 or "unknown"), 6, colors.red)
+                    end
+                    waitKey()
+                    break
+                end
+            end
+        end
+    end
+end
+
 -- ── Dashboard ─────────────────────────────────────────────────────────────────
 local function screenDashboard(secretKey, address, nodes, playerName)
     local totalBalance = nil
@@ -343,7 +482,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     local function draw()
         banner("Dashboard")
         local nameStr = playerName and ("Player: " .. playerName) or "Player: (unknown)"
-        pmsg(nameStr, 5, colors.cyan)
+        pmsg(nameStr, 5, colors.orange)
         pmsg("Addr: " .. address:sub(1, 16) .. "...", 6, colors.lightGray)
 
         if balErr then
@@ -366,15 +505,16 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         end
 
         local base = (#perNode > 1) and (8 + #perNode) or 9
-        pmsg("  [S] Send coins",                  base,     colors.cyan)
-        pmsg("  [R] Refresh balance",              base + 1, colors.cyan)
-        pmsg("  [E] Export / View Key",            base + 2, colors.cyan)
-        pmsg("  [N] Nodes (" .. #nodes .. ")",     base + 3, colors.cyan)
-        pmsg("  [U] Update software",              base + 4, colors.cyan)
-        pmsg("  [L] Logout",                       base + 5, colors.gray)
-        pmsg("  [L] Logout",                       base + 5, colors.gray)
+        pmsg("  [S] Send coins",                  base,     colors.orange)
+        pmsg("  [R] Refresh balance",              base + 1, colors.orange)
+        pmsg("  [E] Export / View Key",            base + 2, colors.orange)
+        pmsg("  [N] Nodes (" .. #nodes .. ")",     base + 3, colors.orange)
+        pmsg("  [V] AmiVault",                     base + 4, colors.pink)
+        pmsg("  [U] Update software",              base + 5, colors.orange)
+        pmsg("  [L] Logout",                       base + 6, colors.gray)
     end
 
+    refreshBalance()
     draw()
 
     while true do
@@ -457,7 +597,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
             elseif p1 == keys.e then
                 banner("Export Secret Key")
-                if playerName then pmsg("Player: " .. playerName, 5, colors.cyan) end
+                if playerName then pmsg("Player: " .. playerName, 5, colors.orange) end
                 pmsg("Your SECRET KEY is:", 7, colors.red)
                 pmsg(secretKey:sub(1, 16),  9, colors.yellow)
                 pmsg(secretKey:sub(17, 32), 10, colors.yellow)
@@ -468,6 +608,10 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
             elseif p1 == keys.n then
                 nodes = screenNodeManager(nodes, secretKey, address)
+                draw()
+
+            elseif p1 == keys.v then
+                screenVault(secretKey, address, nodes)
                 draw()
 
             elseif p1 == keys.u then
@@ -534,7 +678,7 @@ local function boot()
         banner("Add First Node")
         pmsg("No nodes configured yet.", 5)
         pmsg("  [1] Enter 32-char key manually", 7, colors.white)
-        pmsg("  [2] Fetch via setup password",   8, colors.cyan)
+        pmsg("  [2] Fetch via setup password",   8, colors.orange)
         pmsg("  [S] Skip for now",               9, colors.gray)
 
         local firstKey, firstName
@@ -555,7 +699,7 @@ local function boot()
                 end
                 break
             elseif fk == keys.two or fk == keys.n2 then
-                pmsg("Setup password for the node:", 11, colors.cyan)
+                pmsg("Setup password for the node:", 11, colors.orange)
                 local pw = prompt("> ", 13, true)
                 if #pw > 0 then
                     pmsg("Contacting node...", 15, colors.yellow)

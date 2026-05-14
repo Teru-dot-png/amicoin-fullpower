@@ -26,6 +26,22 @@ local HALVING_TICKS    = 525600      -- ticks before base rate halves
 local activeWallets = {}  -- [address] = lastSeenTimestamp
 local totalTicks    = 0
 
+-- Persist totalTicks so the halving schedule survives reboots.
+local STATE_FILE = "/data/miner_state.json"
+local function loadState()
+    if not fs.exists(STATE_FILE) then return { totalTicks = 0 } end
+    local f = fs.open(STATE_FILE, "r")
+    local raw = f.readAll()
+    f.close()
+    return textutils.unserialiseJSON(raw) or { totalTicks = 0 }
+end
+local function saveState()
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(STATE_FILE, "w")
+    f.write(textutils.serialiseJSON({ totalTicks = totalTicks }))
+    f.close()
+end
+
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 local function currentRate()
     local halvings = math.floor(totalTicks / HALVING_TICKS)
@@ -44,12 +60,16 @@ end
 
 -- Main reward loop.  Call this once; it blocks forever using os.sleep().
 function daemon.run()
+    local state = loadState()
+    totalTicks  = state.totalTicks or 0       -- restore halving progress
     print("[Miner] Proof-of-Uptime daemon started.")
-    print("[Miner] Reward interval: " .. REWARD_INTERVAL .. "s | Base rate: " .. BASE_RATE .. " uAMI/tick")
+    print(string.format("[Miner] Reward interval: %ds | Base rate: %d uAMI | Tick: #%d",
+        REWARD_INTERVAL, BASE_RATE, totalTicks))
 
     while true do
         os.sleep(REWARD_INTERVAL)
         totalTicks = totalTicks + 1
+        saveState()
 
         local now  = os.epoch("utc") / 1000
         local rate = currentRate()

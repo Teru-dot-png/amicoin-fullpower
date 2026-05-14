@@ -99,7 +99,7 @@ else
     term.setTextColor(colors.green)
     print("Installation complete!")
     print("")
-    term.setTextColor(colors.cyan)
+    term.setTextColor(colors.orange)
     print("Next steps:")
     print("  1. Attach an Ender Router peripheral.")
     print("  2. Reboot this computer (type: reboot)")

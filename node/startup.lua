@@ -252,6 +252,54 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         local resp   = xtea.encrypt(textutils.serialiseJSON({ok=true, key=nodeKey}), pwdKey)
         router.transmit(replyChannel, MESH_CHANNEL, resp)
         print("[Net] Sent node key to " .. from:sub(1,12) .. "... (password auth)")
+
+    elseif cmd == "VAULT_LOCK" then
+        local amount   = pkt.amount
+        local duration = pkt.duration
+        if type(amount) ~= "number" or amount <= 0 then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
+            return
+        end
+        if type(duration) ~= "number" or duration <= 0 then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid duration"}), nodeKey))
+            return
+        end
+        local ok, result = ledger.vaultLock(from, amount, math.floor(duration))
+        if ok then
+            print(string.format("[Net] VAULT_LOCK %s... %d uAMI for %ds -> %s...", who, amount, duration, result:sub(1,8)))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=true, vault_id=result}), nodeKey))
+        else
+            print(string.format("[Net] VAULT_LOCK %s... FAILED: %s", who, result))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err=result}), nodeKey))
+        end
+
+    elseif cmd == "VAULT_UNLOCK" then
+        local vaultId = pkt.vault_id
+        if type(vaultId) ~= "string" then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Missing vault_id"}), nodeKey))
+            return
+        end
+        local ok, result = ledger.vaultUnlock(from, vaultId)
+        if ok then
+            print(string.format("[Net] VAULT_UNLOCK %s... vault %s... -> %d uAMI", who, vaultId:sub(1,8), result))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=true, amount=result}), nodeKey))
+        else
+            print(string.format("[Net] VAULT_UNLOCK %s... FAILED: %s", who, result))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err=result}), nodeKey))
+        end
+
+    elseif cmd == "VAULT_LIST" then
+        local vaults = ledger.listVaults(from)
+        print(string.format("[Net] VAULT_LIST  %s... -> %d vault(s)", who, #vaults))
+        router.transmit(replyChannel, MESH_CHANNEL,
+            xtea.encrypt(textutils.serialiseJSON({ok=true, vaults=vaults}), nodeKey))
     end
 end
 
@@ -422,6 +470,19 @@ local function main()
             end
         end,
         function() monitorLoop(nodeKey) end,
+        function()
+            -- Peripheral watchdog: reboot if Ender Router disconnects.
+            -- A missing peripheral makes any method call throw; pcall catches it.
+            while true do
+                os.sleep(30)
+                local alive = pcall(function() return router.isOpen(MESH_CHANNEL) end)
+                if not alive then
+                    print("[Watchdog] Ender Router lost! Rebooting in 5s...")
+                    os.sleep(5)
+                    os.reboot()
+                end
+            end
+        end,
         function()
             while true do
                 local _, key = os.pullEvent("key")

@@ -87,7 +87,7 @@ local function send(secretKey, nodeKey, packet, expectReply)
 
     while true do
         local ev, p1, p2, p3, p4 = os.pullEvent()
-        if ev == "modem_message" and p3 == replyChannel and type(p4) == "string" then
+        if ev == "modem_message" and p2 == replyChannel and type(p4) == "string" then
             os.cancelTimer(timer)
             local ok2, plain2 = pcall(xtea.decrypt, p4, nodeKey)
             if ok2 then
@@ -224,7 +224,7 @@ function comms.fetchNodeKey(secretKey, address, password)
 
     while true do
         local ev, p1, p2, p3, p4 = os.pullEvent()
-        if ev == "modem_message" and p3 == replyChannel and type(p4) == "string" then
+        if ev == "modem_message" and p2 == replyChannel and type(p4) == "string" then
             os.cancelTimer(timer)
             local ok2, plain2 = pcall(xtea.decrypt, p4, pwdKey)
             if ok2 then

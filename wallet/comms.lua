@@ -87,27 +87,29 @@ local function send(secretKey, nodeKey, packet, expectReply)
 
     local sendTime = os.epoch("utc")   -- milliseconds, for latency measurement
     local timer = os.startTimer(TIMEOUT)
-    local result_ok, result_data, result_err = false, nil, "Timeout"
+    local result_ok, result_data, result_err = false, nil, "Timeout - node did not respond"
 
     while true do
         local ev, p1, p2, p3, p4 = os.pullEvent()
         if ev == "modem_message" and p2 == replyChannel and type(p4) == "string" then
-            os.cancelTimer(timer)
+            -- Only accept replies that decrypt cleanly with THIS node's key.
+            -- Other nodes on the mesh may send stale/wrong-key replies on the
+            -- same reply channel; those will fail to decrypt and we keep waiting.
             local ok2, plain2 = pcall(xtea.decrypt, p4, nodeKey)
             if ok2 then
                 local data = textutils.unserialiseJSON(plain2)
                 if type(data) == "table" then
+                    -- Valid, confirmed reply from the intended node.
+                    os.cancelTimer(timer)
                     result_ok            = data.ok ~= false
                     result_data          = data
                     result_data._latency = os.epoch("utc") - sendTime  -- ms RTT
                     result_err           = data.err
-                else
-                    result_err = "Bad response format"
+                    break
                 end
-            else
-                result_err = "Decrypt failed - check node key"
+                -- JSON decoded but wrong structure: keep waiting
             end
-            break
+            -- Decrypt failed (wrong node replied) or bad JSON: keep waiting
         elseif ev == "timer" and p1 == timer then
             result_err = "Timeout - node did not respond"
             break

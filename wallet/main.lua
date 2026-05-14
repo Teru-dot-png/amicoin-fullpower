@@ -433,45 +433,76 @@ local function screenCommandCenter(nodes, secretKey, address)
 
         elseif key == keys.i and #nodes > 0 then
             -- ── Integrity Handshake ─────────────────────────────────────────
-            -- Queries every node's current FNV fingerprint via the dedicated
-            -- FINGERPRINT command. Trust-On-First-Connect (TOFC) stores the
-            -- first seen value; subsequent differences raise a [FP!] alert.
-            banner("Integrity Handshake")
-            pmsg("Querying " .. #nodes .. " node(s)...", 5, colors.yellow)
-            local row   = 7
-            local ok_ct = 0
+            -- Processes nodes strictly in priority order (list position 1…N).
+            -- send() now ignores replies that don't decrypt with the target
+            -- node's key, so other nodes on the mesh cannot interfere.
+            -- Live [idx/total] progress is shown before each blocking call.
+            local ok_ct  = 0
             local mis_ct = 0
-            for _, node in ipairs(nodes) do
+            local results = {}   -- accumulate so we can redraw as we go
+
+            for idx, node in ipairs(nodes) do
+                -- Show progress header BEFORE the blocking network call
+                banner("Integrity Handshake")
+                pmsg(string.format("[%d/%d] Querying '%s'...",
+                    idx, #nodes, node.name:sub(1,14)), 5, colors.yellow)
+                -- Re-draw already-completed results above the fold
+                local rrow = 7
+                for _, r in ipairs(results) do
+                    pmsg(r.line, rrow, r.col); rrow = rrow + 1
+                    if r.sub1 then pmsg(r.sub1, rrow, r.col2);   rrow = rrow + 1 end
+                    if r.sub2 then pmsg(r.sub2, rrow, colors.orange); rrow = rrow + 1 end
+                end
+
+                -- Blocking call — only accepts a reply encrypted with node.key
                 local ok, data, err = comms.getFingerprint(secretKey, node.key, address)
+
+                local entry = {}
                 if ok and data and data.fingerprint then
                     local fp = data.fingerprint
                     if not node.known_fp then
                         node.known_fp    = fp
                         node.fp_mismatch = false
                         ok_ct = ok_ct + 1
-                        pmsg(string.format("  %-10s TOFC  %s", node.name:sub(1,10), fp), row, colors.yellow)
+                        entry.line = string.format("  [%d] %-12s TOFC  %s",
+                            idx, node.name:sub(1,12), fp)
+                        entry.col  = colors.yellow
                     elseif node.known_fp == fp then
                         node.fp_mismatch = false
                         ok_ct = ok_ct + 1
-                        pmsg(string.format("  %-10s OK    %s", node.name:sub(1,10), fp), row, colors.green)
+                        entry.line = string.format("  [%d] %-12s OK    %s",
+                            idx, node.name:sub(1,12), fp)
+                        entry.col  = colors.green
                     else
                         node.fp_mismatch = true
                         mis_ct = mis_ct + 1
-                        pmsg(string.format("  %-10s !! MISMATCH", node.name:sub(1,8)), row, colors.red)
-                        row = row + 1
-                        pmsg(string.format("       got:  %s", fp),              row, colors.red)
-                        row = row + 1
-                        pmsg(string.format("       want: %s", node.known_fp),   row, colors.orange)
+                        entry.line = string.format("  [%d] %-12s !! MISMATCH",
+                            idx, node.name:sub(1,10))
+                        entry.col  = colors.red
+                        entry.sub1 = string.format("       got:  %s", fp)
+                        entry.col2 = colors.red
+                        entry.sub2 = string.format("       want: %s", node.known_fp)
                     end
                 else
-                    pmsg(string.format("  %-10s ERR   %s", node.name:sub(1,10), err or "?"), row, colors.red)
+                    entry.line = string.format("  [%d] %-12s ERR   %s",
+                        idx, node.name:sub(1,12), err or "?")
+                    entry.col  = colors.red
                 end
-                row = row + 1
+                results[#results + 1] = entry
             end
+
+            -- Final full render with summary
+            banner("Integrity Handshake")
+            local rrow = 5
+            for _, r in ipairs(results) do
+                pmsg(r.line, rrow, r.col); rrow = rrow + 1
+                if r.sub1 then pmsg(r.sub1, rrow, r.col2);      rrow = rrow + 1 end
+                if r.sub2 then pmsg(r.sub2, rrow, colors.orange); rrow = rrow + 1 end
+            end
+            rrow = rrow + 1
+            pmsg(string.format("Done: %d/%d OK  %d mismatch", ok_ct, #nodes, mis_ct),
+                rrow, mis_ct > 0 and colors.red or colors.green)
             saveNodes(nodes)
-            row = row + 1
-            local summary = string.format("Done: %d OK  %d mismatch", ok_ct, mis_ct)
-            pmsg(summary, row, mis_ct > 0 and colors.red or colors.green)
             waitKey()
 
         elseif key == keys.g and #nodes > 0 then

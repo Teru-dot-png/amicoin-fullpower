@@ -762,9 +762,6 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         end
     end
 end
-        end
-    end
-end
 
 -- ── Boot ──────────────────────────────────────────────────────────────────────
 local function boot()

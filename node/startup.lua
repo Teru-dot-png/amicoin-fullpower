@@ -301,6 +301,26 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON({ok=true, vaults=vaults}), nodeKey))
 
+    elseif cmd == "FINGERPRINT" then
+        -- Wallet requests the node's current file fingerprint for tamper detection.
+        local resp = textutils.serialiseJSON({
+            ok          = true,
+            fingerprint = nodeFingerprint,
+            version     = NODE_VERSION,
+        })
+        router.transmit(replyChannel, MESH_CHANNEL, xtea.encrypt(resp, nodeKey))
+
+    elseif cmd == "GOSSIP_DNS" then
+        -- Wallet gossiping a name<->address mapping discovered elsewhere.
+        -- Encrypted with wallet key + targeted routing = private to this node.
+        local gname = pkt.name
+        local gaddr = pkt.address
+        if type(gname) == "string" and #gname > 0
+        and type(gaddr) == "string" and #gaddr == 128 then
+            ledger.registerName(gname, gaddr)
+            -- Fire-and-forget; no reply needed.
+        end
+
     elseif cmd == "STATS" then
         -- Returns network-wide stats: active wallets, total supply, current rate, tick count.
         local active = miner.getActive()
@@ -308,12 +328,14 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         local total  = 0
         for _, v in pairs(snap) do total = total + v end
         local payload = {
-            ok            = true,
+            ok             = true,
             active_wallets = #active,
             total_supply   = total,
             current_rate   = miner.getCurrentRate(),
             total_ticks    = miner.getTotalTicks(),
+            lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
+            fingerprint    = nodeFingerprint,
         }
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
@@ -337,6 +359,27 @@ local function fnv1a(s)
         hash = (hash * 16777619) % 4294967296
     end
     return string.format("%08x", hash)
+end
+
+-- Compute a combined FNV-1a hash of all running node files.
+-- Called once at boot; result is returned to wallets on FINGERPRINT requests.
+local nodeFingerprint = "unknown"
+local function computeNodeFingerprint()
+    local checkFiles = {
+        "/startup.lua", "/ledger.lua", "/miner_daemon.lua",
+        "/xtea.lua",    "/shared/xtea.lua",
+    }
+    local parts = {}
+    for _, fp in ipairs(checkFiles) do
+        if fs.exists(fp) then
+            local fh = fs.open(fp, "r")
+            parts[#parts + 1] = fnv1a(fh.readAll())
+            fh.close()
+        else
+            parts[#parts + 1] = "missing"
+        end
+    end
+    return fnv1a(table.concat(parts, ":"))
 end
 
 local function selfUpdate()
@@ -388,7 +431,9 @@ local function statusLoop()
         local snap   = ledger.snapshot()
         local total  = 0
         for _, v in pairs(snap) do total = total + v end
-        print(string.format("[Node] Active wallets: %d | Total supply: %d uAMI", #active, total))
+        local lag = miner.getLagFactor()
+        local lagStr = lag < 0.7 and string.format(" | LAG %.0f%%", lag * 100) or ""
+        print(string.format("[Node] Active: %d | Supply: %d uAMI%s", #active, total, lagStr))
     end
 end
 
@@ -397,6 +442,10 @@ end
 -- If no monitor is connected the loop simply sleeps and checks again later.
 local function monitorLoop(nodeKey)
     while true do
+        -- Throttle monitor refresh when server is lagging to reduce tick pressure.
+        local lag      = miner.getLagFactor()
+        local sleepSec = (lag < 0.7) and 30 or 10
+
         local mon = peripheral.find("monitor")
         if mon then
             pcall(function()
@@ -446,9 +495,20 @@ local function monitorLoop(nodeKey)
                 mon.setCursorPos(1, 7)
                 mon.setTextColor(colors.gray)
                 mon.write("Chan:   " .. MESH_CHANNEL)
+
+                -- Lag indicator (only shown when lagging)
+                if lag < 0.7 then
+                    mon.setCursorPos(1, 8)
+                    mon.setTextColor(colors.red)
+                    mon.write(string.format("LAG:    ~%.0f%% TPS", lag * 100))
+                else
+                    mon.setCursorPos(1, 8)
+                    mon.setTextColor(colors.green)
+                    mon.write("TPS:    OK")
+                end
             end)
         end
-        os.sleep(10)
+        os.sleep(sleepSec)
     end
 end
 
@@ -463,9 +523,11 @@ local function main()
 
     local nodeKey      = loadOrCreateNodeKey()
     local setupPassword = loadOrCreateSetupPassword()
+    nodeFingerprint = computeNodeFingerprint()
     print("")
     print("[!] Node XTEA Key (share with wallets during setup):")
     print("    " .. nodeKey)
+    print("[!] Fingerprint: " .. nodeFingerprint)
     if setupPassword and #setupPassword > 0 then
         print("[!] Setup password active - wallets can auto-fetch key.")
     end

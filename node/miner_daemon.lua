@@ -25,6 +25,7 @@ local HALVING_TICKS    = 525600      -- ticks before base rate halves
 -- ── State ─────────────────────────────────────────────────────────────────────
 local activeWallets = {}  -- [address] = lastSeenTimestamp
 local totalTicks    = 0
+local lastLagFactor = 1.0  -- 1.0 = perfect timing; < 0.7 = server lag detected
 
 -- Persist totalTicks so the halving schedule survives reboots.
 local STATE_FILE = "/data/miner_state.json"
@@ -67,7 +68,19 @@ function daemon.run()
         REWARD_INTERVAL, BASE_RATE, totalTicks))
 
     while true do
+        local cycleStart = os.epoch("utc")   -- ms timestamp before sleep
         os.sleep(REWARD_INTERVAL)
+        local elapsed = (os.epoch("utc") - cycleStart) / 1000  -- actual seconds
+
+        -- Lag factor: 1.0 = on time, <1.0 = server behind schedule.
+        -- Clamp to [0.1, 1.0] so division/display is always safe.
+        lastLagFactor = math.min(1.0, REWARD_INTERVAL / math.max(elapsed, REWARD_INTERVAL * 0.1))
+
+        if lastLagFactor < 0.7 then
+            print(string.format("[Miner] Lag! Cycle %.1fs (want %ds) | TPS ~%.1f",
+                elapsed, REWARD_INTERVAL, lastLagFactor * 20))
+        end
+
         totalTicks = totalTicks + 1
         saveState()
 
@@ -85,8 +98,8 @@ function daemon.run()
         end
 
         if rewarded > 0 then
-            print(string.format("[Miner] Tick #%d | Rate: %d uAMI | Rewarded %d wallet(s)",
-                totalTicks, rate, rewarded))
+            print(string.format("[Miner] Tick #%d | Rate: %d uAMI | %d wallet(s) | lag=%.2f",
+                totalTicks, rate, rewarded, lastLagFactor))
         end
     end
 end
@@ -103,8 +116,9 @@ function daemon.getActive()
     return list
 end
 
--- Expose the current reward rate and tick count for STATS queries.
-function daemon.getCurrentRate() return currentRate() end
-function daemon.getTotalTicks()  return totalTicks      end
+-- Expose the current reward rate, tick count, and server lag factor for STATS/monitor.
+function daemon.getCurrentRate() return currentRate()  end
+function daemon.getTotalTicks()  return totalTicks     end
+function daemon.getLagFactor()   return lastLagFactor  end
 
 return daemon

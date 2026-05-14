@@ -95,10 +95,35 @@ local function waitKey()
 end
 
 -- ── Node list storage ─────────────────────────────────────────────────────────
--- Format: array of { name="...", key="..." }
+-- Format: array of { name="...", key="...", known_fp="..." }
 local NODES_FILE  = "/wallet_data/nodes.json"
 local LEGACY_KEY  = "/wallet_data/node_key.txt"
 local NAMES_CACHE = "/wallet_data/names_cache.json"
+local CONFIG_FILE = "/wallet_data/config.json"
+
+-- ── Wallet config (auto-sweep etc.) ──────────────────────────────────────────
+local _config = nil
+local function loadConfig()
+    if _config then return _config end
+    if fs.exists(CONFIG_FILE) then
+        local f = fs.open(CONFIG_FILE, "r")
+        _config = textutils.unserialiseJSON(f.readAll()) or {}
+        f.close()
+    else
+        _config = {}
+    end
+    -- Apply defaults
+    if _config.autoSweep      == nil   then _config.autoSweep      = false   end
+    if not _config.sweepThreshold      then _config.sweepThreshold = 1000000 end  -- 1 AMI
+    if not _config.sweepDuration       then _config.sweepDuration  = 3600    end  -- 1 hour
+    return _config
+end
+local function saveConfig()
+    if not fs.exists("/wallet_data") then fs.makeDir("/wallet_data") end
+    local f = fs.open(CONFIG_FILE, "w")
+    f.write(textutils.serialiseJSON(_config or {}))
+    f.close()
+end
 
 -- ── Ami-DNS name cache ────────────────────────────────────────────────────────
 -- Maps address (128-hex) -> player name, persisted locally.
@@ -293,24 +318,33 @@ local function screenImport()
     return raw:gsub("%s",""):lower(), addr, playerName
 end
 
--- ── Node Manager ──────────────────────────────────────────────────────────────
-local function screenNodeManager(nodes, secretKey, address)
+-- ── Command Center ───────────────────────────────────────────────────────────
+-- Single hub for node management, integrity checks, and DNS propagation.
+local function screenCommandCenter(nodes, secretKey, address)
     while true do
-        banner("Node Manager")
+        banner("Command Center")
         if #nodes == 0 then
             pmsg("No nodes configured.", 5, colors.gray)
         else
             for i, node in ipairs(nodes) do
-                local label = string.format("  [%d] %s  (%s...)", i, node.name, node.key:sub(1,8))
-                pmsg(label, 4 + i, colors.white)
+                local fp_badge = ""
+                if node.fp_mismatch      then fp_badge = " [FP!]"
+                elseif not node.known_fp then fp_badge = " [?]"
+                end
+                local col   = node.fp_mismatch and colors.red or colors.white
+                local label = string.format("  [%d] %s  (%s...)%s",
+                    i, node.name:sub(1,14), node.key:sub(1,8), fp_badge)
+                pmsg(label:sub(1, W), 4 + i, col)
             end
         end
         local base = 6 + #nodes
         pmsg("  [A] Add node",    base,     colors.orange)
         if #nodes > 0 then
-            pmsg("  [D] Remove node", base + 1, colors.red)
+            pmsg("  [D] Remove node",           base + 1, colors.red)
+            pmsg("  [I] Integrity Handshake",   base + 2, colors.yellow)
+            pmsg("  [G] Gossip DNS cache",       base + 3, colors.cyan)
         end
-        pmsg("  [B] Back",        base + 2, colors.gray)
+        pmsg("  [B] Back", base + (#nodes > 0 and 4 or 1), colors.gray)
 
         local _, key = os.pullEvent("key")
 
@@ -328,38 +362,30 @@ local function screenNodeManager(nodes, secretKey, address)
             while true do
                 local _, ak = os.pullEvent("key")
                 if ak == keys.one or ak == keys.n1 then
-                    -- Manual entry
                     pmsg("32-char XTEA key from node boot:", 13)
                     local k = prompt("> ", 15)
                     k = k:gsub("%s",""):lower()
                     if #k == 0 then
-                        pmsg("Cancelled.", 17, colors.gray)
-                        os.sleep(0.8)
+                        pmsg("Cancelled.", 17, colors.gray); os.sleep(0.8)
                     elseif #k ~= 32 then
-                        pmsg("Invalid (must be 32 hex chars).", 17, colors.red)
-                        waitKey()
+                        pmsg("Invalid (must be 32 hex chars).", 17, colors.red); waitKey()
                     else
                         addKey = k
                     end
                     break
                 elseif ak == keys.two or ak == keys.n2 then
-                    -- Password-based auto-fetch
                     pmsg("Setup password for this node:", 13, colors.orange)
                     local pw = prompt("> ", 15, true)
                     if #pw == 0 then
-                        pmsg("Cancelled.", 17, colors.gray)
-                        os.sleep(0.8)
+                        pmsg("Cancelled.", 17, colors.gray); os.sleep(0.8)
                     else
                         pmsg("Contacting node...", 17, colors.yellow)
-                        -- secretKey/address not in scope here; passed via closure
                         local ok, k, err = comms.fetchNodeKey(secretKey, address, pw)
                         if ok and k then
                             addKey = k
-                            pmsg("Got key!", 17, colors.green)
-                            os.sleep(0.5)
+                            pmsg("Got key!", 17, colors.green); os.sleep(0.5)
                         else
-                            pmsg("Failed: " .. (err or "unknown"), 17, colors.red)
-                            waitKey()
+                            pmsg("Failed: " .. (err or "unknown"), 17, colors.red); waitKey()
                         end
                     end
                     break
@@ -376,17 +402,88 @@ local function screenNodeManager(nodes, secretKey, address)
         elseif key == keys.d and #nodes > 0 then
             banner("Remove Node")
             for i, node in ipairs(nodes) do
-                pmsg(string.format("  [%d] %s", i, node.name), 4 + i, colors.white)
+                pmsg(string.format("  [%d] %s", i, node.name), 5 + i, colors.white)
             end
-            local inp = prompt("Number to remove (0=cancel): ", 6 + #nodes)
+            local promptRow = 6 + #nodes
+            pmsg("Enter number (0=cancel):", promptRow, colors.yellow)
+            local inp = prompt("> ", promptRow + 1)
             local idx = tonumber(inp)
             if idx and idx >= 1 and idx <= #nodes then
                 local removed = nodes[idx].name
                 table.remove(nodes, idx)
                 saveNodes(nodes)
-                pmsg("Removed '" .. removed .. "'.", 8 + #nodes, colors.green)
+                banner("Remove Node")
+                pmsg("Removed '" .. removed .. "'.", 5, colors.green)
                 os.sleep(0.8)
+            else
+                pmsg("Cancelled.", promptRow + 2, colors.gray)
+                os.sleep(0.5)
             end
+
+        elseif key == keys.i and #nodes > 0 then
+            -- ── Integrity Handshake ─────────────────────────────────────────
+            -- Queries every node's current FNV fingerprint via the dedicated
+            -- FINGERPRINT command. Trust-On-First-Connect (TOFC) stores the
+            -- first seen value; subsequent differences raise a [FP!] alert.
+            banner("Integrity Handshake")
+            pmsg("Querying " .. #nodes .. " node(s)...", 5, colors.yellow)
+            local row   = 7
+            local ok_ct = 0
+            local mis_ct = 0
+            for _, node in ipairs(nodes) do
+                local ok, data, err = comms.getFingerprint(secretKey, node.key, address)
+                if ok and data and data.fingerprint then
+                    local fp = data.fingerprint
+                    if not node.known_fp then
+                        node.known_fp    = fp
+                        node.fp_mismatch = false
+                        ok_ct = ok_ct + 1
+                        pmsg(string.format("  %-10s TOFC  %s", node.name:sub(1,10), fp), row, colors.yellow)
+                    elseif node.known_fp == fp then
+                        node.fp_mismatch = false
+                        ok_ct = ok_ct + 1
+                        pmsg(string.format("  %-10s OK    %s", node.name:sub(1,10), fp), row, colors.green)
+                    else
+                        node.fp_mismatch = true
+                        mis_ct = mis_ct + 1
+                        pmsg(string.format("  %-10s !! MISMATCH", node.name:sub(1,8)), row, colors.red)
+                        row = row + 1
+                        pmsg(string.format("       got:  %s", fp),              row, colors.red)
+                        row = row + 1
+                        pmsg(string.format("       want: %s", node.known_fp),   row, colors.orange)
+                    end
+                else
+                    pmsg(string.format("  %-10s ERR   %s", node.name:sub(1,10), err or "?"), row, colors.red)
+                end
+                row = row + 1
+            end
+            saveNodes(nodes)
+            row = row + 1
+            local summary = string.format("Done: %d OK  %d mismatch", ok_ct, mis_ct)
+            pmsg(summary, row, mis_ct > 0 and colors.red or colors.green)
+            waitKey()
+
+        elseif key == keys.g and #nodes > 0 then
+            -- ── Gossip DNS cache ────────────────────────────────────────────
+            -- Propagates every locally-cached name→address pair to all nodes
+            -- so the whole mesh shares the same directory.
+            banner("Gossip DNS")
+            local cache = loadNameCache()
+            local names = {}
+            for addr, name in pairs(cache) do
+                names[#names + 1] = { addr=addr, name=name }
+            end
+            if #names == 0 then
+                pmsg("Name cache is empty. Nothing to gossip.", 5, colors.gray)
+            else
+                pmsg(string.format("Gossiping %d name(s) to %d node(s)...",
+                    #names, #nodes), 5, colors.yellow)
+                for _, entry in ipairs(names) do
+                    comms.gossipDnsAll(secretKey, address, nodes, entry.name, entry.addr)
+                end
+                pmsg(string.format("Sent %d entries to all nodes.", #names), 7, colors.green)
+            end
+            waitKey()
 
         elseif key == keys.b then
             return nodes
@@ -435,8 +532,16 @@ local function screenVault(secretKey, address, nodes)
         end
 
         local base = 6 + math.max(1, #vaults)
-        pmsg("  [L] Lock new coins", base,     colors.orange)
-        pmsg("  [B] Back",           base + 1, colors.gray)
+        pmsg("  [L] Lock new coins", base, colors.orange)
+
+        -- Auto-Sweep toggle line
+        local cfg = loadConfig()
+        local sweepAMI = string.format("%.4f", cfg.sweepThreshold / 1000000)
+        local sweepLabel = cfg.autoSweep
+            and string.format("  [T] Auto-Sweep ON >%s AMI", sweepAMI)
+            or  "  [T] Auto-Sweep OFF"
+        pmsg(sweepLabel, base + 1, cfg.autoSweep and colors.lime or colors.gray)
+        pmsg("  [B] Back", base + 2, colors.gray)
 
         local _, key = os.pullEvent("key")
 
@@ -485,6 +590,34 @@ local function screenVault(secretKey, address, nodes)
                 waitKey()
             end
 
+        elseif key == keys.t then
+            -- Auto-Sweep: toggle on/off and configure threshold/duration
+            local cfg2 = loadConfig()
+            cfg2.autoSweep = not cfg2.autoSweep
+            banner("Auto-Sweep")
+            if cfg2.autoSweep then
+                pmsg("Auto-Sweep ENABLED.", 5, colors.lime)
+                pmsg("Safety limit (AMI):", 7, colors.white)
+                pmsg("Coins earned ABOVE this are auto-locked.", 8, colors.lightGray)
+                local tRaw = prompt("> ", 10)
+                local t = tonumber(tRaw)
+                if t and t > 0 then
+                    cfg2.sweepThreshold = math.floor(t * 1000000)
+                    pmsg(string.format("Threshold: %.4f AMI", t), 12, colors.green)
+                else
+                    pmsg("Keeping: " .. string.format("%.4f AMI", cfg2.sweepThreshold / 1000000), 12, colors.gray)
+                end
+                pmsg("Vault duration in seconds (0=1hr):", 14, colors.white)
+                local dRaw = prompt("> ", 15)
+                local d = tonumber(dRaw)
+                cfg2.sweepDuration = (d and d > 0) and math.floor(d) or 3600
+                pmsg(string.format("Duration: %ds", cfg2.sweepDuration), 16, colors.green)
+            else
+                pmsg("Auto-Sweep DISABLED.", 5, colors.gray)
+            end
+            saveConfig()
+            os.sleep(1.2)
+
         elseif key == keys.b then
             return
 
@@ -526,30 +659,58 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             totalBalance = nil; balErr = "No nodes - press [N]"; return
         end
         balErr = nil
-        local total   = 0
+        local total    = 0
         local newNodes = {}
-        local anyOk   = false
-        for _, node in ipairs(nodes) do
+        local anyOk    = false
+        local cfg      = loadConfig()
+        for i, node in ipairs(nodes) do
             local ok, data, err = comms.getBalance(secretKey, node.key, address)
-            local entry = { name=node.name, balance=0, err=nil, latency=nil, stats=nil }
+            local entry = { name=node.name, balance=0, err=nil, latency=nil, stats=nil, fp_ok=nil }
             if ok and data and data.balance then
                 entry.balance = data.balance
                 entry.latency = data._latency
                 total = total + data.balance
                 anyOk = true
-                -- Piggyback STATS from first healthy node
-                if not netStats then
-                    local sok, sdata = comms.getStats(secretKey, node.key, address)
-                    if sok and sdata then netStats = sdata end
+                -- Fetch STATS per-node so every node gets its fingerprint checked.
+                -- netStats keeps the first healthy node's aggregate data for the
+                -- dashboard network row; fingerprint is validated independently.
+                local sok, sdata = comms.getStats(secretKey, node.key, address)
+                if sok and sdata then
+                    if not netStats then netStats = sdata end
+                    -- Integrity: Trust-On-First-Connect or mismatch detection
+                    if sdata.fingerprint then
+                        local fp = sdata.fingerprint
+                        if not node.known_fp then
+                            node.known_fp    = fp
+                            node.fp_mismatch = false
+                            saveNodes(nodes)
+                            entry.fp_ok = "tofc"
+                        elseif node.known_fp == fp then
+                            node.fp_mismatch = false
+                            entry.fp_ok = true
+                        else
+                            node.fp_mismatch = true
+                            saveNodes(nodes)
+                            entry.fp_ok = false
+                        end
+                    end
                 end
             else
                 entry.err = err or "no response"
             end
+            if node.fp_mismatch then entry.fp_ok = false end
             newNodes[#newNodes + 1] = entry
         end
         totalBalance = total
         perNode      = newNodes
         if not anyOk then balErr = "All nodes unreachable" end
+        -- Auto-Sweep: lock excess balance if enabled
+        if cfg.autoSweep and totalBalance and totalBalance > cfg.sweepThreshold and #nodes > 0 then
+            local sweepAmt = totalBalance - cfg.sweepThreshold
+            if sweepAmt > 0 then
+                comms.vaultLock(secretKey, nodes[1].key, address, sweepAmt, cfg.sweepDuration)
+            end
+        end
     end
 
     -- ── Drawing helpers ───────────────────────────────────────────────────────
@@ -621,7 +782,13 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 term.setCursorPos(1, row); term.setTextColor(colors.white)
                 local line = string.format("%-12s %9s %6s  ", n.name:sub(1,12), bal, ping)
                 term.write(line:sub(1, W - 4))
-                term.setTextColor(colors.lime); term.write("[OK]")
+                if n.fp_ok == false then
+                    term.setTextColor(colors.orange); term.write("[FP]")
+                elseif n.fp_ok == "tofc" or n.fp_ok == nil then
+                    term.setTextColor(colors.gray);   term.write("[??]")
+                else
+                    term.setTextColor(colors.lime);   term.write("[OK]")
+                end
             end
         end
 
@@ -646,7 +813,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         local menuRow = statsRow + 2
         hRule(menuRow)
         term.setCursorPos(1, menuRow + 1); term.setTextColor(colors.orange)
-        term.write("[S]end [R]efresh [E]xport [N]odes(" .. #nodes .. ")")
+        term.write("[S]end [R]efresh [E]xport [N] CmdCtr(" .. #nodes .. ")")
         term.setCursorPos(1, menuRow + 2)
         term.setTextColor(colors.pink);   term.write("[V]")
         term.setTextColor(colors.orange); term.write("ault  ")
@@ -688,6 +855,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                         if ok and data and data.address then
                             toAddr = data.address
                             cacheName(toAddr, toRaw)  -- Ami-DNS: cache resolved name
+                            comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
                             pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
                         else
                             pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
@@ -740,7 +908,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 waitKey(); draw()
 
             elseif p1 == keys.n then
-                nodes = screenNodeManager(nodes, secretKey, address)
+                nodes = screenCommandCenter(nodes, secretKey, address)
                 draw()
 
             elseif p1 == keys.v then

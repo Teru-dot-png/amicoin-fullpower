@@ -254,10 +254,34 @@ function comms.fetchNodeKey(secretKey, address, password)
     return result_ok, result_key, result_err
 end
 
--- Query stats (active wallets, supply, rate) from a single node.
+-- Query stats (active wallets, supply, rate, fingerprint) from a single node.
 -- _latency is included in the returned data table.
 function comms.getStats(secretKey, nodeKey, address)
     return send(secretKey, nodeKey, { cmd="STATS", from=address, nonce=os.epoch("utc") }, true)
+end
+
+-- Request the node's current file fingerprint for tamper detection.
+function comms.getFingerprint(secretKey, nodeKey, address)
+    return send(secretKey, nodeKey, { cmd="FINGERPRINT", from=address, nonce=os.epoch("utc") }, true)
+end
+
+-- Gossip a name<->address mapping to a single node (fire-and-forget, XTEA-targeted).
+function comms.gossipDns(secretKey, nodeKey, address, name, targetAddr)
+    return send(secretKey, nodeKey, {
+        cmd     = "GOSSIP_DNS",
+        from    = address,
+        name    = name,
+        address = targetAddr,
+        nonce   = os.epoch("utc"),
+    }, false)
+end
+
+-- Gossip a name<->address mapping to ALL configured nodes.
+function comms.gossipDnsAll(secretKey, address, nodes, name, targetAddr)
+    if not nodes then return end
+    for _, node in ipairs(nodes) do
+        comms.gossipDns(secretKey, node.key, address, name, targetAddr)
+    end
 end
 
 -- ── AmiVault ──────────────────────────────────────────────────────────────────

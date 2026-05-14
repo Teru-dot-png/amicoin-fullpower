@@ -225,27 +225,39 @@ function comms.fetchNodeKey(secretKey, address, password)
 
     local pwdKey = keyFromPassword(password)
     local timer  = os.startTimer(TIMEOUT)
-    local result_ok, result_key, result_err = false, nil, "Timeout"
+    local result_ok, result_key, result_err = false, nil, "Timeout - no node responded"
 
     while true do
         local ev, p1, p2, p3, p4 = os.pullEvent()
         if ev == "modem_message" and p2 == replyChannel and type(p4) == "string" then
-            os.cancelTimer(timer)
+            -- Attempt decrypt with the password-derived key.
+            -- If another node on the mesh answered first, its response was
+            -- encrypted with a different key so decrypt yields garbage JSON.
+            -- In that case we DON'T break — we keep waiting for the right node.
             local ok2, plain2 = pcall(xtea.decrypt, p4, pwdKey)
             if ok2 then
                 local data = textutils.unserialiseJSON(plain2)
-                if type(data) == "table" and data.ok and type(data.key) == "string" then
-                    result_ok  = true
-                    result_key = data.key
-                else
-                    result_err = (data and data.err) or "Node refused (wrong password?)"
+                if type(data) == "table" then
+                    if data.ok and type(data.key) == "string" then
+                        -- Correct node, correct password
+                        os.cancelTimer(timer)
+                        result_ok  = true
+                        result_key = data.key
+                        result_err = nil
+                        break
+                    elseif data.err then
+                        -- Correct node replied but rejected the password
+                        os.cancelTimer(timer)
+                        result_err = data.err
+                        break
+                    end
+                    -- else: valid JSON but no useful fields — ignore, keep waiting
                 end
-            else
-                result_err = "Wrong password or no node response"
+                -- nil or unexpected JSON: wrong node answered, keep waiting
             end
-            break
+            -- pcall ok2=false: decrypt threw (shouldn't happen), keep waiting
         elseif ev == "timer" and p1 == timer then
-            result_err = "Timeout - no node responded"
+            result_err = "Timeout - no node responded (check password / node online)"
             break
         end
     end

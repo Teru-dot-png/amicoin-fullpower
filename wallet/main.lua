@@ -881,7 +881,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         if ev == "key" then
 
             if p1 == keys.r then
-                cls(); banner("Dashboard")
+                cls(); banner("AMI-Dashboard")
                 term.setCursorPos(1, 6); term.setTextColor(colors.yellow)
                 term.write("Refreshing...")
                 refreshBalance(); draw()
@@ -936,12 +936,12 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                             end
                         end
                         local amtRow = (#nodes > 1) and (14 + #nodes) or 12
-                        -- Unit selection (single keypress)
-                        pmsg("Unit:  [A] AMI   [U] uAMI", amtRow, colors.white)
-                        local _, unitChar = os.pullEvent("char")
-                        local useUAMI = (unitChar:lower() == "u")
+                        -- Unit selection
+                        pmsg("Unit? [A]MI or [U]uAMI:", amtRow, colors.white)
+                        local unitIn = prompt("> ", amtRow + 1)
+                        local useUAMI = (unitIn:lower():sub(1,1) == "u")
                         local unitLabel = useUAMI and "uAMI" or "AMI"
-                        pmsg("Amount (" .. unitLabel .. "):", amtRow + 2)
+                        pmsg("Amount (" .. unitLabel .. "):", amtRow + 3)
                         local rawAmt = prompt("> ", amtRow + 4)
                         local amt = tonumber(rawAmt)
                         if not amt or amt <= 0 then

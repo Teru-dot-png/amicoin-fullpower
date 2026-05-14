@@ -779,7 +779,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
     -- ── Draw ─────────────────────────────────────────────────────────────────
     local function draw()
-        banner("Dashboard")
+        banner("AMI-Dashboard")
 
         -- Row 4: divider
         hRule(4)

@@ -936,19 +936,29 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                             end
                         end
                         local amtRow = (#nodes > 1) and (14 + #nodes) or 12
-                        pmsg("Amount (AMI):", amtRow)
-                        local rawAmt = prompt("> ", amtRow + 2)
+                        -- Unit selection (single keypress)
+                        pmsg("Unit:  [A] AMI   [U] uAMI", amtRow, colors.white)
+                        local _, unitChar = os.pullEvent("char")
+                        local useUAMI = (unitChar:lower() == "u")
+                        local unitLabel = useUAMI and "uAMI" or "AMI"
+                        pmsg("Amount (" .. unitLabel .. "):", amtRow + 2)
+                        local rawAmt = prompt("> ", amtRow + 4)
                         local amt = tonumber(rawAmt)
                         if not amt or amt <= 0 then
-                            pmsg("Invalid amount.", amtRow + 4, colors.red); waitKey()
+                            pmsg("Invalid amount.", amtRow + 6, colors.red); waitKey()
                         else
-                            local microAmt = math.floor(amt * 1000000)
-                            pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 4, colors.yellow)
+                            local microAmt = useUAMI
+                                and math.floor(amt)
+                                or  math.floor(amt * 1000000)
+                            pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 6, colors.yellow)
                             local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
                             if ok then
-                                pmsg(string.format("Sent %.4f AMI to %s", amt, resolveAddr(toAddr)), amtRow + 4, colors.green)
+                                local display = useUAMI
+                                    and string.format("%d uAMI", microAmt)
+                                    or  string.format("%.4f AMI", amt)
+                                pmsg("Sent " .. display .. " to " .. resolveAddr(toAddr), amtRow + 6, colors.green)
                             else
-                                pmsg("Failed: " .. (err or "unknown"), amtRow + 4, colors.red)
+                                pmsg("Failed: " .. (err or "unknown"), amtRow + 6, colors.red)
                             end
                             waitKey(); refreshBalance()
                         end

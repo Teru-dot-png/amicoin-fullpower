@@ -97,6 +97,9 @@ local function checkHardware()
         elseif c.expect == "inventory" then
             pass = ptype:find("inventory") ~= nil or ptype:find("chest") ~= nil
                    or ptype:find("barrel") ~= nil
+        elseif c.expect == "meBridge" then
+            -- Advanced Peripherals reports type as "advancedperipherals:me_bridge"
+            pass = ptype:find("me_bridge") ~= nil or ptype:find("meBridge") ~= nil
         else
             pass = ptype:find(c.expect) ~= nil
         end

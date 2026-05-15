@@ -342,6 +342,56 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         }
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
+
+    elseif cmd == "CONSOLIDATE_OUT" then
+        -- Drain alice's balance from this node.  The wallet carries the returned
+        -- receipt to the target node for CONSOLIDATE_IN.
+        -- Security model: only alice (via her XTEA key) can trigger this on her
+        -- own address; the receipt ties the drain to this specific node + nonce.
+        local req_amount = pkt.amount
+        local nonce      = pkt.nonce or 0
+        if type(req_amount) ~= "number" or req_amount <= 0 then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
+            return
+        end
+        local drained, derr = ledger.drain(from, math.floor(req_amount))
+        if drained <= 0 then
+            print(string.format("[Net] CONSOLIDATE_OUT %s... FAILED: %s", who, derr or "no balance"))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err=derr or "No balance to drain"}), nodeKey))
+            return
+        end
+        -- Receipt: fnv1a of (drained amount | nonce | first 8 chars of this node's key).
+        -- Lets the target node log a human-readable audit trail.
+        local receipt = fnv1a(tostring(drained) .. "|" .. tostring(nonce) .. "|" .. nodeKey:sub(1, 8))
+        print(string.format("[Net] CONSOLIDATE_OUT %s... drained %d uAMI  receipt=%s",
+            who, drained, receipt:sub(1, 8)))
+        router.transmit(replyChannel, MESH_CHANNEL,
+            xtea.encrypt(textutils.serialiseJSON({
+                ok      = true,
+                amount  = drained,
+                receipt = receipt,
+                nonce   = nonce,
+            }), nodeKey))
+
+    elseif cmd == "CONSOLIDATE_IN" then
+        -- Credit alice on this (target) node after a verified CONSOLIDATE_OUT.
+        -- Trust basis: alice's XTEA secretKey authenticated this packet, so only
+        -- the legitimate wallet holder can credit their own address here.
+        local amount  = pkt.amount
+        local receipt = pkt.receipt   -- audit trail from the source node
+        if type(amount) ~= "number" or amount <= 0 then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
+            return
+        end
+        local creditAmt = math.floor(amount)
+        ledger.credit(from, creditAmt)
+        print(string.format("[Net] CONSOLIDATE_IN  %s... credited %d uAMI  receipt=%s",
+            who, creditAmt, tostring(receipt):sub(1, 8)))
+        router.transmit(replyChannel, MESH_CHANNEL,
+            xtea.encrypt(textutils.serialiseJSON({ok=true, amount=creditAmt}), nodeKey))
     end
 end
 

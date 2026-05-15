@@ -24,7 +24,7 @@ local BG      = colors.black
 local HDR_BG  = colors.gray
 local HDR_FG  = colors.white
 local TITLE   = colors.orange
-local WTS_C   = colors.lime       -- WTS (shop sells) = player BUYs  → positive/green
+local WTS_C   = colors.green       -- WTS (shop sells) = player BUYs  → positive/green
 local WTB_C   = colors.orange     -- WTB (shop buys)  = player SELLs → warm/orange
 local PRICE_C = colors.yellow
 local DIM     = colors.lightGray
@@ -151,7 +151,7 @@ local function drawCard(x, y, w, listing, registerTouch)
     box(x, y, w, 3, BORDER, BG)
 
     -- Badge and colour from the PLAYER's point of view:
-    --   WTS (shop sells)  → player action is "BUY"  (lime)
+    --   WTS (shop sells)  → player action is "BUY"  (green)
     --   WTB (shop buys)   → player action is "SELL" (orange)
     local tc    = listing.type == "WTS" and WTS_C or WTB_C
     local badge = listing.type == "WTS" and "BUY " or "SELL"
@@ -205,7 +205,7 @@ function ui.drawShop(lst, balance, touch)
 
     -- Column divider — labels are from the player's perspective
     fill(1, 6, W, 1, colors.gray)
-    put(1, 6, center("[ BUY ] lime  |  [ SELL ] orange", W), DIM, colors.gray)
+    put(1, 6, center("[ BUY ] Green  |  [ SELL ] orange", W), DIM, colors.gray)
 
     -- Two-column listing grid
     local colW  = math.floor((W - 3) / 2)
@@ -233,37 +233,49 @@ end
 -- ── Pending payment screen ─────────────────────────────────────────────────────
 -- Shown on the monitor while the shop waits for the wallet to confirm payment.
 -- touch=false: no zones registered (can't tap while pending).
-function ui.drawPending(txId, shopName, item, qty, totalMicro, buyerName)
+function ui.drawPending(txId, shopName, item, qty, totalMicro, buyerName, frame)
     if not hasMon() then return end
+    frame = frame or 0
     mon.setBackgroundColor(BG); mon.clear()
     clearZones()   -- no tappable areas while waiting
 
-    fill(1, 1, W, 1, colors.orange)
-    put(1, 1, center("  INVOICE PENDING  ", W), colors.black, colors.orange)
+    -- Pulsing header: orange on even beats, yellow on odd.
+    local hdrBg = (math.floor(frame / 2) % 2 == 0) and colors.orange or colors.yellow
+    fill(1, 1, W, 1, hdrBg)
+    put(1, 1, center("  INVOICE PENDING  ", W), colors.black, hdrBg)
 
     local short = (item:match(":(.+)$") or item)
-    put(2, 3, "Sent to :", DIM, BG)
-    put(12, 3, (buyerName or "player"):sub(1, W - 12), ACCENT, BG)
+    put(2, 3, "Sent to  :", DIM, BG)
+    put(13, 3, (buyerName or "player"):sub(1, W - 13), ACCENT, BG)
 
-    put(2, 5, "Item    :", DIM, BG)
-    put(12, 5, short:sub(1, W - 12), colors.white, BG)
+    put(2, 5, "Item     :", DIM, BG)
+    put(13, 5, short:sub(1, W - 13), colors.white, BG)
 
-    put(2, 6, "Qty     :", DIM, BG)
-    put(12, 6, tostring(qty), colors.white, BG)
+    put(2, 6, "Qty      :", DIM, BG)
+    put(13, 6, tostring(qty), colors.white, BG)
 
-    put(2, 7, "Total   :", DIM, BG)
-    put(12, 7, string.format("%d uAMI  (%.4f AMI)", totalMicro,
+    put(2, 7, "Total    :", DIM, BG)
+    put(13, 7, string.format("%d uAMI  (%.4f AMI)", totalMicro,
         totalMicro / 1000000), PRICE_C, BG)
 
-    fill(1, 9, W, 1, BG)
-    put(2, 9, "Awaiting wallet confirmation...", colors.yellow, BG)
+    -- Animated spinner: rotating line segment + dot trail.
+    local SPIN  = { "|", "/", "-", "\\" }
+    local spin  = SPIN[(frame % 4) + 1]
+    local ndots = (frame % 4) + 1
+    local label = spin .. " Processing" .. string.rep(".", ndots)
+                  .. string.rep(" ", 4 - ndots)
+    put(2, 9, label, colors.yellow, BG)
 
-    -- TX id (short) as a reference
-    put(2, 11, "TX: " .. (txId or "?"):sub(1, 24), DIM, BG)
+    -- Geometric progress bar: a coloured block that bounces left-right.
+    local barW   = W - 4
+    local cycle  = frame % (barW * 2)
+    local filled = cycle <= barW and cycle or (barW * 2 - cycle)
+    local barBg  = (math.floor(frame / barW) % 2 == 0) and colors.cyan or colors.blue
+    fill(2, 11, barW, 1, BG)
+    if filled > 0 then fill(2, 11, filled, 1, barBg) end
 
-    -- Animated waiting dots keyed on epoch / 600ms
-    local dots = string.rep(".", math.floor(os.epoch("utc") / 600) % 4)
-    put(2, 13, "Check your Pad" .. dots, colors.orange, BG)
+    -- TX reference
+    put(2, 13, "TX: " .. (txId or "?"):sub(1, 28), DIM, BG)
 
     put(2, H - 1, "[Operator: press C to cancel]", colors.gray, BG)
 end

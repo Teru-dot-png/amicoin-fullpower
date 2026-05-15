@@ -102,6 +102,23 @@ function ledger.transfer(fromAddress, toAddress, amount)
     return true
 end
 
+-- Drain up to `amount` microcoins from `address` without crediting any other
+-- address.  Used exclusively by CONSOLIDATE_OUT so funds can be swept out of
+-- this node's ledger and credited on a different node via CONSOLIDATE_IN.
+-- Returns: actual_drained (int ≥ 0), errMsg (string or nil)
+function ledger.drain(address, amount)
+    assert(type(address) == "string" and #address == 128, "Invalid address")
+    amount = math.floor(amount or 0)
+    if amount <= 0 then return 0, "Amount must be positive" end
+    local db     = load()
+    local bal    = db[address] or 0
+    local actual = math.min(amount, math.floor(bal))
+    if actual <= 0 then return 0, "No balance to drain on this node" end
+    db[address] = bal - actual
+    save(db)
+    return actual, nil
+end
+
 -- Return a snapshot of the entire ledger (address -> balance table).
 function ledger.snapshot()
     return load()

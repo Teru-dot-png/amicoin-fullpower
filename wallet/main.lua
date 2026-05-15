@@ -587,26 +587,45 @@ local function screenCommandCenter(nodes, secretKey, address)
             local row   = 7
             for i, node in ipairs(nodes) do
                 if i ~= targetIdx then
-                    local bal = nodeBalances[i]
+                    -- Dust fix: ensure integer microcoins.
+                    local bal = math.floor(nodeBalances[i] or 0)
                     if bal > 0 then
-                        pmsg(string.format("  Moving %.4f from %s...",
-                            bal / 1000000, node.name:sub(1,12)), row, colors.yellow)
+                        -- ── Step 1: DRAIN source node ────────────────────────
+                        pmsg(string.format("  [1/2] DRAIN  %s  %d uAMI...",
+                            node.name:sub(1, 10), bal), row, colors.yellow)
                         row = row + 1
-                        local ok, _, err = comms.transfer(
-                            secretKey, node.key, address, address, bal)
-                        if ok then
-                            moved = moved + bal
-                            pmsg(string.format("    -> OK (%d uAMI)", bal),
-                                row, colors.green)
-                        else
+                        local dok, ddata, derr = comms.consolidateOut(
+                            secretKey, node.key, address, bal)
+                        if not dok then
                             errs = errs + 1
-                            pmsg("    -> Failed: " .. (err or "?"),
-                                row, colors.red)
+                            pmsg("    DRAIN FAILED: " .. (derr or "?"), row, colors.red)
+                            row = row + 1
+                        else
+                            local actual  = math.floor((ddata and ddata.amount) or bal)
+                            local receipt = ddata and ddata.receipt
+                            pmsg(string.format("    drained %d uAMI  [%s]",
+                                actual, tostring(receipt):sub(1, 8)), row, colors.lime)
+                            row = row + 1
+                            -- ── Step 2: CREDIT target node ───────────────────
+                            pmsg(string.format("  [2/2] CREDIT %s  %d uAMI...",
+                                targetNode.name:sub(1, 10), actual), row, colors.yellow)
+                            row = row + 1
+                            local cok, _, cerr = comms.consolidateIn(
+                                secretKey, targetNode.key, address, actual, receipt)
+                            if cok then
+                                moved = moved + actual
+                                pmsg(string.format("    credited %d uAMI OK", actual),
+                                    row, colors.green)
+                            else
+                                errs = errs + 1
+                                pmsg("    CREDIT FAILED: " .. (cerr or "?"),
+                                    row, colors.red)
+                            end
+                            row = row + 1
                         end
-                        row = row + 1
                     else
                         pmsg(string.format("  %s: 0 balance, skip",
-                            node.name:sub(1,14)), row, colors.gray)
+                            node.name:sub(1, 14)), row, colors.gray)
                         row = row + 1
                     end
                 end
@@ -1085,8 +1104,16 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                                 comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
                                 pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
                             else
+                                -- DNS lookup failed; offer raw-hex fallback so funds
+                                -- are never stranded by a missing name record.
                                 pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
-                                waitKey(); draw()
+                                pmsg("Enter 128-hex address (blank=cancel):", 10, colors.yellow)
+                                local raw2 = (prompt("> ", 11) or ""):gsub("%s", ""):lower()
+                                if #raw2 == 128 and raw2:match("^[0-9a-fA-F]+$") then
+                                    toAddr = raw2
+                                    pmsg("Using raw address.", 12, colors.lime)
+                                end
+                                -- toAddr nil => outer `if toAddr then` skips gracefully
                             end
                         end
                     end

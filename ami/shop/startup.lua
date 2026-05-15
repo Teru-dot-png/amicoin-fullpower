@@ -47,8 +47,15 @@ local function selfUpdate()
     print("")
     term.setTextColor(colors.white)
 
-    local failed   = false
-    local hashes   = {}
+    -- Delta-check helper: hash a file on disk, nil if absent.
+    local function hashFile(path)
+        if not fs.exists(path) then return nil end
+        local f = fs.open(path, "r")
+        local c = f.readAll(); f.close()
+        return fnv1a(c)
+    end
+    local failed = false
+    local hashes = {}
 
     for _, entry in ipairs(UPDATE_FILES) do
         io.write("  " .. entry.dst .. " ... ")
@@ -66,14 +73,36 @@ local function selfUpdate()
                 term.setTextColor(colors.white)
                 failed = true
             else
-                local hash = fnv1a(content)
-                if fs.exists(entry.dst) then fs.delete(entry.dst) end
-                local f = fs.open(entry.dst, "w")
-                f.write(content); f.close()
-                term.setTextColor(colors.green)
-                print("OK  [" .. hash .. "]")
-                term.setTextColor(colors.white)
-                hashes[#hashes + 1] = hash
+                local remoteHash = fnv1a(content)
+                if hashFile(entry.dst) == remoteHash then
+                    term.setTextColor(colors.gray)
+                    print("skip  [" .. remoteHash .. "]")
+                    term.setTextColor(colors.white)
+                    hashes[#hashes + 1] = remoteHash
+                else
+                    local bakPath = entry.dst .. ".bak"
+                    if fs.exists(entry.dst) then
+                        if fs.exists(bakPath) then fs.delete(bakPath) end
+                        pcall(fs.copy, entry.dst, bakPath)
+                    end
+                    local f = fs.open(entry.dst, "w")
+                    f.write(content); f.close()
+                    if hashFile(entry.dst) ~= remoteHash then
+                        if fs.exists(bakPath) then
+                            pcall(fs.delete, entry.dst)
+                            pcall(fs.copy, bakPath, entry.dst)
+                        end
+                        term.setTextColor(colors.red)
+                        print("FAILED (verify -- backup restored)")
+                        term.setTextColor(colors.white)
+                        failed = true
+                    else
+                        term.setTextColor(colors.green)
+                        print("OK  [" .. remoteHash .. "]")
+                        term.setTextColor(colors.white)
+                        hashes[#hashes + 1] = remoteHash
+                    end
+                end
             end
         end
     end
@@ -81,7 +110,7 @@ local function selfUpdate()
     print("")
     if failed then
         term.setTextColor(colors.red)
-        print("Update failed. Some files could not be downloaded.")
+        print("Update failed. Backup files (.bak) retained.")
         print("AmiStore will continue running the old version.")
         term.setTextColor(colors.white)
         os.sleep(3)
@@ -109,29 +138,42 @@ local function networkLoop()
     end
 
     while true do
-        -- Filter to SHOP_CHANNEL messages only.
+        -- Route plaintext (PAYMENT_ACK) vs XTEA (CONFIRM) on SHOP_CHANNEL.
         local ev, _, ch, replyCh, wire = os.pullEvent("modem_message")
         if ch == SHOP_CHANNEL then
-            local action = api.processWire(wire, replyCh)
-
-            if action then
-                local listings = api.getListings()
-                local balance  = api.getShopBal()
-
-                if action.type == "CONFIRM" and action.preview then
-                    -- Show receipt preview on monitor, pause, then execute.
-                    local order = action.order
-                    ui.showReceiptPreview(
-                        action.tx_id, "WTS",
-                        order.item, order.qty,
-                        order.price * order.qty)
-                    os.sleep(3)   -- 3-second preview window
-                    api.executeConfirm(action)
+            if type(wire) == "string" and wire:sub(1, 1) == "{" then
+                -- Plaintext broadcast: PAYMENT_ACK from a wallet.
+                local pkt = api.processShopBroadcast(wire)
+                if pkt and pkt.type == "PAYMENT_ACK" then
+                    local ok, err = api.executeInvoice(pkt.tx_id)
+                    if ok then
+                        term.setTextColor(colors.green)
+                        print("[Net] Invoice " .. pkt.tx_id:sub(1, 8) .. " fulfilled.")
+                        term.setTextColor(colors.white)
+                    else
+                        term.setTextColor(colors.red)
+                        print("[Net] Invoice execute failed: " .. (err or "?"))
+                        term.setTextColor(colors.white)
+                    end
+                    api.syncInventory()
+                    ui.drawShop(api.getListings(), api.getShopBal(), true)
                 end
-
-                -- Sync inventory and redraw after any action.
-                api.syncInventory()
-                ui.drawShop(api.getListings(), api.getShopBal(), true)
+            else
+                -- Legacy XTEA path.
+                local action = api.processWire(wire, replyCh)
+                if action then
+                    if action.type == "CONFIRM" and action.preview then
+                        local order = action.order
+                        ui.showReceiptPreview(
+                            action.tx_id, "WTS",
+                            order.item, order.qty,
+                            order.price * order.qty)
+                        os.sleep(3)
+                        api.executeConfirm(action)
+                    end
+                    api.syncInventory()
+                    ui.drawShop(api.getListings(), api.getShopBal(), true)
+                end
             end
         end
     end
@@ -152,6 +194,22 @@ local function syncLoop()
         -- Only redraw catalog if no invoice is pending (pending screen should persist).
         if not api.getPendingInvoice() then
             ui.drawShop(api.getListings(), api.getShopBal(), true)
+        end
+    end
+end
+
+-- ── Monitor animation loop ────────────────────────────────────────────────────
+-- Drives the "Processing" spinner on the monitor while an invoice is pending.
+-- Wakes every 0.5 s via os.sleep so the animation stays smooth.
+local function animLoop()
+    local frame = 0
+    while true do
+        os.sleep(0.5)
+        frame = frame + 1
+        local inv = api.getPendingInvoice()
+        if inv then
+            ui.drawPending(inv.txId, inv.shop_name or "AmiStore",
+                inv.item, inv.qty or 1, inv.total, inv.buyerName, frame)
         end
     end
 end
@@ -234,7 +292,8 @@ local function invoiceFlow(listing)
     term.setTextColor(colors.white)
     io.write("Qty (Enter=1): ")
     local qtyRaw = io.read() or "1"
-    local qty    = math.max(1, math.floor(tonumber(qtyRaw:gsub("%s","")) or 1))
+    local qtyNum = tonumber(qtyRaw:gsub("%s", "")) or 1
+    local qty    = math.max(1, math.floor(qtyNum))
 
     io.write("Player name or address: ")
     local raw = (io.read() or ""):gsub("^%s+",""):gsub("%s+$","")
@@ -543,7 +602,7 @@ local function adminLoop()
         end
     end
     api.syncInventory()
-        ui.drawShop(api.getListings(), api.getShopBal(), true)
+    ui.drawShop(api.getListings(), api.getShopBal(), true)
 end
 
 -- ── Keyboard input loop ────────────────────────────────────────────────────────
@@ -591,6 +650,7 @@ local function inputLoop()
             ui.drawShop(api.getListings(), api.getShopBal(), true)
 
         -- [Q] -- graceful quit
+        elseif key == keys.q then
             term.clear(); term.setCursorPos(1, 1)
             print("AmiStore stopped.")
             return
@@ -659,7 +719,7 @@ ui.drawShop(api.getListings(), 0, true)
 -- Run all four loops concurrently.
 -- touchLoop watches monitor_touch; inputLoop watches keyboard.
 -- If inputLoop returns (user pressed Q), the others are killed automatically.
-parallel.waitForAll(networkLoop, syncLoop, touchLoop, inputLoop)
+parallel.waitForAll(networkLoop, syncLoop, animLoop, touchLoop, inputLoop)
 
 term.clear(); term.setCursorPos(1, 1)
 print("AmiStore shut down cleanly.")

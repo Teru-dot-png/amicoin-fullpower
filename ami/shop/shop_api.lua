@@ -6,7 +6,7 @@
 -- Peripheral Side Map (hardcoded per spec):
 --   TOP    : Advanced Monitor  (3x3) — UI surface (shop_ui.lua owns this)
 --   LEFT   : Printer                 — Physical receipt output
---   RIGHT  : meBridge (AE2)          — Digital storage I/O
+--   RIGHT  : me_bridge (AE2)         — Digital storage I/O
 --   BOTTOM : Inventory (chest/barrel)— Physical vending tray
 --   BACK   : Modem (wired/wireless)  — XTEA mesh comms
 --   FRONT  : (user interaction zone, no peripheral)
@@ -30,7 +30,7 @@ local LOG_FILE      = "/ami/shop/errors.log"
 -- ── Peripheral handles ────────────────────────────────────────────────────────
 local p_monitor = nil
 local p_printer  = nil
-local p_me       = nil   -- meBridge (AE2)
+local p_me       = nil   -- me_bridge (AE2)
 local p_tray     = nil   -- inventory peripheral (vending tray)
 local p_modem    = nil
 
@@ -177,7 +177,7 @@ end
 
 function api.getListings() return listings end
 
--- ── AE2 (meBridge) helpers ────────────────────────────────────────────────────
+-- ── AE2 (me_bridge) helpers ────────────────────────────────────────────────────
 -- getItem returns the AE2 stack for an item, or nil.
 local function meGetStock(itemName)
     if not p_me then return 0 end
@@ -188,7 +188,7 @@ end
 
 -- Export qty of itemName from AE2 to the bottom tray.
 local function meExport(itemName, qty)
-    if not p_me then return false, "No meBridge on RIGHT" end
+    if not p_me then return false, "No me_bridge on RIGHT" end
     local ok, err = pcall(p_me.exportItem, {name = itemName, count = qty}, "bottom")
     if not ok then return false, tostring(err) end
     return true, nil
@@ -196,7 +196,7 @@ end
 
 -- Import the contents of the bottom tray matching itemName into AE2.
 local function meImport(itemName)
-    if not p_me then return false, "No meBridge on RIGHT" end
+    if not p_me then return false, "No me_bridge on RIGHT" end
     local ok, err = pcall(p_me.importItem, {name = itemName}, "bottom")
     if not ok then return false, tostring(err) end
     return true, nil

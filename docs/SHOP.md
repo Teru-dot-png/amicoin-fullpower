@@ -78,7 +78,7 @@ On first boot the terminal displays:
 Initialising peripherals...
   Shop address : 3f8a1b2c...
   Monitor      : TOP [OK]
-  meBridge     : RIGHT [OK]
+  me_bridge    : RIGHT [OK]
   Printer      : LEFT [OK]
   Inventory    : BOTTOM [OK]
   Modem        : BACK [OK]
@@ -119,7 +119,7 @@ The shop sells this item **from AE2 storage** to buyers.
 | `item` | string | Full item ID, e.g. `"minecraft:diamond"` |
 | `price` | integer | Price **per item** in µAMI (1 AMI = 1,000,000 µAMI) |
 
-**Stock** is checked live from `meBridge.getItem()` every 30 seconds. If AE2 reports zero stock, the listing shows `OUT` in orange and quotes are rejected. Items are exported to the BOTTOM chest/barrel on successful purchase.
+**Stock** is checked live from `me_bridge.getItem()` every 30 seconds. If AE2 reports zero stock, the listing shows `OUT` in orange and quotes are rejected. Items are exported to the BOTTOM chest/barrel on successful purchase.
 
 ### WTB — Want To Buy
 
@@ -342,10 +342,10 @@ All replies are encrypted with the **shop's XTEA key** (`shopKey`). Buyers must 
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| All listings show `OUT` | No meBridge on RIGHT | Attach ME Bridge to RIGHT side |
+| All listings show `OUT` | No me_bridge on RIGHT | Attach ME Bridge to RIGHT side |
 | `Payment unconfirmed` error | Buyer paid but balance not witnessed yet | Increase `MESH_TIMEOUT` or check witness node is reachable |
 | `No witness node configured` | `config.json` `nodes` array is empty | Add at least one AmiCoin node to `config.json` |
 | Printer never prints | Printer on wrong side | Attach Printer to LEFT side specifically |
 | Admin login always fails | Wrong token | Check the token printed at boot; delete `session_uuid.txt` to reset |
-| `AE2 import failed` log | Item not exported from AE2 yet or wrong side | Verify meBridge is on RIGHT and AE2 system has power |
+| `AE2 import failed` log | Item not exported from AE2 yet or wrong side | Verify me_bridge is on RIGHT and AE2 system has power |
 | Shop address balance always 0 | Address not registered on witness nodes | Reboot (auto-registers) or manually send to the shop address once |

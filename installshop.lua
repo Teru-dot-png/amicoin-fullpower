@@ -75,7 +75,7 @@ end
 local SIDE_CHECKS = {
     { side = "top",    expect = "monitor",   role = "3x3 Advanced Monitor (UI)"     },
     { side = "left",   expect = "printer",   role = "Printer (Receipts)"            },
-    { side = "right",  expect = "meBridge",  role = "ME Bridge / AE2 Storage"       },
+    { side = "right",  expect = "me_bridge", role = "ME Bridge / AE2 Storage"       },
     { side = "bottom", expect = "inventory", role = "Chest / Barrel (Vending Tray)" },
     { side = "back",   expect = "modem",     role = "Modem (Mesh Comms)"            },
 }
@@ -97,9 +97,9 @@ local function checkHardware()
         elseif c.expect == "inventory" then
             pass = ptype:find("inventory") ~= nil or ptype:find("chest") ~= nil
                    or ptype:find("barrel") ~= nil
-        elseif c.expect == "meBridge" then
+        elseif c.expect == "me_bridge" then
             -- Advanced Peripherals reports type as "advancedperipherals:me_bridge"
-            pass = ptype:find("me_bridge") ~= nil or ptype:find("meBridge") ~= nil
+            pass = ptype:find("me_bridge") ~= nil
         else
             pass = ptype:find(c.expect) ~= nil
         end

@@ -5,7 +5,7 @@
 -- Requires the following peripherals (hardcoded sides — see shop_api.lua):
 --   TOP:    3x3 Advanced Monitor
 --   LEFT:   Printer
---   RIGHT:  meBridge (AE2CC)
+--   RIGHT:  me_bridge (AE2CC)
 --   BOTTOM: Inventory / Barrel (vending tray)
 --   BACK:   Wired or Wireless Modem
 
@@ -215,7 +215,7 @@ local shopAddr = api.init()
 
 print("  Shop address : " .. shopAddr:sub(1, 16) .. "...")
 print("  Monitor      : " .. (api.getMonitor() and "TOP [OK]"      or "TOP [MISSING]"))
-print("  meBridge     : " .. (peripheral.isPresent("right")        and "RIGHT [OK]" or "RIGHT [--]"))
+print("  me_bridge    : " .. (peripheral.isPresent("right")        and "RIGHT [OK]" or "RIGHT [--]"))
 print("  Printer      : " .. (peripheral.isPresent("left")         and "LEFT [OK]"  or "LEFT [--]"))
 print("  Inventory    : " .. (peripheral.isPresent("bottom")       and "BOTTOM [OK]" or "BOTTOM [--]"))
 print("  Modem        : " .. (api.getModem() and "BACK [OK]"       or "BACK [MISSING]"))

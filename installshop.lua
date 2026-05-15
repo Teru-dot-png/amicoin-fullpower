@@ -166,9 +166,6 @@ local function checkHardware()
     return allOK
 end
 
--- ── Mode detection ────────────────────────────────────────────────────────────
-local installed = fs.isDir("/ami/shop")
-
 -- ── Banner ────────────────────────────────────────────────────────────────────
 term.setTextColor(colors.orange)
 print("============================================")
@@ -180,48 +177,40 @@ print("Repository : " .. REPO_BASE)
 print("")
 
 -- ── Mode selection ────────────────────────────────────────────────────────────
-local MODE   -- "update" | "force" | "clean" | "fresh"
+local MODE   -- "update" | "force" | "clean"
 local forceWrite = false
 
-if installed then
-    term.setTextColor(colors.yellow)
-    print("  Existing installation detected.")
-    term.setTextColor(colors.white)
-    print("")
-    print("  [1]  Hard Update    (delta-check; skip unchanged .lua)")
-    print("  [2]  Force Update   (reinstall ALL .lua; keep .json data)")
-    term.setTextColor(colors.red)
-    print("  [3]  Clean Install  (WIPE all data + fresh install)")
-    term.setTextColor(colors.white)
-    print("  [Q]  Cancel")
-    print("")
-    io.write("Choice [1/2/3/Q]: ")
-    local ch = (io.read() or ""):gsub("%s", ""):lower()
-    if ch == "1" then
-        MODE = "update"
-    elseif ch == "2" then
-        MODE       = "force"
-        forceWrite = true
-    elseif ch == "3" then
-        MODE = "clean"
-    else
-        print("Aborted."); return
-    end
+print("  [U]  Update         (delta-check; skip unchanged .lua)")
+print("  [F]  Force Update   (reinstall ALL .lua; keep .json data)")
+term.setTextColor(colors.red)
+print("  [I]  Install        (WIPE everything + fresh install)")
+term.setTextColor(colors.white)
+print("  [Q]  Cancel")
+print("")
+io.write("Choice [U/F/I/Q]: ")
+local ch = (io.read() or ""):gsub("%s", ""):lower()
+if ch == "u" then
+    MODE = "update"
+elseif ch == "f" then
+    MODE       = "force"
+    forceWrite = true
+elseif ch == "i" then
+    MODE = "clean"
 else
-    MODE = "fresh"
+    print("Aborted."); return
 end
 
 -- ── Pre-install steps ─────────────────────────────────────────────────────────
 if MODE == "clean" then
     print("")
     term.setTextColor(colors.red)
-    print("  WARNING: Clean Install will permanently delete:")
+    print("  WARNING: Install will permanently delete:")
     for _, d in ipairs(CLEAN_DIRS) do print("    " .. d .. "/  (entire directory)") end
     for _, p in ipairs(DATA_PATHS) do print("    " .. p) end
     print("")
-    io.write("  Type CLEAN to confirm: ")
+    io.write("  Type YES to confirm wipe + reinstall: ")
     term.setTextColor(colors.white)
-    if io.read() ~= "CLEAN" then print("Aborted."); return end
+    if io.read() ~= "YES" then print("Aborted."); return end
 
     print("\nWiping...")
     for _, d in ipairs(CLEAN_DIRS) do
@@ -238,53 +227,25 @@ if MODE == "clean" then
             term.setTextColor(colors.white)
         end
     end
+    forceWrite = true
 
-    -- Re-create dirs and proceed as a fresh install.
-    print("\nCreating directories...")
-    for _, d in ipairs({"/shared", "/ami", "/ami/shop", "/ami/shop/data"}) do
-        if not fs.exists(d) then
-            fs.makeDir(d)
-            term.setTextColor(colors.lightGray); print("  mkdir " .. d)
-            term.setTextColor(colors.white)
-        end
-    end
     checkHardware()
-    forceWrite = true   -- force all files after wipe
+end
 
-elseif MODE == "fresh" then
-    term.setTextColor(colors.lime)
-    print("  [FRESH INSTALL] No existing installation found.")
-    term.setTextColor(colors.white)
-    print("")
-    checkHardware()
-    print("")
-    term.setTextColor(colors.red)
-    io.write("Type YES to install: ")
-    term.setTextColor(colors.white)
-    if io.read() ~= "YES" then print("Aborted."); return end
-
-    print("\nCreating directories...")
-    for _, d in ipairs({"/shared", "/ami", "/ami/shop", "/ami/shop/data"}) do
-        if not fs.exists(d) then
-            fs.makeDir(d)
-            term.setTextColor(colors.lightGray); print("  mkdir " .. d)
-            term.setTextColor(colors.white)
-        end
+-- Ensure directories exist for all modes (no-op if already present).
+for _, d in ipairs({"/shared", "/ami", "/ami/shop", "/ami/shop/data"}) do
+    if not fs.exists(d) then
+        fs.makeDir(d)
+        term.setTextColor(colors.lightGray); print("  mkdir " .. d)
+        term.setTextColor(colors.white)
     end
-
-elseif MODE == "force" then
-    print("")
-    term.setTextColor(colors.cyan)
-    print("  Force Update: all .lua files will be reinstalled.")
-    term.setTextColor(colors.white)
 end
 
 -- ── Download and install .lua files ──────────────────────────────────────────
 local modeLabel = ({
     update = "Checking for updates...",
     force  = "Force-reinstalling modules...",
-    clean  = "Downloading modules (clean)...",
-    fresh  = "Downloading modules...",
+    clean  = "Downloading modules (clean install)...",
 })[MODE]
 print("\n" .. modeLabel)
 
@@ -360,8 +321,8 @@ for _, entry in ipairs({
     end
 end
 
--- ── Auto-start (fresh / clean only) ──────────────────────────────────────────
-if not failed and (MODE == "fresh" or MODE == "clean") then
+-- ── Auto-start (clean / install only) ──────────────────────────────────────────
+if not failed and MODE == "clean" then
     print("")
     io.write("Set AmiStore as auto-start on reboot? [y/n]: ")
     if (io.read() or ""):lower():sub(1, 1) == "y" then
@@ -402,7 +363,7 @@ else
         print("Install fingerprint : " .. masterHash)
         print("Verify at           : github.com/Teru-dot-png/amicoin-fullpower")
     end
-    if MODE == "fresh" or MODE == "clean" then
+    if MODE == "clean" then
         print("")
         term.setTextColor(colors.orange)
         print("Next steps:")

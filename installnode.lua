@@ -103,9 +103,6 @@ local function smartInstall(dst, content, remoteHash, forceWrite)
     return existed and "updated" or "fresh", nil
 end
 
--- ── Mode detection ────────────────────────────────────────────────────────────
-local installed = fs.exists("/ledger.lua")
-
 -- ── Banner ────────────────────────────────────────────────────────────────────
 term.setTextColor(colors.red)
 print("===========================================")
@@ -117,49 +114,41 @@ print("Repository : " .. REPO_BASE)
 print("")
 
 -- ── Mode selection ────────────────────────────────────────────────────────────
-local MODE
+local MODE   -- "update" | "force" | "clean"
 local forceWrite = false
 
-if installed then
-    term.setTextColor(colors.yellow)
-    print("  Existing node installation detected.")
-    term.setTextColor(colors.white)
-    print("")
-    print("  [1]  Hard Update    (delta-check; skip unchanged .lua)")
-    print("  [2]  Force Update   (reinstall ALL .lua; keep /data/)")
-    term.setTextColor(colors.red)
-    print("  [3]  Clean Install  (WIPE /data/ ledger + keys + fresh)")
-    term.setTextColor(colors.white)
-    print("  [Q]  Cancel")
-    print("")
-    io.write("Choice [1/2/3/Q]: ")
-    local ch = (io.read() or ""):gsub("%s", ""):lower()
-    if ch == "1" then
-        MODE = "update"
-    elseif ch == "2" then
-        MODE       = "force"
-        forceWrite = true
-    elseif ch == "3" then
-        MODE = "clean"
-    else
-        print("Aborted."); return
-    end
+print("  [U]  Update         (delta-check; skip unchanged .lua)")
+print("  [F]  Force Update   (reinstall ALL .lua; keep /data/)")
+term.setTextColor(colors.red)
+print("  [I]  Install        (WIPE everything + fresh install)")
+term.setTextColor(colors.white)
+print("  [Q]  Cancel")
+print("")
+io.write("Choice [U/F/I/Q]: ")
+local ch = (io.read() or ""):gsub("%s", ""):lower()
+if ch == "u" then
+    MODE = "update"
+elseif ch == "f" then
+    MODE       = "force"
+    forceWrite = true
+elseif ch == "i" then
+    MODE = "clean"
 else
-    MODE = "fresh"
+    print("Aborted."); return
 end
 
 -- ── Pre-install steps ─────────────────────────────────────────────────────────
 if MODE == "clean" then
     print("")
     term.setTextColor(colors.red)
-    print("  WARNING: Clean Install will permanently delete:")
+    print("  WARNING: Install will permanently delete:")
     for _, p in ipairs(CLEAN_LUAS) do print("    " .. p) end
     for _, d in ipairs(CLEAN_DIRS) do print("    " .. d .. "/  (ledger, keys, miner state)") end
     print("")
     print("  All wallet balances on this node will be ERASED.")
-    io.write("  Type CLEAN to confirm: ")
+    io.write("  Type YES to confirm wipe + reinstall: ")
     term.setTextColor(colors.white)
-    if io.read() ~= "CLEAN" then print("Aborted."); return end
+    if io.read() ~= "YES" then print("Aborted."); return end
 
     print("\nWiping...")
     for _, p in ipairs(CLEAN_LUAS) do
@@ -177,48 +166,22 @@ if MODE == "clean" then
         end
     end
     forceWrite = true
+end
 
-    print("\nCreating directories...")
-    for _, d in ipairs({"/shared", "/data"}) do
-        if not fs.exists(d) then
-            fs.makeDir(d)
-            term.setTextColor(colors.lightGray); print("  mkdir " .. d)
-            term.setTextColor(colors.white)
-        end
+-- Ensure directories exist for all modes (no-op if already present).
+for _, d in ipairs({"/shared", "/data"}) do
+    if not fs.exists(d) then
+        fs.makeDir(d)
+        term.setTextColor(colors.lightGray); print("  mkdir " .. d)
+        term.setTextColor(colors.white)
     end
-
-elseif MODE == "fresh" then
-    term.setTextColor(colors.lime)
-    print("  [FRESH INSTALL] No node software found.")
-    term.setTextColor(colors.white)
-    print("")
-    term.setTextColor(colors.red)
-    io.write("Type YES to install: ")
-    term.setTextColor(colors.white)
-    if io.read() ~= "YES" then print("Aborted."); return end
-
-    print("\nCreating directories...")
-    for _, d in ipairs({"/shared", "/data"}) do
-        if not fs.exists(d) then
-            fs.makeDir(d)
-            term.setTextColor(colors.lightGray); print("  mkdir " .. d)
-            term.setTextColor(colors.white)
-        end
-    end
-
-elseif MODE == "force" then
-    print("")
-    term.setTextColor(colors.cyan)
-    print("  Force Update: all .lua files will be reinstalled.")
-    term.setTextColor(colors.white)
 end
 
 -- ── Download and install .lua files ──────────────────────────────────────────
 local modeLabel = ({
     update = "Checking for updates...",
     force  = "Force-reinstalling node software...",
-    clean  = "Downloading node software (clean)...",
-    fresh  = "Downloading node software...",
+    clean  = "Downloading node software (clean install)...",
 })[MODE]
 print("\n" .. modeLabel)
 
@@ -299,7 +262,7 @@ else
         print("Install fingerprint : " .. masterHash)
         print("Verify at           : github.com/Teru-dot-png/amicoin-fullpower")
     end
-    if MODE == "fresh" or MODE == "clean" then
+    if MODE == "clean" then
         print("")
         term.setTextColor(colors.orange)
         print("Next steps:")
@@ -329,7 +292,7 @@ if not failed and (MODE == "update" or MODE == "force") then
     elseif ch == "h" then
         os.reboot()
     end
-elseif not failed and (MODE == "fresh" or MODE == "clean") then
+elseif not failed and MODE == "clean" then
     print("")
     io.write("Reboot now to start the node? [y/n]: ")
     if (io.read() or ""):lower():sub(1, 1) == "y" then

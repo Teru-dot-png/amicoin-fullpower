@@ -104,9 +104,6 @@ local function smartInstall(dst, content, remoteHash, forceWrite)
     return existed and "updated" or "fresh", nil
 end
 
--- ── Mode detection ────────────────────────────────────────────────────────────
-local installed = fs.exists("/startup.lua") and fs.exists("/comms.lua")
-
 -- ── Banner ────────────────────────────────────────────────────────────────────
 term.setTextColor(colors.red)
 print("===========================================")
@@ -118,49 +115,41 @@ print("Repository : " .. REPO_BASE)
 print("")
 
 -- ── Mode selection ────────────────────────────────────────────────────────────
-local MODE
+local MODE   -- "update" | "force" | "clean"
 local forceWrite = false
 
-if installed then
-    term.setTextColor(colors.yellow)
-    print("  Existing wallet detected.")
-    term.setTextColor(colors.white)
-    print("")
-    print("  [1]  Hard Update    (delta-check; skip unchanged .lua)")
-    print("  [2]  Force Update   (reinstall ALL .lua; keep wallet data)")
-    term.setTextColor(colors.red)
-    print("  [3]  Clean Install  (WIPE all data + keys + fresh install)")
-    term.setTextColor(colors.white)
-    print("  [Q]  Cancel")
-    print("")
-    io.write("Choice [1/2/3/Q]: ")
-    local ch = (io.read() or ""):gsub("%s", ""):lower()
-    if ch == "1" then
-        MODE = "update"
-    elseif ch == "2" then
-        MODE       = "force"
-        forceWrite = true
-    elseif ch == "3" then
-        MODE = "clean"
-    else
-        print("Aborted."); return
-    end
+print("  [U]  Update         (delta-check; skip unchanged .lua)")
+print("  [F]  Force Update   (reinstall ALL .lua; keep wallet data)")
+term.setTextColor(colors.red)
+print("  [I]  Install        (WIPE everything + fresh install)")
+term.setTextColor(colors.white)
+print("  [Q]  Cancel")
+print("")
+io.write("Choice [U/F/I/Q]: ")
+local ch = (io.read() or ""):gsub("%s", ""):lower()
+if ch == "u" then
+    MODE = "update"
+elseif ch == "f" then
+    MODE       = "force"
+    forceWrite = true
+elseif ch == "i" then
+    MODE = "clean"
 else
-    MODE = "fresh"
+    print("Aborted."); return
 end
 
 -- ── Pre-install steps ─────────────────────────────────────────────────────────
 if MODE == "clean" then
     print("")
     term.setTextColor(colors.red)
-    print("  WARNING: Clean Install will permanently delete:")
+    print("  WARNING: Install will permanently delete:")
     for _, p in ipairs(CLEAN_LUAS) do print("    " .. p) end
     for _, d in ipairs(CLEAN_DIRS) do print("    " .. d .. "/  (entire directory)") end
     print("")
     print("  This CANNOT be undone. Your secret key will be lost.")
-    io.write("  Type CLEAN to confirm: ")
+    io.write("  Type YES to confirm wipe + reinstall: ")
     term.setTextColor(colors.white)
-    if io.read() ~= "CLEAN" then print("Aborted."); return end
+    if io.read() ~= "YES" then print("Aborted."); return end
 
     print("\nWiping...")
     for _, p in ipairs(CLEAN_LUAS) do
@@ -178,28 +167,13 @@ if MODE == "clean" then
         end
     end
     forceWrite = true
-
-elseif MODE == "fresh" then
-    term.setTextColor(colors.lime)
-    print("  [FRESH INSTALL] No wallet found on this Pad.")
-    term.setTextColor(colors.white)
-    print("")
-    io.write("Press Enter to install or Ctrl+T to abort... ")
-    io.read()
-
-elseif MODE == "force" then
-    print("")
-    term.setTextColor(colors.cyan)
-    print("  Force Update: all .lua files will be reinstalled.")
-    term.setTextColor(colors.white)
 end
 
 -- ── Download and install .lua files ──────────────────────────────────────────
 local modeLabel = ({
     update = "Checking for updates...",
     force  = "Force-reinstalling wallet...",
-    clean  = "Downloading wallet (clean)...",
-    fresh  = "Downloading wallet...",
+    clean  = "Downloading wallet (clean install)...",
 })[MODE]
 print("\n" .. modeLabel)
 

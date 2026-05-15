@@ -932,7 +932,6 @@ function api.executeInvoice(txId)
             newBal - inv.balSnapshot, inv.total)
     end
     pendingInvoice = nil
-    shopBalance    = newBal
     return executeWTS(txId, inv.listing, inv.qty, inv.buyerAddr)
 end
 

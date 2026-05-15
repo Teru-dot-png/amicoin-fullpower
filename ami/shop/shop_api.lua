@@ -833,6 +833,129 @@ function api.localSellConfirm(txId)
     return executeWTB(txId, order.listing, order.qty, order.seller)
 end
 
+-- ── Automated Invoice Push System ─────────────────────────────────────────────
+-- Touch-to-buy flow: monitor touch → invoice broadcast → wallet pop-up →
+-- player accepts → ledger confirms → item exported.  No operator Y/N prompt.
+--
+-- The INVOICE packet is plaintext JSON (not XTEA) because the shop does not
+-- know the buyer's secret key.  Fields are all public data.
+-- The PAYMENT_ACK from the wallet is also plaintext JSON.
+
+local INVOICE_TTL    = 120000   -- 2 minutes (ms)
+local pendingInvoice = nil      -- at most one active invoice at a time
+
+-- Broadcast an invoice to a buyer's wallet.
+-- Returns txId (string) or nil, errMsg.
+function api.sendInvoice(buyerAddr, buyerName, listing, qty)
+    if not p_modem then return nil, "No modem on BACK" end
+    local total  = listing.price * qty
+    local txId   = fnv1a(buyerAddr .. listing.item
+                         .. tostring(qty) .. tostring(os.epoch("utc")))
+    local cfg    = api.loadConfig()
+    local packet = textutils.serialiseJSON({
+        type      = "INVOICE",
+        to        = buyerAddr,
+        tx_id     = txId,
+        shop_addr = shopAddress,
+        shop_name = cfg.shop_name or "AmiStore",
+        item      = listing.item,
+        qty       = qty,
+        price     = listing.price,
+        total     = total,
+        expires   = os.epoch("utc") + INVOICE_TTL,
+    })
+    p_modem.transmit(SHOP_CHANNEL, SHOP_CHANNEL, packet)
+    pendingInvoice = {
+        txId        = txId,
+        buyerAddr   = buyerAddr,
+        buyerName   = buyerName or buyerAddr:sub(1, 8),
+        listing     = listing,
+        item        = listing.item,
+        qty         = qty,
+        price       = listing.price,
+        total       = total,
+        expires     = os.epoch("utc") + INVOICE_TTL,
+        balSnapshot = shopBalance,   -- balance before invoice; used to detect payment
+    }
+    log("INFO", "invoice", string.format("Invoice %s -> %s  %d x %s @ %d uAMI",
+        txId:sub(1, 8), buyerName or buyerAddr:sub(1, 8), qty, listing.item, listing.price))
+    return txId, nil
+end
+
+-- Cancel the active pending invoice; broadcasts INVOICE_CANCEL so the wallet
+-- pop-up clears.
+function api.cancelInvoice()
+    if not pendingInvoice then return end
+    if p_modem then
+        local pkt = textutils.serialiseJSON({
+            type  = "INVOICE_CANCEL",
+            tx_id = pendingInvoice.txId,
+        })
+        p_modem.transmit(SHOP_CHANNEL, SHOP_CHANNEL, pkt)
+    end
+    log("INFO", "invoice", "Cancelled invoice " .. pendingInvoice.txId:sub(1, 8))
+    pendingInvoice = nil
+end
+
+-- Returns the current pending invoice table, or nil.
+function api.getPendingInvoice()
+    if not pendingInvoice then return nil end
+    if os.epoch("utc") > pendingInvoice.expires then
+        pendingInvoice = nil
+    end
+    return pendingInvoice
+end
+
+-- Called by networkLoop when PAYMENT_ACK arrives for the active invoice.
+-- Performs a ledger balance witness; only exports item if payment confirmed.
+-- Returns ok (bool), errMsg (string or nil).
+function api.executeInvoice(txId)
+    local inv = pendingInvoice
+    if not inv or inv.txId ~= txId then
+        return false, "No matching pending invoice"
+    end
+    if os.epoch("utc") > inv.expires then
+        pendingInvoice = nil
+        return false, "Invoice expired"
+    end
+    -- Brief pause to let the node propagate the balance update.
+    os.sleep(0.8)
+    local newBal = api.witnessBalance()
+    if newBal < inv.balSnapshot + inv.total then
+        log("WARN", "invoice", string.format(
+            "Balance check fail for %s: snapshot=%d new=%d required_gain=%d",
+            txId:sub(1, 8), inv.balSnapshot, newBal, inv.total))
+        return false, string.format(
+            "Payment not confirmed (+%d received, need +%d)",
+            newBal - inv.balSnapshot, inv.total)
+    end
+    pendingInvoice = nil
+    shopBalance    = newBal
+    return executeWTS(txId, inv.listing, inv.qty, inv.buyerAddr)
+end
+
+-- Parse a plaintext JSON broadcast from SHOP_CHANNEL (not XTEA-encrypted).
+-- Returns an action table, or nil.
+--   {type="PAYMENT_ACK",  tx_id=..., from=...}
+function api.processShopBroadcast(wire)
+    if type(wire) ~= "string" or wire:sub(1, 1) ~= "{" then return nil end
+    local ok, pkt = pcall(textutils.unserialiseJSON, wire)
+    if not ok or type(pkt) ~= "table" then return nil end
+    if pkt.type == "PAYMENT_ACK" and type(pkt.tx_id) == "string" then
+        return { type = "PAYMENT_ACK", tx_id = pkt.tx_id, from = pkt.from }
+    end
+    -- INVOICE and INVOICE_CANCEL are self-broadcasts; ignore them.
+    return nil
+end
+
+-- Prune expired invoice (call from syncLoop alongside prunePendingOrders).
+function api.pruneInvoices()
+    if pendingInvoice and os.epoch("utc") > pendingInvoice.expires then
+        log("INFO", "invoice", "Expired: " .. pendingInvoice.txId:sub(1, 8))
+        pendingInvoice = nil
+    end
+end
+
 -- ── Accessors ─────────────────────────────────────────────────────────────────
 function api.getMonitor()   return p_monitor  end
 -- api.getShopKey() intentionally omitted — the secret key must not be exported.

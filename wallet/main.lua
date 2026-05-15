@@ -774,6 +774,82 @@ local function screenVault(secretKey, address, nodes)
     end
 end
 
+-- ── AmiStore invoice popup ───────────────────────────────────────────────────
+-- Called when a plaintext INVOICE packet arrives on channel 1338 addressed
+-- to this wallet's address. Returns after the player accepts or declines.
+local function invoicePopup(pkt, secretKey, address, nodes)
+    -- Validate required fields before displaying anything.
+    if type(pkt) ~= "table"
+        or type(pkt.tx_id)     ~= "string"
+        or type(pkt.shop_addr) ~= "string"
+        or type(pkt.total)     ~= "number"
+        or type(pkt.item)      ~= "string" then
+        return  -- malformed packet — silently ignore
+    end
+
+    local shopName  = tostring(pkt.shop_name or "Unknown Shop")
+    local itemShort = (pkt.item:match(":(.+)$") or pkt.item)
+    local qty       = math.max(1, math.floor(tonumber(pkt.qty) or 1))
+    local total     = pkt.total
+    local amiStr    = string.format("%.4f AMI", total / 1000000)
+
+    -- Draw the interrupt screen.
+    cls()
+    banner("Incoming Invoice")
+    term.setCursorPos(1, 4); term.setTextColor(colors.gray)
+    term.write(string.rep("-", W))
+
+    term.setCursorPos(1, 5); term.setTextColor(colors.orange)
+    term.write(("Shop : " .. shopName):sub(1, W))
+    term.setCursorPos(1, 6); term.setTextColor(colors.white)
+    term.write(("Item : " .. itemShort):sub(1, W))
+    term.setCursorPos(1, 7)
+    term.write(("Qty  : " .. qty):sub(1, W))
+    term.setCursorPos(1, 8); term.setTextColor(colors.yellow)
+    term.write(("Total: " .. total .. " uAMI  (" .. amiStr .. ")"):sub(1, W))
+
+    term.setCursorPos(1, 9); term.setTextColor(colors.gray)
+    term.write(string.rep("-", W))
+    term.setCursorPos(1, 10); term.setTextColor(colors.lime)
+    term.write("[Y] Accept & pay")
+    term.setCursorPos(1, 11); term.setTextColor(colors.red)
+    term.write("[N] Decline")
+    term.setCursorPos(1, 13); term.setTextColor(colors.gray)
+    term.write(("TX: " .. pkt.tx_id:sub(1, W - 4)):sub(1, W))
+
+    -- Wait for Y or N key.
+    while true do
+        local _, k = os.pullEvent("key")
+        if k == keys.y then
+            if #nodes == 0 then
+                cls(); banner("Invoice Error")
+                pmsg("No nodes configured -- cannot pay.", 5, colors.red)
+                os.sleep(2)
+                return
+            end
+            cls(); banner("Paying...")
+            term.setCursorPos(1, 5); term.setTextColor(colors.yellow)
+            term.write("Sending " .. total .. " uAMI to shop...")
+            local ok, result, err = comms.transfer(
+                secretKey, nodes[1].key, address, pkt.shop_addr, total)
+            if ok then
+                -- Notify the shop so it can dispense immediately.
+                comms.sendPaymentAck(address, pkt.tx_id)
+                term.setCursorPos(1, 7); term.setTextColor(colors.lime)
+                term.write("Payment sent! Awaiting item dispensing.")
+            else
+                term.setCursorPos(1, 7); term.setTextColor(colors.red)
+                term.write(("Failed: " .. (err or "unknown")):sub(1, W))
+            end
+            os.sleep(2)
+            return
+        elseif k == keys.n then
+            -- Decline -- let the invoice expire naturally on the shop side.
+            return
+        end
+    end
+end
+
 -- ── Dashboard (Glass Cockpit) ─────────────────────────────────────────────────
 local function screenDashboard(secretKey, address, nodes, playerName)
     -- Cache our own name immediately
@@ -962,11 +1038,14 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         term.setTextColor(colors.gray);   term.write("[L]ogout")
     end
 
+    -- Open the AmiStore broadcast channel so we receive INVOICE packets.
+    comms.openShopChannel()
+
     refreshBalance()
     draw()
 
     while true do
-        local ev, p1 = os.pullEvent()
+        local ev, p1, p2, p3, p4 = os.pullEvent()
 
         if ev == "key" then
 
@@ -1081,6 +1160,19 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 pmsg("Logged out.", H - 1, colors.gray)
                 os.sleep(1)
                 return
+            end
+
+        elseif ev == "modem_message" then
+            -- p1=side, p2=channel, p3=replyChannel, p4=message
+            -- Only handle plaintext INVOICE broadcasts on SHOP_CHANNEL (1338).
+            if p2 == 1338 and type(p4) == "string" and p4:sub(1,1) == "{" then
+                local ok2, pkt = pcall(textutils.unserialiseJSON, p4)
+                if ok2 and type(pkt) == "table"
+                    and pkt.type == "INVOICE"
+                    and pkt.to   == address then
+                    invoicePopup(pkt, secretKey, address, nodes)
+                    draw()
+                end
             end
 
         elseif ev == "timer" then

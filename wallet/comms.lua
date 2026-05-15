@@ -330,4 +330,42 @@ function comms.listVaults(secretKey, nodeKey, address)
     }, true)
 end
 
+-- ── AmiStore invoice protocol ─────────────────────────────────────────────────
+-- The shop broadcasts INVOICE packets as plaintext JSON on SHOP_CHANNEL (1338).
+-- The wallet opens that channel, matches on data.to == its own address,
+-- then sends a PAYMENT_ACK after completing the transfer.
+
+local SHOP_CHANNEL = 1338
+
+-- Open the shop channel so the wallet can receive INVOICE broadcasts.
+function comms.openShopChannel()
+    local r = getRouter()
+    if r then r.open(SHOP_CHANNEL) end
+end
+
+-- Close the shop channel (call on logout/shutdown).
+function comms.closeShopChannel()
+    local r = getRouter()
+    if r then
+        local ok = pcall(r.close, SHOP_CHANNEL)
+        -- ignore errors (already closed, etc.)
+    end
+end
+
+-- Send a PAYMENT_ACK to the shop after a successful transfer.
+-- The ACK is plaintext JSON so the shop's networkLoop can parse it without
+-- knowing the wallet's XTEA key.
+function comms.sendPaymentAck(buyerAddr, txId)
+    local r = getRouter()
+    if not r then return false, "No modem" end
+    local pkt = textutils.serialiseJSON({
+        type  = "PAYMENT_ACK",
+        tx_id = txId,
+        from  = buyerAddr,
+    })
+    r.open(SHOP_CHANNEL)
+    r.transmit(SHOP_CHANNEL, SHOP_CHANNEL, pkt)
+    return true, nil
+end
+
 return comms

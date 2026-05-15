@@ -354,8 +354,9 @@ local function screenCommandCenter(nodes, secretKey, address)
             pmsg("  [D] Remove node",           base + 1, colors.red)
             pmsg("  [I] Integrity Handshake",   base + 2, colors.yellow)
             pmsg("  [G] Gossip DNS cache",       base + 3, colors.cyan)
+            pmsg("  [C] Consolidate balances",  base + 4, colors.lime)
         end
-        pmsg("  [B] Back", base + (#nodes > 0 and 4 or 1), colors.gray)
+        pmsg("  [B] Back", base + (#nodes > 0 and 5 or 1), colors.gray)
 
         local _, key = os.pullEvent("key")
 
@@ -525,6 +526,95 @@ local function screenCommandCenter(nodes, secretKey, address)
                 end
                 pmsg(string.format("Sent %d entries to all nodes.", #names), 7, colors.green)
             end
+            waitKey()
+
+        elseif key == keys.c and #nodes > 1 then
+            -- ── Consolidate: sweep all balances into one node ───────────────
+            -- 1. Fetch the live balance from every node.
+            -- 2. Show the per-node breakdown and let the operator pick the
+            --    target node (default = highest-balance node).
+            -- 3. For every other node that has a non-zero balance, issue a
+            --    TRANSFER of its full balance to the target node's address.
+            banner("Consolidate Balances")
+            pmsg("Fetching balances...", 5, colors.yellow)
+
+            -- Build per-node balance table.
+            local nodeBalances = {}
+            local highestBal   = 0
+            local defaultIdx   = 1
+            for i, node in ipairs(nodes) do
+                local ok, data = comms.getBalance(secretKey, node.key, address)
+                local bal = (ok and data and data.balance) or 0
+                nodeBalances[i] = bal
+                if bal > highestBal then highestBal = bal; defaultIdx = i end
+            end
+
+            -- Show breakdown.
+            banner("Consolidate Balances")
+            for i, node in ipairs(nodes) do
+                local bstr = string.format("%.4f AMI", nodeBalances[i] / 1000000)
+                pmsg(string.format("  [%d] %-14s %s",
+                    i, node.name:sub(1,14), bstr), 4 + i,
+                    i == defaultIdx and colors.lime or colors.white)
+            end
+
+            local promptRow = 5 + #nodes
+            pmsg(string.format("Target node? [1-%d] (Enter=%d):",
+                #nodes, defaultIdx), promptRow, colors.yellow)
+            local inp = prompt("> ", promptRow + 1)
+            inp = inp:gsub("%s", "")
+            local targetIdx = (#inp > 0 and tonumber(inp)) or defaultIdx
+            if not targetIdx or targetIdx < 1 or targetIdx > #nodes then
+                targetIdx = defaultIdx
+            end
+
+            local targetNode = nodes[targetIdx]
+
+            -- Fetch the target node's registered address (its shop/wallet addr).
+            -- We look up the target node key itself as the recipient address:
+            -- "which address does this node hold coins for this wallet?" = our
+            -- own address.  Consolidate moves OUR balance from each source
+            -- node into the target node by doing a TRANSFER from our wallet
+            -- on the source node TO our own address on the target node.
+            -- Because all nodes share the same ledger mesh, this is a simple
+            -- on-chain transfer — the sending node deducts, the target node
+            -- credits the same address via mesh consensus.
+
+            banner("Consolidate Balances")
+            pmsg(string.format("Target: %s", targetNode.name), 5, colors.lime)
+            local moved = 0
+            local errs  = 0
+            local row   = 7
+            for i, node in ipairs(nodes) do
+                if i ~= targetIdx then
+                    local bal = nodeBalances[i]
+                    if bal > 0 then
+                        pmsg(string.format("  Moving %.4f from %s...",
+                            bal / 1000000, node.name:sub(1,12)), row, colors.yellow)
+                        row = row + 1
+                        local ok, _, err = comms.transfer(
+                            secretKey, node.key, address, address, bal)
+                        if ok then
+                            moved = moved + bal
+                            pmsg(string.format("    -> OK (%d uAMI)", bal),
+                                row, colors.green)
+                        else
+                            errs = errs + 1
+                            pmsg("    -> Failed: " .. (err or "?"),
+                                row, colors.red)
+                        end
+                        row = row + 1
+                    else
+                        pmsg(string.format("  %s: 0 balance, skip",
+                            node.name:sub(1,14)), row, colors.gray)
+                        row = row + 1
+                    end
+                end
+            end
+            row = row + 1
+            pmsg(string.format("Consolidated %d uAMI  (%d error(s))",
+                moved, errs),
+                row, errs > 0 and colors.red or colors.green)
             waitKey()
 
         elseif key == keys.b then

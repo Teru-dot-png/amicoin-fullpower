@@ -13,9 +13,10 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 3. [Quick-Start Guide](#quick-start-guide)
 4. [Wallet Features](#wallet-features)
 5. [Node Features](#node-features)
-6. [Reward Schedule](#reward-schedule)
-7. [File Structure](#file-structure)
-8. [Further Reading](#further-reading)
+6. [AmiStore Marketplace](#amistore-marketplace)
+7. [Reward Schedule](#reward-schedule)
+8. [File Structure](#file-structure)
+9. [Further Reading](#further-reading)
 
 ---
 
@@ -117,13 +118,37 @@ Net 7 active  10 uAMI/tick  +600/hr
 
 ### Multi-Node Support
 
-The wallet can connect to any number of nodes simultaneously. Press **`[N]`** to open the Node Manager — add, rename, or remove nodes at any time. Balances are aggregated across all reachable nodes.
+The wallet connects to any number of nodes simultaneously. Balances are aggregated across all reachable nodes. Use the **Command Center** (`[N]`) to add, remove, or manage nodes.
+
+### Unit Selection When Sending
+
+When pressing **`[S]`** to send, you are prompted to choose the unit:
+
+```
+Unit? [A]MI or [U]uAMI:
+> a
+Amount (AMI):
+> 1.5
+```
+
+Type `a` + Enter for AMI (human-friendly, decimal) or `u` + Enter for µAMI (integer, exact). Both resolve to the same on-chain amount — µAMI is the raw wire format.
 
 ### Ami-DNS Name Cache
 
-Player names are cached locally in `/wallet_data/names_cache.json`. Addresses appear as `"Steve"` wherever known instead of raw 128-character hex strings. The cache is populated automatically when you register your own name and whenever a name lookup succeeds during a Send operation.
+Player names are cached locally in `/wallet_data/names_cache.json`. Addresses appear as `"Steve"` wherever known instead of raw 128-character hex strings. The cache is populated automatically when you register your own name and whenever a name lookup succeeds during a Send operation. Cached names are gossiped to all nodes automatically so the entire mesh shares the same directory.
 
-### AmiVault (Time-Locked Savings)
+### Command Center (Node Manager)
+
+Press **`[N]`** to open the Command Center. Available actions:
+
+| Key | Action |
+|-----|--------|
+| `[A]` | Add a node (manual key entry or auto-fetch via setup password) |
+| `[D]` | Remove a node |
+| `[I]` | **Integrity Handshake** — fetch & compare each node's file fingerprint against the trusted on-file hash. Shows `OK` / `TOFC` (trust on first contact) / `MISMATCH` (tamper alert) |
+| `[G]` | **Gossip DNS** — push your entire local name cache to all nodes |
+| `[C]` | **Consolidate** — sweep balances from all nodes into a single target node |
+| `[B]` | Back to Dashboard |
 
 Press **`[V]`** from the Dashboard to open AmiVault. You can lock a chosen amount of AMI for a chosen duration (in seconds). Locked funds cannot be spent until the timer expires — useful for commitment savings or gift locks.
 
@@ -152,7 +177,9 @@ Press **`[U]`** from the Dashboard to pull the latest wallet files from GitHub. 
 | `VAULT_LOCK` | Locks an amount of µAMI into a time-locked vault |
 | `VAULT_UNLOCK` | Releases a vault whose timer has expired |
 | `VAULT_LIST` | Returns all vault entries for an address |
-| `STATS` | Returns active-wallet count, total supply, mint rate, and tick count |
+| `STATS` | Returns active-wallet count, total supply, mint rate, tick count, TPS lag factor, and node file fingerprint |
+| `FINGERPRINT` | Returns the node's current FNV-1a file fingerprint for tamper detection |
+| `GOSSIP_DNS` | Accepts a name↔address mapping from a wallet and persists it to the node's name registry |
 
 ### Monitor Display
 
@@ -165,6 +192,26 @@ A background coroutine checks the Ender Router every 30 seconds. If the router s
 ### Self-Update
 
 Press **`U`** on the node's keyboard to pull the latest node files from GitHub. Each downloaded file is size-checked and FNV-1a hashed before being written to disk. A combined fingerprint is printed on completion.
+
+---
+
+## AmiStore Marketplace
+
+AmiStore is an AE2-integrated shopfront that runs alongside AmiCoin. See **[SHOP.md](SHOP.md)** for the full Merchant Manual.
+
+Quick overview:
+
+- **WTS listings** — items the shop sells from AE2 digital storage, priced in µAMI.
+- **WTB listings** — items the shop buys from players, paid in µAMI from the shop's balance.
+- **Receipt printer** — optional physical audit trail printed on a CC Printer.
+- **Admin dashboard** — hardware-bound session token gates all price/listing edits.
+- **Vault sweep** — a configurable percentage of each sale is swept to a designated AmiVault automatically.
+
+### Install AmiStore
+
+```
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/InstallShop.lua
+```
 
 ---
 
@@ -190,28 +237,35 @@ Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 ```
 amicoin/
 ├── shared/
-│   └── xtea.lua            XTEA cipher library (used by both node and wallet)
+│   └── xtea.lua            XTEA cipher library (used by node, wallet, and shop)
 ├── node/
 │   ├── startup.lua         Node entry point; Ender Router listener, monitor, watchdog
 │   ├── ledger.lua          Ledger, name registry, and AmiVault storage
-│   ├── miner_daemon.lua    Proof-of-Uptime reward engine with halving and tick persistence
+│   ├── miner_daemon.lua    Proof-of-Uptime reward engine (TPS-aware, halving, ticks)
 │   └── xtea.lua            Thin re-export of shared/xtea.lua
 ├── wallet/
 │   ├── main.lua            Glass Cockpit dashboard, all wallet screens, Ami-DNS cache
 │   ├── secret_manager.lua  Key generation, import, and 128-char address derivation
 │   ├── session.lua         Hardware-bound encrypted auto-login session
 │   └── comms.lua           Encrypted packet I/O, latency measurement, all node commands
+├── ami/shop/
+│   ├── startup.lua         AmiStore entry point; parallel network/sync/input loops
+│   ├── shop_api.lua        Intelligence layer: AE2, listings, pipeline, structured logging
+│   └── shop_ui.lua         Glass Cockpit monitor UI (orange/red/gray theme)
 ├── docs/
 │   ├── README.md           This file
+│   ├── SHOP.md             AmiStore Merchant Manual
 │   ├── SECURITY.md         XTEA, source verification, and key safety guidelines
 │   └── MIGRATION.md        How to move your wallet to a new Pad
 ├── installnode.lua         One-command node installer with FNV-1a tamper detection
-└── installpad.lua          One-command wallet installer with FNV-1a tamper detection
+├── installpad.lua          One-command wallet installer with FNV-1a tamper detection
+└── InstallShop.lua         One-command AmiStore installer with hardware checklist
 ```
 
 ---
 
 ## Further Reading
 
+- [SHOP.md](SHOP.md) — AmiStore Merchant Manual: hardware layout, listing format, receipts, admin gate.
 - [SECURITY.md](SECURITY.md) — XTEA encryption, source verification, and keeping your Secret Key safe.
 - [MIGRATION.md](MIGRATION.md) — Moving your wallet to a new Ender Router Pad.

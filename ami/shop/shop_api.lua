@@ -22,11 +22,10 @@ local REPLY_BASE    = 3000        -- Reply channel pool (3000-3999)
 local MESH_TIMEOUT  = 10          -- seconds waiting for a mesh reply
 local ORDER_TTL     = 60000       -- ms a pending order is held before expiry
 
-local SHOP_DIR      = "/ami/shop"
 local DATA_DIR      = "/ami/shop/data"
 local LISTINGS_FILE = "/ami/shop/listings.json"
 local CONFIG_FILE   = "/ami/shop/config.json"
-local ERRORS_FILE   = "/ami/shop/errors.log"
+local LOG_FILE      = "/ami/shop/errors.log"
 
 -- ── Peripheral handles ────────────────────────────────────────────────────────
 local p_monitor = nil
@@ -36,22 +35,33 @@ local p_tray     = nil   -- inventory peripheral (vending tray)
 local p_modem    = nil
 
 -- ── Runtime state ─────────────────────────────────────────────────────────────
-local shopKey      = nil   -- 32-hex secret key (volatile, never sent over wire)
-local shopAddress  = nil   -- 128-hex public address
-local shopBalance  = 0     -- last witnessed balance in µAMI
-local listings     = {}    -- array loaded from listings.json
-local pendingOrders = {}   -- tx_id → {item, qty, price, buyer, expires, type}
+local shopKey       = nil   -- 32-hex secret key (volatile, never sent over wire)
+local shopAddress   = nil   -- 128-hex public address
+local shopBalance   = 0     -- last witnessed balance in µAMI
+local listings      = {}    -- array loaded from listings.json
+local pendingOrders = {}    -- tx_id → {item, qty, price, buyer, expires, type}
+local _cfgCache     = nil   -- config cache; invalidated on saveConfig
 
 -- ── Low-level helpers ─────────────────────────────────────────────────────────
 local function ensureDir(d)
     if not fs.exists(d) then fs.makeDir(d) end
 end
 
-local function logError(msg)
+-- Structured logger: log("ERROR", "shop_api", "message")
+-- Severity: DEBUG, INFO, WARN, ERROR
+-- Always appends to LOG_FILE; WARN/ERROR also print to terminal.
+local function log(severity, module, msg)
     ensureDir(DATA_DIR)
-    local f = fs.open(ERRORS_FILE, "a")
-    f.write(os.date("[%Y-%m-%d %H:%M:%S] ") .. msg .. "\n")
+    local ts    = tostring(os.epoch("utc"))
+    local line  = string.format("[%s] [%s] [%s] %s", ts, module, severity, msg)
+    local f = fs.open(LOG_FILE, "a")
+    f.write(line .. "\n")
     f.close()
+    if severity == "WARN" or severity == "ERROR" then
+        term.setTextColor(severity == "ERROR" and colors.red or colors.yellow)
+        print(line)
+        term.setTextColor(colors.white)
+    end
 end
 
 local function fnv1a(s)
@@ -130,14 +140,23 @@ end
 local DEFAULT_CFG = {nodes = {}, sweep_pct = 5, vault_addr = "", vault_node_key = ""}
 
 function api.loadConfig()
-    if not fs.exists(CONFIG_FILE) then return DEFAULT_CFG end
+    if _cfgCache then return _cfgCache end
+    if not fs.exists(CONFIG_FILE) then _cfgCache = DEFAULT_CFG; return DEFAULT_CFG end
     local f = fs.open(CONFIG_FILE, "r"); local raw = f.readAll(); f.close()
     local t = textutils.unserialiseJSON(raw)
-    return type(t) == "table" and t or DEFAULT_CFG
+    _cfgCache = (type(t) == "table") and t or DEFAULT_CFG
+    return _cfgCache
 end
 
 function api.saveConfig(cfg)
+    _cfgCache = cfg   -- update cache immediately
     local f = fs.open(CONFIG_FILE, "w"); f.write(textutils.serialiseJSON(cfg)); f.close()
+end
+
+-- Invalidate the config cache (call if config.json is edited externally).
+function api.reloadConfig()
+    _cfgCache = nil
+    return api.loadConfig()
 end
 
 -- ── Listings ──────────────────────────────────────────────────────────────────
@@ -198,15 +217,32 @@ end
 -- ── Inventory sync (called every 30 s by startup.lua) ─────────────────────────
 -- Refreshes _stock and _liquid fields on each listing so the UI shows
 -- live availability without reloading listings.json.
+-- AE2 calls are batched: one meGetStock() per unique WTS item, not per render.
 function api.syncInventory()
     shopBalance = api.witnessBalance()
+    -- Cache AE2 results for this sync pass to avoid duplicate getItem() calls.
+    local stockCache = {}
     for _, l in ipairs(listings) do
         if l.type == "WTS" then
-            l._stock     = meGetStock(l.item)
+            if stockCache[l.item] == nil then
+                stockCache[l.item] = meGetStock(l.item)
+            end
+            l._stock     = stockCache[l.item]
             l._available = l._stock > 0
         elseif l.type == "WTB" then
             l._liquid    = shopBalance
             l._available = shopBalance >= l.price
+        end
+    end
+end
+
+-- Prune expired entries from pendingOrders to prevent unbounded growth.
+-- Call from startup.lua's sync loop.
+function api.prunePendingOrders()
+    local now = os.epoch("utc")
+    for id, order in pairs(pendingOrders) do
+        if now > order.expires then
+            pendingOrders[id] = nil
         end
     end
 end
@@ -297,9 +333,15 @@ local AMI_HEAD = {
 
 -- printReceipt fires-and-forgets: logs printer errors but never aborts the flow.
 function api.printReceipt(txId, txType, itemName, qty, totalMicro, partyAddr)
-    if not p_printer then return end
+    if not p_printer then
+        log("WARN", "printer", "Printer offline — skipping receipt for tx " .. (txId or "?"))
+        return
+    end
     local ok, err = pcall(function()
-        p_printer.newPage()
+        local started = p_printer.newPage()
+        if not started then
+            error("newPage() returned false (out of paper or ink?)")
+        end
         p_printer.setPageTitle("AmiStore Receipt")
         local function wline(y, text)
             p_printer.setCursorPos(1, y); p_printer.write(text)
@@ -317,7 +359,8 @@ function api.printReceipt(txId, txType, itemName, qty, totalMicro, partyAddr)
         p_printer.endPage()
     end)
     if not ok then
-        logError("Printer error on receipt " .. (txId or "?") .. ": " .. tostring(err))
+        log("ERROR", "printer",
+            "Receipt failed for tx " .. (txId or "?") .. ": " .. tostring(err))
     end
 end
 
@@ -330,16 +373,21 @@ local function executeWTS(txId, listing, qty, buyerAddr)
     -- Witness: shop balance should have increased by totalPrice.
     local newBal = api.witnessBalance()
     if newBal < shopBalance + totalPrice then
-        return false,
-            string.format("Payment unconfirmed (got %d, need +%d)", newBal, totalPrice)
+        local msg = string.format(
+            "Payment unconfirmed for tx %s (witnessed %d, need +%d)",
+            txId, newBal, totalPrice)
+        log("WARN", "pipeline", msg)
+        return false, string.format("Payment unconfirmed (got %d, need +%d)", newBal, totalPrice)
     end
     shopBalance = newBal
     -- Vend from AE2 → tray.
     local ok, err = meExport(listing.item, qty)
     if not ok then
-        logError("WTS AE2 export failed [" .. txId .. "]: " .. (err or "?"))
+        log("ERROR", "ae2", "WTS export failed [" .. txId .. "]: " .. (err or "?"))
         return false, "AE2 export failed: " .. (err or "?")
     end
+    log("INFO", "pipeline", string.format("WTS ok: %d x %s for %d uAMI [%s]",
+        qty, listing.item, totalPrice, txId))
     sweepVault(totalPrice)
     api.printReceipt(txId, "WTS", listing.item, qty, totalPrice, buyerAddr)
     return true, nil
@@ -352,10 +400,13 @@ local function executeWTB(txId, listing, qty, sellerAddr)
     if trayCount(listing.item) < qty then
         return false, "Item not found in tray (place it in the BOTTOM inventory)"
     end
-    -- Transfer µAMI to seller via mesh.
-    local cfg = api.loadConfig()
+    -- Transfer µAMI to seller via mesh (uses cached config).
+    local cfg   = api.loadConfig()
     local wNode = cfg.nodes[1]
-    if not wNode then return false, "No witness node configured" end
+    if not wNode then
+        log("ERROR", "pipeline", "WTB aborted — no witness node in config [" .. txId .. "]")
+        return false, "No witness node configured"
+    end
     local ok, _, merr = meshSend(wNode.key, {
         cmd    = "TRANSFER",
         from   = shopAddress,
@@ -363,9 +414,19 @@ local function executeWTB(txId, listing, qty, sellerAddr)
         amount = totalPrice,
         nonce  = os.epoch("utc"),
     }, true)
-    if not ok then return false, "Transfer failed: " .. (merr or "?") end
-    -- Import item into AE2.
-    meImport(listing.item)
+    if not ok then
+        log("ERROR", "pipeline",
+            "WTB transfer failed [" .. txId .. "]: " .. (merr or "?"))
+        return false, "Transfer failed: " .. (merr or "?")
+    end
+    -- Import item into AE2 and log any failure (non-fatal — money already sent).
+    local imp_ok, imp_err = meImport(listing.item)
+    if not imp_ok then
+        log("WARN", "ae2",
+            "WTB AE2 import failed [" .. txId .. "]: " .. (imp_err or "?"))
+    end
+    log("INFO", "pipeline", string.format("WTB ok: %d x %s for %d uAMI [%s]",
+        qty, listing.item, totalPrice, txId))
     sweepVault(totalPrice)
     api.printReceipt(txId, "WTB", listing.item, qty, totalPrice, sellerAddr)
     return true, nil
@@ -491,7 +552,7 @@ end
 
 -- ── Accessors ─────────────────────────────────────────────────────────────────
 function api.getMonitor()   return p_monitor  end
-function api.getShopKey()   return shopKey    end
+-- api.getShopKey() intentionally omitted — the secret key must not be exported.
 function api.getShopAddr()  return shopAddress end
 function api.getModem()     return p_modem    end
 function api.getShopBal()   return shopBalance end

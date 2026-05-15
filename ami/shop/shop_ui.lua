@@ -20,20 +20,20 @@ local W, H          = 51, 19   -- updated after init
 local shopAddr      = "?"
 local adminUnlocked = false
 
--- ── Colour palette ────────────────────────────────────────────────────────────
+-- ── Colour palette (red / orange / gray theme) ────────────────────────────────────
 local BG      = colors.black
 local HDR_BG  = colors.gray
 local HDR_FG  = colors.white
 local TITLE   = colors.orange
-local WTS_C   = colors.lime
-local WTB_C   = colors.cyan
+local WTS_C   = colors.orange    -- WTS = selling (warm / positive)
+local WTB_C   = colors.red       -- WTB = buying  (bold demand)
 local PRICE_C = colors.yellow
 local DIM     = colors.lightGray
 local BAD     = colors.red
 local BORDER  = colors.gray
 local ACCENT  = colors.orange
-local ADM_BG  = colors.purple
-local GLASS   = colors.lightBlue
+local ADM_BG  = colors.gray      -- dark, serious admin panel
+local GLASS   = colors.orange    -- accent glass / info highlight
 
 -- ── Guard ─────────────────────────────────────────────────────────────────────
 local function hasMon() return mon ~= nil end
@@ -111,14 +111,14 @@ end
 
 -- ── Header ────────────────────────────────────────────────────────────────────
 local function drawHeader(title)
-    fill(1, 1, W, 1, HDR_BG)
-    put(1, 1, center(title or "  AMISTORE  v1.1  ", W), TITLE, HDR_BG)
+    fill(1, 1, W, 1, colors.gray)
+    put(1, 1, center(title or "  AMISTORE  v1.1  ", W), colors.orange, colors.gray)
 end
 
 -- ── Footer ────────────────────────────────────────────────────────────────────
 local function drawFooter(text)
-    fill(1, H, W, 1, HDR_BG)
-    put(1, H, center(text, W), DIM, HDR_BG)
+    fill(1, H, W, 1, colors.gray)
+    put(1, H, center(text, W), colors.lightGray, colors.gray)
 end
 
 -- ── Listing card (3 rows tall, w wide) ────────────────────────────────────────
@@ -144,12 +144,12 @@ local function drawCard(x, y, w, listing)
     if listing.type == "WTS" then
         local stock = listing._stock or 0
         local s     = stock > 0 and string.format("x%d", stock) or "OUT"
-        local sc    = stock > 0 and WTS_C or BAD
+        local sc    = stock > 0 and colors.orange or BAD
         put(x + w - #s - 2, y + 1, s, sc, BG)
     else
         local ok2   = (listing._liquid or 0) >= listing.price
         local s     = ok2 and "OK " or "LOW"
-        put(x + w - 4, y + 1, s, ok2 and WTB_C or BAD, BG)
+        put(x + w - 4, y + 1, s, ok2 and colors.orange or BAD, BG)
     end
 end
 
@@ -170,8 +170,8 @@ function ui.drawShop(lst, balance)
     put(2, 5, os.date("Sync: %H:%M:%S"), DIM, BG)
 
     -- Column divider
-    fill(1, 6, W, 1, HDR_BG)
-    put(1, 6, center("[ WTS — We Sell ] | [ WTB — We Buy ]", W), DIM, HDR_BG)
+    fill(1, 6, W, 1, colors.gray)
+    put(1, 6, center("[ SELL ] orange  |  [ BUY ] red", W), DIM, colors.gray)
 
     -- Two-column listing grid
     local colW  = math.floor((W - 3) / 2)
@@ -205,8 +205,8 @@ end
 function ui.drawAdmin(lst, cfg)
     if not hasMon() then return end
     mon.setBackgroundColor(BG); mon.clear()
-    fill(1, 1, W, 1, ADM_BG)
-    put(1, 1, center("AMISTORE  ADMIN  DASHBOARD", W), HDR_FG, ADM_BG)
+    fill(1, 1, W, 1, colors.gray)
+    put(1, 1, center("AMISTORE  ADMIN  DASHBOARD", W), colors.orange, colors.gray)
 
     put(2, 3, "Session : ACTIVE (hardware-bound)", GLASS, BG)
     put(2, 4, "Addr    : " .. shopAddr:sub(1, 24) .. "...", DIM, BG)

@@ -64,6 +64,7 @@ local function syncLoop()
     while true do
         os.sleep(SYNC_INTERVAL)
         api.syncInventory()
+        api.prunePendingOrders()
         ui.drawShop(api.getListings(), api.getShopBal())
     end
 end

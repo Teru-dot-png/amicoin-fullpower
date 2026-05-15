@@ -15,10 +15,88 @@ local ui  = require("shop_ui")
 
 local SYNC_INTERVAL = 30   -- seconds between automatic inventory refreshes
 local SHOP_CHANNEL  = 1338
+local REPO_BASE     = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+
+local UPDATE_FILES = {
+    { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"       },
+    { src = "/ami/shop/shop_api.lua", dst = "/ami/shop/shop_api.lua" },
+    { src = "/ami/shop/shop_ui.lua",  dst = "/ami/shop/shop_ui.lua"  },
+    { src = "/ami/shop/startup.lua",  dst = "/ami/shop/startup.lua"  },
+}
 
 -- ── Config helpers ────────────────────────────────────────────────────────────
 local function loadCfg()   return api.loadConfig() end
 local function saveCfg(c)  api.saveConfig(c) end
+
+-- ── FNV-1a hash (for self-update fingerprint verification) ───────────────────
+local function fnv1a(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit32.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
+-- ── Self-update ───────────────────────────────────────────────────────────────
+local function selfUpdate()
+    term.clear(); term.setCursorPos(1, 1)
+    term.setTextColor(colors.yellow)
+    print("AmiStore Self-Update")
+    print("Downloading from GitHub...")
+    print("")
+    term.setTextColor(colors.white)
+
+    local failed   = false
+    local hashes   = {}
+
+    for _, entry in ipairs(UPDATE_FILES) do
+        io.write("  " .. entry.dst .. " ... ")
+        local res = http.get(REPO_BASE .. entry.src)
+        if not res then
+            term.setTextColor(colors.red)
+            print("FAILED (no response)")
+            term.setTextColor(colors.white)
+            failed = true
+        else
+            local content = res.readAll(); res.close()
+            if #content < 64 then
+                term.setTextColor(colors.red)
+                print("FAILED (too short — 404?)")
+                term.setTextColor(colors.white)
+                failed = true
+            else
+                local hash = fnv1a(content)
+                if fs.exists(entry.dst) then fs.delete(entry.dst) end
+                local f = fs.open(entry.dst, "w")
+                f.write(content); f.close()
+                term.setTextColor(colors.green)
+                print("OK  [" .. hash .. "]")
+                term.setTextColor(colors.white)
+                hashes[#hashes + 1] = hash
+            end
+        end
+    end
+
+    print("")
+    if failed then
+        term.setTextColor(colors.red)
+        print("Update failed. Some files could not be downloaded.")
+        print("AmiStore will continue running the old version.")
+        term.setTextColor(colors.white)
+        os.sleep(3)
+    else
+        local combined = table.concat(hashes, ":")
+        term.setTextColor(colors.green)
+        print("Update complete!")
+        term.setTextColor(colors.yellow)
+        print("Fingerprint : " .. fnv1a(combined))
+        term.setTextColor(colors.white)
+        print("Rebooting in 3 seconds...")
+        os.sleep(3)
+        os.reboot()
+    end
+end
 
 -- ── Network listener ─────────────────────────────────────────────────────────
 -- Runs in its own parallel coroutine; handles incoming buyer/seller packets.
@@ -108,6 +186,12 @@ local function inputLoop()
         -- [R] — manual refresh
         elseif key == keys.r then
             api.syncInventory()
+            ui.drawShop(api.getListings(), api.getShopBal())
+
+        -- [U] — self-update from GitHub
+        elseif key == keys.u then
+            selfUpdate()
+            -- selfUpdate() only returns on failure; on success it reboots.
             ui.drawShop(api.getListings(), api.getShopBal())
 
         -- [Q] — graceful quit

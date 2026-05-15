@@ -50,7 +50,7 @@ If no ME Bridge is on the RIGHT side, stock is always reported as `0` for WTS li
 Run the installer on the Merchant Node computer:
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/InstallShop.lua
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installshop.lua
 ```
 
 The installer will:

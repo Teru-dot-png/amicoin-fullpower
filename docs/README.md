@@ -210,7 +210,7 @@ Quick overview:
 ### Install AmiStore
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/InstallShop.lua
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installshop.lua
 ```
 
 ---
@@ -259,7 +259,7 @@ amicoin/
 │   └── MIGRATION.md        How to move your wallet to a new Pad
 ├── installnode.lua         One-command node installer with FNV-1a tamper detection
 ├── installpad.lua          One-command wallet installer with FNV-1a tamper detection
-└── InstallShop.lua         One-command AmiStore installer with hardware checklist
+└── installshop.lua         One-command AmiStore installer with hardware checklist
 ```
 
 ---

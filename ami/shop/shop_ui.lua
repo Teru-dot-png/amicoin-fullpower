@@ -196,8 +196,8 @@ function ui.drawShop(lst, balance)
     end
 
     local footerText = adminUnlocked
-        and "[A]dmin  [R]eload  [Q]uit"
-        or  "[A]dmin  [R]eload"
+        and "[A]dmin  [R]eload  [U]pdate  [Q]uit"
+        or  "[A]dmin  [R]eload  [U]pdate"
     drawFooter(footerText)
 end
 
@@ -230,7 +230,7 @@ function ui.drawAdmin(lst, cfg)
         put(2, row, "  (empty)", DIM, BG)
     end
 
-    drawFooter("[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%")
+    drawFooter("[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%  [U]pdate")
 end
 
 -- ── Receipt preview overlay ────────────────────────────────────────────────────

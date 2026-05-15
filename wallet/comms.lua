@@ -174,12 +174,14 @@ function comms.transfer(secretKey, nodeKey, fromAddress, toAddress, amountMicro)
 end
 
 -- Register the address (and optional player name) on a single node.
+-- Fire-and-forget: the node processes the packet regardless of reply;
+-- waiting for an ACK would block the UI for up to TIMEOUT seconds per node.
 function comms.register(secretKey, nodeKey, address, name)
     local pkt = { cmd="REGISTER", from=address }
     if type(name) == "string" and #name > 0 then
         pkt.name = name
     end
-    return send(secretKey, nodeKey, pkt, true)
+    return send(secretKey, nodeKey, pkt, false)
 end
 
 -- Register on ALL nodes.

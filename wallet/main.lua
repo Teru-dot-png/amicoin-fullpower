@@ -1084,6 +1084,11 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- Open the AmiStore broadcast channel so we receive INVOICE packets.
     comms.openShopChannel()
 
+    -- Show a loading screen immediately so the pad isn't blank while
+    -- refreshBalance() makes blocking network calls (up to 8s × #nodes).
+    banner("AMI-Dashboard")
+    pmsg("Loading...", 6, colors.yellow)
+
     refreshBalance()
     draw()
 

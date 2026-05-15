@@ -37,33 +37,6 @@ local GLASS   = colors.orange    -- accent glass / info highlight
 -- ── Guard ─────────────────────────────────────────────────────────────────────
 local function hasMon() return mon ~= nil end
 
--- ── Touch zone registry ────────────────────────────────────────────────────────
--- Populated whenever drawShop or drawCatalog draws listing cards.
--- Cleared at the start of each draw call so stale zones don't linger.
-local touchZones = {}   -- array of {x1, y1, x2, y2, listing}
-
-local function clearZones()
-    touchZones = {}
-end
-
-local function registerZone(x, y, w, h, listing)
-    touchZones[#touchZones + 1] = {
-        x1 = x,          y1 = y,
-        x2 = x + w - 1,  y2 = y + h - 1,
-        listing = listing,
-    }
-end
-
--- Returns the listing whose card was tapped at (tx, ty), or nil.
-function ui.getTouchedListing(tx, ty)
-    for _, z in ipairs(touchZones) do
-        if tx >= z.x1 and tx <= z.x2 and ty >= z.y1 and ty <= z.y2 then
-            return z.listing
-        end
-    end
-    return nil
-end
-
 -- ── Primitives ────────────────────────────────────────────────────────────────
 local function put(x, y, text, fg, bg)
     if not hasMon() then return end
@@ -146,8 +119,7 @@ end
 -- (footer removed — key legend lives on the operator terminal)
 
 -- ── Listing card (3 rows tall, w wide) ────────────────────────────────────────
--- Registers a touch zone for the card if `registerTouch` is true.
-local function drawCard(x, y, w, listing, registerTouch)
+local function drawCard(x, y, w, listing)
     if not hasMon() then return end
     fill(x, y, w, 3, BG)
     box(x, y, w, 3, BORDER, BG)
@@ -179,18 +151,12 @@ local function drawCard(x, y, w, listing, registerTouch)
         local s     = ok2 and "OK " or "LOW"
         put(x + w - 4, y + 1, s, ok2 and colors.orange or BAD, BG)
     end
-    -- Register touch zone so monitor_touch events can identify which card was tapped.
-    if registerTouch then
-        registerZone(x, y, w, 3, listing)
-    end
 end
 
 -- ── Main storefront / catalog view ──────────────────────────────────────────
--- Pass touch=true to register tap zones on each listing card.
-function ui.drawShop(lst, balance, touch)
+function ui.drawShop(lst, balance)
     if not hasMon() then return end
     mon.setBackgroundColor(BG); mon.clear()
-    clearZones()   -- reset touch zones on each redraw
 
     local contentBottom = H
 
@@ -222,8 +188,8 @@ function ui.drawShop(lst, balance, touch)
 
     for i = 1, math.max(#wts, #wtb) do
         if row + 2 > contentBottom then break end
-        if wts[i] then drawCard(leftX, row, colW, wts[i], touch) end
-        if wtb[i] then drawCard(rigX,  row, colW, wtb[i], touch) end
+        if wts[i] then drawCard(leftX, row, colW, wts[i]) end
+        if wtb[i] then drawCard(rigX,  row, colW, wtb[i]) end
         row = row + 3
     end
 
@@ -239,7 +205,6 @@ function ui.drawPending(txId, shopName, item, qty, totalMicro, buyerName, frame)
     if not hasMon() then return end
     frame = frame or 0
     mon.setBackgroundColor(BG); mon.clear()
-    clearZones()   -- no tappable areas while waiting
 
     -- Pulsing header: orange on even beats, yellow on odd.
     local hdrBg = (math.floor(frame / 2) % 2 == 0) and colors.orange or colors.yellow

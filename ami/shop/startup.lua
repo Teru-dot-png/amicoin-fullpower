@@ -235,7 +235,8 @@ local function printMenu()
         print("  [C]  Cancel invoice")
         term.setTextColor(colors.gray)
     elseif netUp then
-        print("  Touch the monitor to start a sale.")
+        print("  [B]  Buy  (WTS -- shop sells to player)")
+        print("  [S]  Sell (WTB -- shop buys from player)")
     else
         term.setTextColor(colors.red)
         print("  NETWORK OFFLINE -- modem not on BACK")
@@ -644,6 +645,14 @@ local function inputLoop()
                 ui.drawShop(api.getListings(), api.getShopBal(), true)
             end
 
+        -- [B] -- walk-up buy (WTS)
+        elseif key == keys.b then
+            buyFlow()
+
+        -- [S] -- walk-up sell (WTB)
+        elseif key == keys.s then
+            sellFlow()
+
         -- [R] -- manual refresh
         elseif key == keys.r then
             api.syncInventory()
@@ -716,10 +725,9 @@ os.sleep(3)
 ui.init(api.getMonitor(), shopAddr)
 ui.drawShop(api.getListings(), 0, true)
 
--- Run all four loops concurrently.
--- touchLoop watches monitor_touch; inputLoop watches keyboard.
+-- Run all loops concurrently.
 -- If inputLoop returns (user pressed Q), the others are killed automatically.
-parallel.waitForAll(networkLoop, syncLoop, animLoop, touchLoop, inputLoop)
+parallel.waitForAll(networkLoop, syncLoop, animLoop, inputLoop)
 
 term.clear(); term.setCursorPos(1, 1)
 print("AmiStore shut down cleanly.")

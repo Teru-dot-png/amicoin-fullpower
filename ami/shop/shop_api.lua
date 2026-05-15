@@ -144,7 +144,8 @@ local DEFAULT_CFG = {
     sweep_to       = "",           -- player name to sweep to (resolved via DNS)
     vault_addr     = "",           -- 128-hex address (overrides sweep_to if set)
     vault_node_key = "",           -- 32-hex key of the node hosting the vault
-    admin_pass     = "",           -- FNV-1a hash of operator-chosen password
+    admin_pass     = "",           -- FNV-1a hash of operator-chosen admin password
+    node_setup_pass = "",          -- FNV-1a hash of node setup password (for fetchNodeKey)
 }
 
 function api.loadConfig()
@@ -189,6 +190,20 @@ end
 function api.hasAdminPass()
     local cfg = api.loadConfig()
     return (cfg.admin_pass or "") ~= ""
+end
+
+-- Hash and persist the node setup password (used with fetchNodeKey).
+-- Empty string clears it.
+function api.setNodePass(plaintext)
+    local cfg = api.loadConfig()
+    cfg.node_setup_pass = (plaintext == "") and "" or fnv1a(plaintext)
+    api.saveConfig(cfg)
+end
+
+-- Returns true when a node setup password has been saved.
+function api.hasNodePass()
+    local cfg = api.loadConfig()
+    return (cfg.node_setup_pass or "") ~= ""
 end
 
 -- ── Listings ──────────────────────────────────────────────────────────────────

@@ -155,16 +155,25 @@ local function syncLoop()
 end
 
 -- ── Operator terminal menu ───────────────────────────────────────────────────
+-- Admin access is intentionally NOT advertised here.
+-- Press the GRAVE/BACKTICK key (`) to open the admin login prompt.
 local function printMenu()
+    local netUp = api.getModem() ~= nil
     term.setCursorPos(1, 1); term.clear()
     term.setTextColor(colors.orange)
-    print("  AmiStore v1.1  —  Running")
+    print("  AmiStore v1.1")
     term.setTextColor(colors.gray)
     print("  ----------------------------------------")
     term.setTextColor(colors.white)
-    print("  [A]  Admin panel")
-    print("  [B]  Walk-up buy terminal")
-    print("  [S]  Walk-up sell terminal")
+    if netUp then
+        print("  [B]  Walk-up buy terminal")
+        print("  [S]  Walk-up sell terminal")
+    else
+        term.setTextColor(colors.red)
+        print("  [B]  Walk-up buy   [NETWORK OFFLINE]")
+        print("  [S]  Walk-up sell  [NETWORK OFFLINE]")
+        term.setTextColor(colors.white)
+    end
     print("  [R]  Reload listings")
     print("  [Q]  Quit")
     term.setTextColor(colors.gray)
@@ -172,7 +181,7 @@ local function printMenu()
     term.setTextColor(colors.white)
 end
 
--- ── Node manager (called from adminLoop) ─────────────────────────────────────
+-- ── Node manager (called only from adminLoop, never from public inputLoop) ───
 local function nodeManager()
     while true do
         term.setCursorPos(1, 1); term.clear()
@@ -193,7 +202,7 @@ local function nodeManager()
         print("Sweep to  : " .. (#(cfg.sweep_to or "") > 0 and cfg.sweep_to or "(not set)"))
         print("Sweep %   : " .. (cfg.sweep_pct or 5) .. "%")
         print("")
-        print("[A]dd  [D]elete  [N]ame  [S]weepTo  [P]assword  [B]ack")
+        print("[A]dd  [D]elete  [N]ame  [S]weepTo  [P] Node key password  [B]ack")
         local _, k = os.pullEvent("key")
 
         if k == keys.b then
@@ -223,21 +232,26 @@ local function nodeManager()
                     end
                     break
                 elseif ak == keys.two or ak == keys.n2 then
-                    io.write("Setup password: ")
+                    io.write("Node lookup password: ")
                     local pw = read("*")
+                    pw = (pw or ""):gsub("%s", "")
                     if #pw == 0 then
                         print("Cancelled."); os.sleep(0.8)
                     else
-                        term.setTextColor(colors.yellow); print("Contacting node...")
-                        term.setTextColor(colors.white)
-                        local ok2, fetchedKey, ferr = api.fetchNodeKey(pw)
-                        if ok2 and fetchedKey then
-                            addKey = fetchedKey
-                            term.setTextColor(colors.green); print("Got key from node!")
+                        -- pcall: returns  pcallOk, fn_ok, nodeKey, fn_err
+                        -- api.fetchNodeKey returns: ok(bool), key(str|nil), err(str|nil)
+                        local pcallOk, fnOk, nodeKey, fnErr = pcall(api.fetchNodeKey, pw)
+                        if not pcallOk then
+                            -- Lua-level error (fnOk holds the error message)
+                            term.setTextColor(colors.red); print("Connection error.")
+                            term.setTextColor(colors.white); os.sleep(2)
+                        elseif fnOk and type(nodeKey) == "string" and #nodeKey == 32 then
+                            addKey = nodeKey
+                            term.setTextColor(colors.green); print("Key received.")
                             term.setTextColor(colors.white); os.sleep(0.5)
                         else
-                            term.setTextColor(colors.red)
-                            print("Failed: " .. (ferr or "unknown"))
+                            local errMsg = type(fnErr) == "string" and fnErr or "Connection timeout"
+                            term.setTextColor(colors.red); print("Lookup failed: " .. errMsg)
                             term.setTextColor(colors.white); os.sleep(2)
                         end
                     end
@@ -245,9 +259,14 @@ local function nodeManager()
                 end
             end
             if addKey then
-                local ok, err = api.addNode(nm, addKey)
-                term.setTextColor(ok and colors.green or colors.red)
-                print(ok and ("Added: " .. nm) or ("Error: " .. (err or "?")))
+                local callOk, ok, err = pcall(api.addNode, nm, addKey)
+                if callOk and ok then
+                    term.setTextColor(colors.green); print("Node added: " .. nm)
+                elseif callOk then
+                    term.setTextColor(colors.red); print("Failed: " .. (err or "unknown error"))
+                else
+                    term.setTextColor(colors.red); print("Internal error — node not saved.")
+                end
                 term.setTextColor(colors.white); os.sleep(1)
             end
 
@@ -289,19 +308,32 @@ local function nodeManager()
 
         elseif k == keys.p then
             term.setCursorPos(1, 1); term.clear()
-            print("Change Admin Password"); print("")
-            local pw1, pw2
-            repeat
-                io.write("New password: "); pw1 = read("*")
-                if #pw1 < 4 then
-                    print("Too short — minimum 4 characters."); pw1 = nil
+            term.setTextColor(colors.orange); print("Node Setup Password"); term.setTextColor(colors.white)
+            print("This password is shared with your AmiCoin node.")
+            print("It is used to fetch a node key without typing 32 hex chars.")
+            print("")
+            if api.hasNodePass() then
+                print("A node setup password is already saved.")
+            else
+                print("No node setup password saved yet.")
+            end
+            print("")
+            io.write("New password (blank to clear): ")
+            local pw1 = read("*")
+            if #pw1 == 0 then
+                api.setNodePass("")
+                term.setTextColor(colors.yellow); print("Node setup password cleared.")
+            elseif #pw1 < 4 then
+                term.setTextColor(colors.red); print("Too short -- minimum 4 characters. Unchanged.")
+            else
+                io.write("Confirm: "); local pw2 = read("*")
+                if pw1 == pw2 then
+                    api.setNodePass(pw1)
+                    term.setTextColor(colors.green); print("Node setup password saved.")
                 else
-                    io.write("Confirm: "); pw2 = read("*")
-                    if pw1 ~= pw2 then print("Passwords do not match."); pw1 = nil end
+                    term.setTextColor(colors.red); print("Passwords do not match. Unchanged.")
                 end
-            until pw1 and pw1 == pw2
-            api.setAdminPass(pw1)
-            term.setTextColor(colors.green); print("Password updated.")
+            end
             term.setTextColor(colors.white); os.sleep(1)
         end
     end
@@ -402,31 +434,31 @@ local function adminLoop()
 end
 
 -- ── Keyboard input loop ────────────────────────────────────────────────────────
-local adminToken    = nil
-local adminUnlocked = false
-
+-- Admin access: press GRAVE (`) — not shown in the public menu.
+-- The public menu never hints that an admin panel exists.
 local function inputLoop()
     while true do
         printMenu()
         local _, key = os.pullEvent("key")
 
-        -- [A] — attempt admin login
-        if key == keys.a and not adminUnlocked then
+        -- GRAVE (`) — hidden admin trigger, not shown in public menu
+        if key == keys.grave then
             term.setCursorPos(1, 1); term.clear()
             term.setTextColor(colors.orange)
-            print("AmiStore Admin Login")
+            print("Access required.")
             term.setTextColor(colors.white)
             io.write("Password: ")
             local inp = read("*")
-            if api.checkAdminPass(inp) then
-                adminUnlocked = true
+            inp = (inp or ""):gsub("%s", "")
+            if #inp > 0 and api.checkAdminPass(inp) then
                 ui.setAdminUnlocked(true)
                 adminLoop()
-                adminUnlocked = false
                 ui.setAdminUnlocked(false)
             else
-                print("Invalid token. Access denied.")
-                os.sleep(1.5)
+                term.setTextColor(colors.red)
+                print("Access denied.")
+                term.setTextColor(colors.white)
+                os.sleep(1)
                 ui.drawShop(api.getListings(), api.getShopBal())
             end
 
@@ -435,8 +467,16 @@ local function inputLoop()
             api.syncInventory()
             ui.drawShop(api.getListings(), api.getShopBal())
 
-        -- [B] — walk-up buy terminal
+        -- [B] — walk-up buy terminal (requires network)
         elseif key == keys.b then
+            if not api.getModem() then
+                term.setCursorPos(1, 1); term.clear()
+                term.setTextColor(colors.red)
+                print("Network offline — modem not detected on BACK.")
+                term.setTextColor(colors.white)
+                os.sleep(2)
+                goto continue_input
+            end
             term.setCursorPos(1, 1); term.clear()
             term.setTextColor(colors.orange)
             print("=== AmiStore  Walk-Up Buy ===")
@@ -504,7 +544,7 @@ local function inputLoop()
                     io.write("Confirm payment received? [Y/N]: ")
                     local conf = (io.read() or ""):lower():sub(1, 1)
                     if conf == "y" then
-                        local ok, txId, _ = api.localBuy(buyerAddr, chosen, qty)
+                        local ok, txId, buyErr = api.localBuy(buyerAddr, chosen, qty)
                         if ok then
                             local vok, verr = api.localBuyConfirm(txId)
                             if vok then
@@ -514,6 +554,10 @@ local function inputLoop()
                                 term.setTextColor(colors.red)
                                 print("Failed: " .. (verr or "unknown error"))
                             end
+                            term.setTextColor(colors.white)
+                        else
+                            term.setTextColor(colors.red)
+                            print("Order error: " .. (buyErr or "unknown"))
                             term.setTextColor(colors.white)
                         end
                     else
@@ -530,8 +574,16 @@ local function inputLoop()
             end
             ::continue_input::
 
-        -- [S] — walk-up sell terminal (player sells to the shop, WTB listings)
+        -- [S] — walk-up sell terminal (requires network)
         elseif key == keys.s then
+            if not api.getModem() then
+                term.setCursorPos(1, 1); term.clear()
+                term.setTextColor(colors.red)
+                print("Network offline — modem not detected on BACK.")
+                term.setTextColor(colors.white)
+                os.sleep(2)
+                goto continue_input2
+            end
             term.setCursorPos(1, 1); term.clear()
             term.setTextColor(colors.orange)
             print("=== AmiStore  Walk-Up Sell ===")

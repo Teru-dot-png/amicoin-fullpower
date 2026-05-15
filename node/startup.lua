@@ -593,6 +593,21 @@ local function main()
     router.open(MESH_CHANNEL)
     print("[Net] Ender Router opened on channel " .. MESH_CHANNEL)
     print("[Tip] Press U at any time to update from GitHub.")
+    do
+        local ok, res = pcall(http.get,
+            "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt")
+        if ok and res then
+            local n = tonumber((res.readAll():gsub("%s","")))
+            res.close()
+            if n and n >= 1 and n <= 100000 then
+                print(string.format("[Rate] Live reward rate: %d uAMI/tick (from GitHub)", n))
+            else
+                print("[Rate] Could not parse remote rate -- using compiled default")
+            end
+        else
+            print("[Rate] GitHub unreachable -- using compiled default")
+        end
+    end
     local monAttached = peripheral.find("monitor") ~= nil
     print("[Mon] Monitor: " .. (monAttached and "found" or "not found"))
 

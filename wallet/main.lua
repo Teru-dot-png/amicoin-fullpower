@@ -203,6 +203,7 @@ end
 
 -- ── Self-update ──────────────────────────────────────────────────────────────
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+local RATE_URL  = REPO_BASE .. "/reward_rate.txt"
 local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"    },
     { src="/wallet/main.lua",       dst="/startup.lua"        },
@@ -964,6 +965,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         totalBalance = total
         perNode      = newNodes
         if not anyOk then balErr = "All nodes unreachable" end
+        fetchLiveRate()
         -- Auto-Sweep: lock excess balance if enabled
         if cfg.autoSweep and totalBalance and totalBalance > cfg.sweepThreshold and #nodes > 0 then
             local sweepAmt = totalBalance - cfg.sweepThreshold
@@ -1058,10 +1060,11 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         term.setCursorPos(1, statsRow + 1)
         if netStats then
             term.setTextColor(colors.lightGray)
-            local earn_hr = (netStats.current_rate or 0) * 60
+            local rate    = liveRate or netStats.current_rate or 0
+            local earn_hr = rate * 60
             local line = string.format("Net %d active  %d uAMI/tick  +%d/hr",
                 netStats.active_wallets or 0,
-                netStats.current_rate   or 0,
+                rate,
                 earn_hr)
             term.write(line:sub(1, W))
         else

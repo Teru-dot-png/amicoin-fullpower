@@ -127,6 +127,16 @@ local function findRouter()
     return nil
 end
 
+-- ── FNV-1a hash ─────────────────────────────────────────────────────────────
+local function fnv1a(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit32.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
 -- ── Packet handling ──────────────────────────────────────────────────────────
 local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex, replyChannel)
     -- Try to decrypt using the sender's key (passed as the first 32 chars of
@@ -404,15 +414,6 @@ local UPDATE_FILES = {
     { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
     { src="/node/xtea.lua",         dst="/xtea.lua"          },
 }
-
-local function fnv1a(s)
-    local hash = 2166136261
-    for i = 1, #s do
-        hash = bit32.bxor(hash, string.byte(s, i))
-        hash = (hash * 16777619) % 4294967296
-    end
-    return string.format("%08x", hash)
-end
 
 -- Compute a combined FNV-1a hash of all running node files.
 -- Called once at boot; result is stored in the module-level nodeFingerprint.

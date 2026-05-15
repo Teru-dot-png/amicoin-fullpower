@@ -17,7 +17,7 @@ local ledger = require("ledger")
 local daemon = {}
 
 -- ── Configuration ────────────────────────────────────────────────────────────
-local REWARD_INTERVAL     = 60       -- seconds between reward ticks
+local REWARD_INTERVAL     = 30       -- seconds between reward ticks
 local HEARTBEAT_TTL       = 90       -- seconds a wallet stays "active" after last packet
 local BASE_RATE           = 25       -- microcoins per active wallet per tick (live from GitHub)
 local HALVING_TICKS       = 525600   -- ticks before base rate halves
@@ -32,7 +32,8 @@ local function fetchRemoteRate()
     if not ok or not res then return end
     local body = res.readAll()
     res.close()
-    local n = tonumber(body and body:gsub("%s", ""))
+    local clean_body = (body or ""):gsub("%s", "")
+    local n = tonumber(clean_body)
     if n and n >= 1 and n <= 100000 then
         if n ~= BASE_RATE then
             print(string.format("[Miner] Remote rate: %d -> %d uAMI/tick", BASE_RATE, n))

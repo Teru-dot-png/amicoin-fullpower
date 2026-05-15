@@ -137,7 +137,15 @@ function api.getSessionToken()
 end
 
 -- ── Config ────────────────────────────────────────────────────────────────────
-local DEFAULT_CFG = {nodes = {}, sweep_pct = 5, vault_addr = "", vault_node_key = ""}
+local DEFAULT_CFG = {
+    nodes          = {},
+    shop_name      = "AmiStore",   -- display name + DNS registration label
+    sweep_pct      = 5,
+    sweep_to       = "",           -- player name to sweep to (resolved via DNS)
+    vault_addr     = "",           -- 128-hex address (overrides sweep_to if set)
+    vault_node_key = "",           -- 32-hex key of the node hosting the vault
+    admin_pass     = "",           -- FNV-1a hash of operator-chosen password
+}
 
 function api.loadConfig()
     if _cfgCache then return _cfgCache end
@@ -157,6 +165,30 @@ end
 function api.reloadConfig()
     _cfgCache = nil
     return api.loadConfig()
+end
+
+-- Hash and persist an admin password.  Empty string clears it.
+function api.setAdminPass(plaintext)
+    local cfg = api.loadConfig()
+    if plaintext == "" then
+        cfg.admin_pass = ""
+    else
+        cfg.admin_pass = fnv1a(plaintext)
+    end
+    api.saveConfig(cfg)
+end
+
+-- Returns true if the supplied plaintext matches the stored hash.
+function api.checkAdminPass(plaintext)
+    local cfg = api.loadConfig()
+    if (cfg.admin_pass or "") == "" then return false end
+    return fnv1a(plaintext) == cfg.admin_pass
+end
+
+-- Returns true when a password has been configured.
+function api.hasAdminPass()
+    local cfg = api.loadConfig()
+    return (cfg.admin_pass or "") ~= ""
 end
 
 -- ── Listings ──────────────────────────────────────────────────────────────────
@@ -302,23 +334,81 @@ end
 -- Register the shop address on all witness nodes so it appears in lookups.
 function api.registerShop()
     local cfg = api.loadConfig()
+    local name = (cfg.shop_name and #cfg.shop_name > 0) and cfg.shop_name or "AmiStore"
     for _, node in ipairs(cfg.nodes) do
         -- Fire-and-forget: registration needs no reply and must not block boot.
-        meshSend(node.key, {cmd = "REGISTER", from = shopAddress, name = "AmiStore"}, false)
+        meshSend(node.key, {cmd = "REGISTER", from = shopAddress, name = name}, false)
     end
 end
 
--- Sweep sweep_pct% of a profit amount to the configured AmiVault.
+-- Resolve a player name to an address via the first reachable witness node.
+-- Returns address string on success, nil on failure.
+function api.lookupName(playerName)
+    local cfg = api.loadConfig()
+    for _, node in ipairs(cfg.nodes) do
+        local ok, data = meshSend(node.key,
+            {cmd = "LOOKUP", from = shopAddress, name = playerName,
+             nonce = os.epoch("utc")}, true)
+        if ok and data and data.address and #data.address == 128 then
+            return data.address
+        end
+    end
+    return nil
+end
+
+-- ── Node manager ──────────────────────────────────────────────────────────────
+function api.addNode(name, key)
+    if not name or not key or #key ~= 32 then return false, "Key must be 32 hex chars" end
+    local cfg = api.loadConfig()
+    for _, n in ipairs(cfg.nodes) do
+        if n.key == key then return false, "Node already exists" end
+    end
+    cfg.nodes[#cfg.nodes + 1] = {name = name, key = key}
+    api.saveConfig(cfg)
+    return true, nil
+end
+
+function api.removeNode(idx)
+    local cfg = api.loadConfig()
+    if not cfg.nodes[idx] then return false, "Index out of range" end
+    table.remove(cfg.nodes, idx)
+    api.saveConfig(cfg)
+    return true, nil
+end
+
+-- Sweep sweep_pct% of a profit amount to the configured vault / player.
+-- sweep_to (player name) takes precedence over vault_addr if DNS resolves.
 local function sweepVault(profitMicro)
     local cfg = api.loadConfig()
-    if not cfg.vault_addr or #cfg.vault_addr < 128 then return end
-    if not cfg.vault_node_key or #cfg.vault_node_key < 32 then return end
     local amt = math.floor(profitMicro * (cfg.sweep_pct or 5) / 100)
     if amt < 1 then return end
-    meshSend(cfg.vault_node_key, {
+
+    -- Resolve target address: sweep_to name first, then vault_addr fallback.
+    local targetAddr = ""
+    local targetNode = cfg.vault_node_key or ""
+
+    if cfg.sweep_to and #cfg.sweep_to > 0 then
+        local resolved = api.lookupName(cfg.sweep_to)
+        if resolved then
+            targetAddr = resolved
+            -- Use the first node that resolved it (any node key will do for TRANSFER).
+            if #targetNode < 32 and #cfg.nodes > 0 then
+                targetNode = cfg.nodes[1].key
+            end
+        else
+            log("WARN", "sweep", "DNS lookup failed for sweep_to='" .. cfg.sweep_to .. "' — sweep skipped")
+            return
+        end
+    elseif cfg.vault_addr and #cfg.vault_addr >= 128 then
+        targetAddr = cfg.vault_addr
+    end
+
+    if #targetAddr < 128 or #targetNode < 32 then return end
+
+    meshSend(targetNode, {
         cmd    = "TRANSFER",
         from   = shopAddress,
-        to     = cfg.vault_addr,
+        to     = targetAddr,
         amount = amt,
         nonce  = os.epoch("utc"),
     }, true)
@@ -549,6 +639,45 @@ function api.executeConfirm(action)
         action.reply({ok = success, err = err, tx_id = action.tx_id})
     end
     return success, err
+end
+
+-- ── Walk-up terminal buy (local handshake, no buyer pad needed) ───────────────
+-- Drives the WTS pipeline on behalf of a walk-up player.
+-- buyerAddr: 128-hex address the player typed in (or resolved from their name).
+-- listing:   a WTS listing table.
+-- qty:       integer quantity the player wants to buy.
+--
+-- Step 1  — records a pending order internally (same as SHOP_QUOTE).
+-- Step 2  — waits for the operator to confirm payment arrived ([Y]/[N] prompt).
+-- Step 3  — calls executeWTS to vend.
+-- Returns ok (bool), txId or nil, errMsg or nil.
+function api.localBuy(buyerAddr, listing, qty)
+    if listing.type ~= "WTS" then return false, nil, "Not a WTS listing" end
+    if (listing._stock or 0) < qty then return false, nil, "Out of stock" end
+
+    local totalPrice = listing.price * qty
+    local txId = fnv1a(buyerAddr .. listing.item
+                       .. tostring(qty) .. tostring(os.epoch("utc")))
+    pendingOrders[txId] = {
+        item    = listing.item,
+        qty     = qty,
+        price   = listing.price,
+        listing = listing,
+        buyer   = buyerAddr,
+        expires = os.epoch("utc") + ORDER_TTL,
+        type    = "WTS",
+    }
+    return true, txId, totalPrice
+end
+
+-- Completes a walk-up buy after the operator confirms payment was sent.
+function api.localBuyConfirm(txId)
+    local order = pendingOrders[txId]
+    if not order or os.epoch("utc") > order.expires then
+        return false, "Order expired or not found"
+    end
+    pendingOrders[txId] = nil
+    return executeWTS(txId, order.listing, order.qty, order.buyer)
 end
 
 -- ── Accessors ─────────────────────────────────────────────────────────────────

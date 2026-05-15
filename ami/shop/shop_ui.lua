@@ -25,8 +25,8 @@ local BG      = colors.black
 local HDR_BG  = colors.gray
 local HDR_FG  = colors.white
 local TITLE   = colors.orange
-local WTS_C   = colors.orange    -- WTS = selling (warm / positive)
-local WTB_C   = colors.red       -- WTB = buying  (bold demand)
+local WTS_C   = colors.lime       -- WTS (shop sells) = player BUYs  → positive/green
+local WTB_C   = colors.orange     -- WTB (shop buys)  = player SELLs → warm/orange
 local PRICE_C = colors.yellow
 local DIM     = colors.lightGray
 local BAD     = colors.red
@@ -115,48 +115,7 @@ local function drawHeader(title)
     put(1, 1, center(title or "  AMISTORE  v1.1  ", W), colors.orange, colors.gray)
 end
 
--- ── Footer (auto-wraps to fit monitor width) ─────────────────────────────────
--- Items must be separated by two or more spaces in the source string.
-local function footerHeight(text)
-    local items = {}
-    for item in (text .. "  "):gmatch("(.-)  +") do
-        if item ~= "" then items[#items + 1] = item end
-    end
-    local rows, cur = 1, 0
-    for _, item in ipairs(items) do
-        local need = (cur == 0 and 0 or 2) + #item
-        if cur > 0 and cur + need > W then
-            rows = rows + 1; cur = #item
-        else
-            cur = cur + need
-        end
-    end
-    return rows
-end
-
-local function drawFooter(text)
-    if not hasMon() then return end
-    local items = {}
-    for item in (text .. "  "):gmatch("(.-)  +") do
-        if item ~= "" then items[#items + 1] = item end
-    end
-    local rows = {}
-    local cur  = ""
-    for _, item in ipairs(items) do
-        local sep = cur == "" and "" or "  "
-        if #cur + #sep + #item > W then
-            rows[#rows + 1] = cur; cur = item
-        else
-            cur = cur .. sep .. item
-        end
-    end
-    if cur ~= "" then rows[#rows + 1] = cur end
-    local startRow = H - #rows + 1
-    for i, rowText in ipairs(rows) do
-        fill(1, startRow + i - 1, W, 1, colors.gray)
-        put(1, startRow + i - 1, center(rowText, W), colors.lightGray, colors.gray)
-    end
-end
+-- (footer removed — key legend lives on the operator terminal)
 
 -- ── Listing card (3 rows tall, w wide) ────────────────────────────────────────
 local function drawCard(x, y, w, listing)
@@ -164,8 +123,11 @@ local function drawCard(x, y, w, listing)
     fill(x, y, w, 3, BG)
     box(x, y, w, 3, BORDER, BG)
 
-    local tc   = listing.type == "WTS" and WTS_C or WTB_C
-    local badge = listing.type == "WTS" and "SELL" or "BUY "
+    -- Badge and colour from the PLAYER's point of view:
+    --   WTS (shop sells)  → player action is "BUY"  (lime)
+    --   WTB (shop buys)   → player action is "SELL" (orange)
+    local tc    = listing.type == "WTS" and WTS_C or WTB_C
+    local badge = listing.type == "WTS" and "BUY " or "SELL"
 
     -- type badge
     put(x + 1, y,     badge, tc, BG)
@@ -195,11 +157,7 @@ function ui.drawShop(lst, balance)
     if not hasMon() then return end
     mon.setBackgroundColor(BG); mon.clear()
 
-    local footerText = adminUnlocked
-        and "[A]dmin  [R]eload  [U]pdate  [Q]uit"
-        or  "[A]dmin  [R]eload  [U]pdate"
-    local fh            = footerHeight(footerText)
-    local contentBottom = H - fh
+    local contentBottom = H
 
     drawHeader("  AMISTORE  v1.1  ")
 
@@ -212,9 +170,9 @@ function ui.drawShop(lst, balance)
     put(2, 4, string.format("%d uAMI", balance or 0), DIM, BG)
     put(2, 5, os.date("Sync: %H:%M:%S"), DIM, BG)
 
-    -- Column divider
+    -- Column divider — labels are from the player's perspective
     fill(1, 6, W, 1, colors.gray)
-    put(1, 6, center("[ SELL ] orange  |  [ BUY ] red", W), DIM, colors.gray)
+    put(1, 6, center("[ BUY ] lime  |  [ SELL ] orange", W), DIM, colors.gray)
 
     -- Two-column listing grid
     local colW  = math.floor((W - 3) / 2)
@@ -237,8 +195,6 @@ function ui.drawShop(lst, balance)
     if #(lst or {}) == 0 then
         put(2, 8, "No listings — edit /ami/shop/listings.json", DIM, BG)
     end
-
-    drawFooter(footerText)
 end
 
 -- ── Admin dashboard ────────────────────────────────────────────────────────────
@@ -256,25 +212,22 @@ function ui.drawAdmin(lst, cfg)
     hline(1, 6, W, BORDER, BG)
     put(1, 6, center("  Listings  ", W), DIM, BG)
 
-    local footerText    = "[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%  [U]pdate"
-    local fh            = footerHeight(footerText)
-    local contentBottom = H - fh
+    local contentBottom = H
 
     local row = 7
     for i, l in ipairs(lst or {}) do
         if row > contentBottom then break end
-        local tc   = l.type == "WTS" and WTS_C or WTB_C
-        local short = (l.item:match(":(.+)$") or l.item):sub(1, 24)
+        local tc     = l.type == "WTS" and WTS_C or WTB_C
+        local pLabel = l.type == "WTS" and "BUY " or "SELL"
+        local short  = (l.item:match(":(.+)$") or l.item):sub(1, 24)
         put(2, row,
-            string.format("[%2d] %-4s  %-24s  %7d uAMI", i, l.type, short, l.price),
+            string.format("[%2d] %s  %-24s  %7d uAMI", i, pLabel, short, l.price),
             tc, BG)
         row = row + 1
     end
     if #(lst or {}) == 0 then
         put(2, row, "  (empty)", DIM, BG)
     end
-
-    drawFooter(footerText)
 end
 
 -- ── Receipt preview overlay ────────────────────────────────────────────────────
@@ -320,6 +273,22 @@ end
 function ui.adminLoop(lst, cfg, saveListingsFn, saveConfigFn)
     while true do
         ui.drawAdmin(lst, cfg)
+        -- Print admin key legend to operator terminal
+        term.setCursorPos(1, 1); term.clear()
+        term.setTextColor(colors.orange)
+        print("  AmiStore — Admin Panel")
+        term.setTextColor(colors.gray)
+        print("  ----------------------------------------")
+        term.setTextColor(colors.white)
+        print("  [B]  Back to storefront")
+        print("  [P]  Edit listing price")
+        print("  [+]  Add listing")
+        print("  [-]  Remove listing")
+        print("  [S]  Vault sweep %")
+        print("  [U]  Self-update from GitHub")
+        term.setTextColor(colors.gray)
+        print("  ----------------------------------------")
+        term.setTextColor(colors.white)
         local _, key = os.pullEvent("key")
 
         if key == keys.b then

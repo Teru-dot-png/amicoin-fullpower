@@ -107,7 +107,7 @@ Node           Balance   Ping  St
 HomeNode      1.2345    42ms  [OK]
 FarmNode         ---      ---  [!]
 ─────────────────────────────────────
-Net 7 active  10 uAMI/tick  +600/hr
+Net 7 active  25 uAMI/tick  +1500/hr
 ─────────────────────────────────────
 [S]end [R]efresh [E]xport [N]odes(2)
 [V]ault  [U]pdate  [L]ogout
@@ -234,9 +234,9 @@ Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 
 | Period | Base Rate | Notes |
 |--------|-----------|-------|
-| Ticks 0 – 525,599 | 10 µAMI / min / wallet | ~1 in-game year |
-| Ticks 525,600 – 1,051,199 | 5 µAMI / min / wallet | First halving |
-| Ticks 1,051,200 – 1,576,799 | 2 µAMI / min / wallet | Second halving |
+| Ticks 0 – 525,599 | 25 µAMI / min / wallet | ~1 in-game year |
+| Ticks 525,600 – 1,051,199 | 12 µAMI / min / wallet | First halving |
+| Ticks 1,051,200 – 1,576,799 | 6 µAMI / min / wallet | Second halving |
 | … | Halves each period | Floor: 1 µAMI |
 
 - A wallet is **active** if it has sent any packet to the node within the last 90 seconds.

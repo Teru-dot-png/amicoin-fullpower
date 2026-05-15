@@ -4,7 +4,7 @@
 -- active window, then mints coins proportional to their online time.
 --
 -- Reward schedule (per node, per real-time minute of uptime):
---   Base rate : 10 microcoins / minute  (0.00001 AMI)
+--   Base rate : 25 microcoins / minute  (0.000025 AMI)
 --   Halving   : every 525,600 minutes (~1 Minecraft year of real time)
 --
 -- The daemon keeps an in-memory "heartbeat" table.  Wallets that send
@@ -19,7 +19,7 @@ local daemon = {}
 -- ── Configuration ────────────────────────────────────────────────────────────
 local REWARD_INTERVAL  = 60          -- seconds between reward ticks
 local HEARTBEAT_TTL    = 90          -- seconds a wallet stays "active" after last packet
-local BASE_RATE        = 10          -- microcoins per active wallet per tick
+local BASE_RATE        = 25          -- microcoins per active wallet per tick
 local HALVING_TICKS    = 525600      -- ticks before base rate halves
 
 -- ── State ─────────────────────────────────────────────────────────────────────

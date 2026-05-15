@@ -90,17 +90,19 @@ local function box(x, y, w, h, fg, bg)
     if not hasMon() then return end
     bg = bg or BG; fg = fg or BORDER
     mon.setBackgroundColor(bg); mon.setTextColor(fg)
-    mon.setCursorPos(x, y);         mon.write("+" .. string.rep("-", w - 2) .. "+")
+    local rule = "+" .. string.rep("-", w - 2) .. "+"
+    mon.setCursorPos(x, y);         mon.write(rule)
     for row = y + 1, y + h - 2 do
         mon.setCursorPos(x, row);     mon.write("|")
         mon.setCursorPos(x + w - 1, row); mon.write("|")
     end
-    mon.setCursorPos(x, y + h - 1); mon.write("+" .. string.rep("-", w - 2) .. "+")
+    mon.setCursorPos(x, y + h - 1); mon.write(rule)
 end
 
 local function center(text, w)
-    local pad = math.max(0, math.floor((w - #text) / 2))
-    return string.rep(" ", pad) .. text .. string.rep(" ", math.max(0, w - pad - #text))
+    local space = w - #text
+    local lpad  = math.max(0, math.floor(space / 2))
+    return string.rep(" ", lpad) .. text .. string.rep(" ", math.max(0, space - lpad))
 end
 
 -- ── Gloss-shaded Ami-Head logo ─────────────────────────────────────────────────

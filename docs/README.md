@@ -197,15 +197,28 @@ Press **`U`** on the node's keyboard to pull the latest node files from GitHub. 
 
 ## AmiStore Marketplace
 
-AmiStore is an AE2-integrated shopfront that runs alongside AmiCoin. See **[SHOP.md](SHOP.md)** for the full Merchant Manual.
+AmiStore is a decentralised, AE2-integrated shopfront that runs as a peer node on the AmiCoin mesh. It operates entirely without a central server: buyers and sellers communicate with the shop computer directly over XTEA-encrypted modem packets on channel 1338, with balance witnessing handled by whichever AmiCoin nodes the merchant has configured. See **[SHOP.md](SHOP.md)** for the full Merchant Manual.
 
-Quick overview:
+### How it fits into the network
 
-- **WTS listings** — items the shop sells from AE2 digital storage, priced in µAMI.
-- **WTB listings** — items the shop buys from players, paid in µAMI from the shop's balance.
-- **Receipt printer** — optional physical audit trail printed on a CC Printer.
-- **Admin dashboard** — hardware-bound session token gates all price/listing edits.
-- **Vault sweep** — a configurable percentage of each sale is swept to a designated AmiVault automatically.
+```
+Player Wallet (Pad)              AmiStore (Merchant Node)
+     │                                     │
+     │── touch listing on monitor ────────►│  Invoice broadcast on ch 1338
+     │◄── INVOICE popup on wallet ─────────│
+     │── Send payment (wallet → shop) ────►│  Witnessed by mesh node
+     │── PAYMENT_ACK ────────────────────►│  Item exported AE2 → tray
+     │                                     │  Receipt printed (optional)
+```
+
+### Key features
+
+- **WTS listings** — shop sells items from AE2 digital storage; live stock checked every 30 s via `me_bridge`.
+- **WTB listings** — shop buys items from players using its own µAMI balance; sellers place items in the BOTTOM chest.
+- **Touch-to-buy invoice flow** — tapping a listing card on the monitor triggers a wallet pop-up on the buyer's Pad; no manual key entry required.
+- **Admin panel** — password-gated dashboard for editing listings, prices, and vault sweep settings; access is strictly local (hardware-bound password hash, never transmitted).
+- **Vault sweep** — a configurable percentage of every transaction is swept automatically to a designated AmiVault address.
+- **Smart self-update** — delta-checked GitHub pull with FNV-1a verification and automatic `.bak` rollback on failure.
 
 ### Install AmiStore
 

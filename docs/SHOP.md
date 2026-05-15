@@ -15,12 +15,14 @@ AmiStore turns an Advanced Computer into a fully automated shopfront. It reads y
 5. [Config Format](#config-format)
 6. [Transaction Pipelines](#transaction-pipelines)
 7. [Admin Dashboard](#admin-dashboard)
-8. [Receipts & Physical Audit Trail](#receipts--physical-audit-trail)
-9. [Structured Logging](#structured-logging)
-10. [Merchant Node Identity](#merchant-node-identity)
-11. [Vault Sweep](#vault-sweep)
-12. [Buyer / Seller Protocol](#buyer--seller-protocol)
-13. [Troubleshooting](#troubleshooting)
+8. [Node Manager](#node-manager)
+9. [Self-Update](#self-update)
+10. [Receipts & Physical Audit Trail](#receipts--physical-audit-trail)
+11. [Structured Logging](#structured-logging)
+12. [Merchant Node Identity](#merchant-node-identity)
+13. [Vault Sweep](#vault-sweep)
+14. [Buyer / Seller Protocol](#buyer--seller-protocol)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -83,14 +85,20 @@ Initialising peripherals...
   Inventory    : BOTTOM [OK]
   Modem        : BACK [OK]
 
-Admin session token (keep private):
-  a3f91c2d
+============================================
+  First-Run Setup: Set Admin Password
+============================================
+No admin password is set. Create one now.
+
+New password: ****
+Confirm password: ****
+Password saved.
 
 Loaded 4 listing(s).
 Starting in 3 seconds...
 ```
 
-**Write down the admin session token.** It is hardware-bound (derived from the computer ID and a persistent UUID) and is required to enter the Admin Dashboard. It never changes unless you delete `/ami/shop/data/session_uuid.txt`.
+**First-Run Admin Password** — If no password is saved, AmiStore immediately prompts you to create one (minimum 4 characters). The password is stored as a one-way FNV-1a hash in `config.json` and is never transmitted over the network. You will need it each time you access the Admin Panel.
 
 ---
 
@@ -202,7 +210,7 @@ Seller                         AmiStore
 
 ## Admin Dashboard
 
-Press **`[A]`** on the terminal and enter the session token when prompted.
+Press **`` ` ``** (backtick) on the operator terminal — the key is intentionally hidden from the public menu. Enter your admin password when prompted.
 
 ```
 AMISTORE  ADMIN  DASHBOARD
@@ -215,7 +223,7 @@ Sweep   : 5%  |  Nodes: 1
 [ 3] WTB   iron_ingot                 500 uAMI
 [ 4] WTB   gold_ingot               2000 uAMI
 
-[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%
+[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%  [N]odes  [U]pdate
 ```
 
 | Key | Action |
@@ -224,11 +232,64 @@ Sweep   : 5%  |  Nodes: 1
 | `[+]` | Add a new listing (prompts for type, item ID, price) |
 | `[-]` | Remove a listing by index |
 | `[S]` | Change the vault sweep percentage (1–50%) |
+| `[N]` | Open the Node Manager |
+| `[U]` | Self-update from GitHub |
 | `[B]` | Return to the storefront |
 
 All changes are saved to `listings.json` / `config.json` immediately. The monitor updates on next redraw.
 
-**The Admin Dashboard is strictly gated by the hardware-bound session token.** The token is never transmitted over the network and cannot be guessed without physical access to the computer. Entering the wrong token denies access silently.
+**The Admin Dashboard is strictly gated by the admin password.** The password hash is stored locally and never transmitted over the network. An incorrect entry is silently denied.
+
+---
+
+## Node Manager
+
+Access via the Admin Panel — press **`[N]`** from the Admin Dashboard.
+
+The Node Manager configures the AmiCoin witness nodes the shop uses for balance queries and mesh transfers. At least one node must be configured for live transactions.
+
+```
+=== AmiStore  Node Manager ===
+
+  [1] MainNode          abcdef01...
+  [2] FarmNode          12345678...
+
+Shop name : AmiStore
+Sweep to  : Steve
+Sweep %   : 5%
+
+[A]dd  [D]elete  [N]ame  [S]weepTo  [P] Node key password  [B]ack
+```
+
+| Key | Action |
+|-----|--------|
+| `[A]` | Add a node — enter a 32-hex key manually, or fetch it via a shared setup password |
+| `[D]` | Delete a node by index |
+| `[N]` | Change the shop's display name (used for DNS `REGISTER` broadcasts) |
+| `[S]` | Set the sweep-target player name (overrides `vault_addr` if DNS resolves) |
+| `[P]` | Save the node setup password — shared with the node operator for passwordless key exchange |
+| `[B]` | Return to the Admin Dashboard |
+
+### Adding a Node
+
+**Option 1 — Manual key entry:**
+Enter the 32-hex XTEA key printed on the node at first boot.
+
+**Option 2 — Fetch via setup password:**
+If the node operator has configured a setup password, type it here instead of the raw key. The shop sends a `GETKEY` request encrypted with its own shop key; the node replies with its key encrypted under a key derived from the setup password. This avoids transcribing 32 hex characters by hand.
+
+---
+
+## Self-Update
+
+Press **`[U]`** from the Admin Dashboard to pull the latest AmiStore files from GitHub.
+
+The updater downloads each of the four tracked files (`shared/xtea.lua`, `shop_api.lua`, `shop_ui.lua`, `startup.lua`), verifies the size, and checks an FNV-1a fingerprint before writing to disk.
+
+- **Delta check** — files already at the latest version are skipped (`skip [hash]`); an up-to-date shop never rewrites unchanged files.
+- **Rollback** — each file is backed up as `<file>.bak` before writing; if post-write fingerprint verification fails, the backup is restored automatically.
+- **Reboot on success** — a successful update reboots the computer immediately to load the new code. A combined fingerprint of all updated files is printed before reboot.
+- **No reboot on failure** — if any download fails, the shop continues on the old version and all `.bak` files are retained for manual inspection.
 
 ---
 
@@ -346,6 +407,6 @@ All replies are encrypted with the **shop's XTEA key** (`shopKey`). Buyers must 
 | `Payment unconfirmed` error | Buyer paid but balance not witnessed yet | Increase `MESH_TIMEOUT` or check witness node is reachable |
 | `No witness node configured` | `config.json` `nodes` array is empty | Add at least one AmiCoin node to `config.json` |
 | Printer never prints | Printer on wrong side | Attach Printer to LEFT side specifically |
-| Admin login always fails | Wrong token | Check the token printed at boot; delete `session_uuid.txt` to reset |
+| Admin login always fails | Wrong password | Re-enter the password set during first-run setup; to force a reset, delete `config.json` (this also clears all shop configuration) |
 | `AE2 import failed` log | Item not exported from AE2 yet or wrong side | Verify me_bridge is on RIGHT and AE2 system has power |
 | Shop address balance always 0 | Address not registered on witness nodes | Reboot (auto-registers) or manually send to the shop address once |

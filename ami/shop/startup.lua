@@ -292,7 +292,7 @@ local function invoiceFlow(listing)
     term.setTextColor(colors.white)
     io.write("Qty (Enter=1): ")
     local qtyRaw = io.read() or "1"
-    local qtyNum = tonumber(qtyRaw:gsub("%s", "")) or 1
+    local qtyNum = tonumber((qtyRaw:gsub("%s", ""))) or 1
     local qty    = math.max(1, math.floor(qtyNum))
 
     io.write("Player name or address: ")

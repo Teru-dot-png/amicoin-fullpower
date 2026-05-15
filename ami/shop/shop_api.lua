@@ -604,7 +604,6 @@ local function executeWTS(txId, listing, qty, buyerAddr)
         qty, listing.item, totalPrice, txId))
     sweepVault(totalPrice)
     api.printReceipt(txId, "WTS", listing.item, qty, totalPrice, buyerAddr)
-    collectgarbage("collect")
     return true, nil
 end
 
@@ -644,7 +643,6 @@ local function executeWTB(txId, listing, qty, sellerAddr)
         qty, listing.item, totalPrice, txId))
     sweepVault(totalPrice)
     api.printReceipt(txId, "WTB", listing.item, qty, totalPrice, sellerAddr)
-    collectgarbage("collect")
     return true, nil
 end
 

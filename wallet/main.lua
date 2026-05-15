@@ -203,7 +203,7 @@ end
 
 -- ── Self-update ──────────────────────────────────────────────────────────────
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
-local RATE_URL  = REPO_BASE .. "/reward_rate.txt"
+local RATE_URL  = "https://dumpcafe.amie-whoogle.app/DUMP/reward_rate.txt"
 local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"    },
     { src="/wallet/main.lua",       dst="/startup.lua"        },

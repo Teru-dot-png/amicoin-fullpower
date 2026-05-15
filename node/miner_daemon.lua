@@ -21,7 +21,7 @@ local REWARD_INTERVAL     = 30       -- seconds between reward ticks
 local HEARTBEAT_TTL       = 90       -- seconds a wallet stays "active" after last packet
 local BASE_RATE           = 25       -- microcoins per active wallet per tick (live from GitHub)
 local HALVING_TICKS       = 525600   -- ticks before base rate halves
-local RATE_URL            = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt"
+local RATE_URL            = "https://dumpcafe.amie-whoogle.app/DUMP/reward_rate.txt"
 local RATE_REFRESH_TICKS  = 10       -- re-fetch remote rate every N ticks
 
 -- ── Remote rate fetch ────────────────────────────────────────────────────────

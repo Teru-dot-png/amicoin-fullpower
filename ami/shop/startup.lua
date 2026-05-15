@@ -250,108 +250,172 @@ local function printMenu()
     term.setTextColor(colors.white)
 end
 
--- ── Touch-driven invoice flow ──────────────────────────────────────────────────
--- Called by touchLoop when a listing card is tapped.
--- Prompts for player name on the operator terminal, sends invoice,
--- then switches monitor to PENDING state.
-local function invoiceFlow(listing)
-    -- Don't start a new invoice while one is already pending.
+-- ── Walk-up buy terminal (WTS) ───────────────────────────────────────────────
+-- Operator presses [B]; picks a WTS listing by number, enters qty + buyer,
+-- then sends an invoice to the buyer's wallet.
+local function buyFlow()
     if api.getPendingInvoice() then
         term.setTextColor(colors.yellow)
-        print("[Touch] Invoice already pending -- cancel it first with [C].")
+        print("Invoice already pending -- cancel it first with [C].")
         term.setTextColor(colors.white)
-        return
+        os.sleep(1); return
     end
-
-    -- Availability check before prompting.
-    if listing.type == "WTS" and (listing._stock or 0) == 0 then
-        term.setCursorPos(1, 1); term.clear()
+    local lst = api.getListings()
+    local wts = {}
+    for _, l in ipairs(lst) do
+        if l.type == "WTS" then wts[#wts + 1] = l end
+    end
+    if #wts == 0 then
+        print("No WTS listings configured."); os.sleep(1); return
+    end
+    term.setCursorPos(1, 1); term.clear()
+    term.setTextColor(colors.orange); print("  Buy  (WTS -- shop sells to player)")
+    term.setTextColor(colors.gray);   print("  ----------------------------------------")
+    term.setTextColor(colors.white)
+    for i, l in ipairs(wts) do
+        local short = l.item:match(":(.+)$") or l.item
+        local stock = l._stock or 0
+        term.setTextColor(stock > 0 and colors.white or colors.red)
+        print(string.format("  [%d] %-24s  %d uAMI  (x%d in AE2)", i, short, l.price, stock))
+    end
+    term.setTextColor(colors.white)
+    print("")
+    io.write("Select # (0 to cancel): ")
+    local idx = tonumber(((io.read() or "0"):gsub("%s", ""))) or 0
+    if idx == 0 or not wts[idx] then
+        print("Cancelled."); os.sleep(0.5)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local listing = wts[idx]
+    if (listing._stock or 0) == 0 then
         term.setTextColor(colors.red)
         print("Out of stock: " .. (listing.item:match(":(.+)$") or listing.item))
-        term.setTextColor(colors.white)
-        os.sleep(1.5)
-        ui.drawShop(api.getListings(), api.getShopBal(), true)
-        printMenu()
-        return
+        term.setTextColor(colors.white); os.sleep(1.5)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
     end
-    if listing.type == "WTB" and (listing._liquid or 0) < listing.price then
-        term.setCursorPos(1, 1); term.clear()
-        term.setTextColor(colors.red)
-        print("Shop liquidity too low for this WTB listing.")
-        term.setTextColor(colors.white)
-        os.sleep(1.5)
-        ui.drawShop(api.getListings(), api.getShopBal(), true)
-        printMenu()
-        return
-    end
-
-    -- Prompt buyer identity on terminal (monitor is still showing catalog).
-    term.setCursorPos(1, 1); term.clear()
-    term.setTextColor(colors.orange)
     local short = listing.item:match(":(.+)$") or listing.item
-    print(string.format("Tap selected: %s  %d uAMI", short, listing.price))
-    term.setTextColor(colors.white)
+    print(string.format("Selected: %s  @ %d uAMI  (stock: %d)",
+          short, listing.price, listing._stock or 0))
     io.write("Qty (Enter=1): ")
-    local qtyRaw = io.read() or "1"
-    local qtyNum = tonumber((qtyRaw:gsub("%s", ""))) or 1
-    local qty    = math.max(1, math.floor(qtyNum))
-
+    local qty = math.max(1, math.floor(tonumber(((io.read() or "1"):gsub("%s", ""))) or 1))
     io.write("Player name or address: ")
-    local raw = (io.read() or ""):gsub("^%s+",""):gsub("%s+$","")
+    local raw = (io.read() or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if #raw == 0 then
         print("Cancelled."); os.sleep(0.8)
-        ui.drawShop(api.getListings(), api.getShopBal(), true)
-        printMenu()
-        return
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
     end
-
-    -- Resolve name -> address.
-    local buyerAddr = raw
-    local buyerName = raw
+    local buyerAddr, buyerName = raw, raw
     if #raw ~= 128 or not raw:match("^[0-9a-fA-F]+$") then
         io.write("  Resolving '" .. raw .. "'... ")
         local resolved = api.lookupName(raw)
         if resolved then
-            buyerAddr = resolved
-            print("OK")
+            buyerAddr = resolved; print("OK")
         else
             term.setTextColor(colors.red)
             print("Name not found. Use exact player name or 128-hex address.")
-            term.setTextColor(colors.white)
-            os.sleep(2)
-            ui.drawShop(api.getListings(), api.getShopBal(), true)
-            printMenu()
-            return
+            term.setTextColor(colors.white); os.sleep(2)
+            ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
         end
     end
-
-    -- Send invoice and switch monitor to pending state.
     local txId, err = api.sendInvoice(buyerAddr, buyerName, listing, qty)
     if not txId then
         term.setTextColor(colors.red); print("Invoice error: " .. (err or "?"))
         term.setTextColor(colors.white); os.sleep(2)
-        ui.drawShop(api.getListings(), api.getShopBal(), true)
-        printMenu()
-        return
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
     end
     local cfg = loadCfg()
     ui.drawPending(txId, cfg.shop_name or "AmiStore",
         listing.item, qty, listing.price * qty, buyerName)
-    printMenu()   -- terminal shows invoice status + [C] cancel
+    printMenu()
 end
 
--- ── Touch event loop (parallel with networkLoop / syncLoop / inputLoop) ──────
-local function touchLoop()
-    while true do
-        local ev, side, tx, ty = os.pullEvent("monitor_touch")
-        -- Only act on touches to the TOP monitor.
-        if side == "top" then
-            local listing = ui.getTouchedListing(tx, ty)
-            if listing then
-                invoiceFlow(listing)
-            end
+-- ── Walk-up sell terminal (WTB) ───────────────────────────────────────────────
+-- Operator presses [S]; picks a WTB listing by number, enters qty + seller,
+-- instructs seller to place item in tray, then executes the transfer.
+local function sellFlow()
+    local lst = api.getListings()
+    local wtb = {}
+    for _, l in ipairs(lst) do
+        if l.type == "WTB" then wtb[#wtb + 1] = l end
+    end
+    if #wtb == 0 then
+        print("No WTB listings configured."); os.sleep(1); return
+    end
+    term.setCursorPos(1, 1); term.clear()
+    term.setTextColor(colors.orange); print("  Sell to Shop  (WTB -- shop buys from player)")
+    term.setTextColor(colors.gray);   print("  ----------------------------------------")
+    term.setTextColor(colors.white)
+    for i, l in ipairs(wtb) do
+        local short  = l.item:match(":(.+)$") or l.item
+        local liquid = l._liquid or 0
+        term.setTextColor(liquid >= l.price and colors.white or colors.red)
+        print(string.format("  [%d] %-24s  %d uAMI  (liq: %d)", i, short, l.price, liquid))
+    end
+    term.setTextColor(colors.white)
+    print("")
+    io.write("Select # (0 to cancel): ")
+    local idx = tonumber(((io.read() or "0"):gsub("%s", ""))) or 0
+    if idx == 0 or not wtb[idx] then
+        print("Cancelled."); os.sleep(0.5)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local listing = wtb[idx]
+    if (listing._liquid or 0) < listing.price then
+        term.setTextColor(colors.red); print("Shop liquidity too low.")
+        term.setTextColor(colors.white); os.sleep(1.5)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local short = listing.item:match(":(.+)$") or listing.item
+    io.write("Qty (Enter=1): ")
+    local qty = math.max(1, math.floor(tonumber(((io.read() or "1"):gsub("%s", ""))) or 1))
+    io.write("Seller name or address: ")
+    local raw = (io.read() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if #raw == 0 then
+        print("Cancelled."); os.sleep(0.8)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local sellerAddr = raw
+    if #raw ~= 128 or not raw:match("^[0-9a-fA-F]+$") then
+        io.write("  Resolving '" .. raw .. "'... ")
+        local resolved = api.lookupName(raw)
+        if resolved then
+            sellerAddr = resolved; print("OK")
+        else
+            term.setTextColor(colors.red)
+            print("Name not found. Use exact player name or 128-hex address.")
+            term.setTextColor(colors.white); os.sleep(2)
+            ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
         end
     end
+    term.setTextColor(colors.yellow)
+    print(string.format("Ask seller to place %d x %s in the BOTTOM tray.", qty, short))
+    term.setTextColor(colors.white)
+    io.write("Item in tray? [Y to confirm / N to cancel]: ")
+    local conf = (io.read() or ""):upper():gsub("%s", "")
+    if conf ~= "Y" then
+        print("Cancelled."); os.sleep(0.5)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local ok, txId, totalPrice = api.localSell(sellerAddr, listing, qty)
+    if not ok then
+        term.setTextColor(colors.red)
+        print("Error creating order: " .. (txId or "?"))
+        term.setTextColor(colors.white); os.sleep(2)
+        ui.drawShop(api.getListings(), api.getShopBal()); printMenu(); return
+    end
+    local success, err = api.localSellConfirm(txId)
+    if success then
+        term.setTextColor(colors.green)
+        print(string.format("Done!  Paid %d uAMI for %d x %s.", totalPrice, qty, short))
+        term.setTextColor(colors.white)
+    else
+        term.setTextColor(colors.red); print("Failed: " .. (err or "?"))
+        term.setTextColor(colors.white)
+    end
+    os.sleep(2)
+    api.syncInventory()
+    ui.drawShop(api.getListings(), api.getShopBal())
+    printMenu()
 end
 
 -- ── Node manager (called only from adminLoop, never from public inputLoop) ───

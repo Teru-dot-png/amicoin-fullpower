@@ -904,11 +904,23 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     local perNode       = {}   -- {name, balance, err, latency, stats}
     local balErr        = nil
     local netStats      = nil  -- {active_wallets, total_supply, current_rate, total_ticks}
+    local liveRate      = nil  -- fetched from GitHub reward_rate.txt
     -- Track which nodes we've successfully registered on so we can retry
     -- nodes that were offline at boot.
     local registered    = {}
 
     -- ── Data refresh ─────────────────────────────────────────────────────────
+    local function fetchLiveRate()
+        local ok, res = pcall(http.get, RATE_URL)
+        if not ok or not res then return end
+        local body = res.readAll()
+        res.close()
+        local n = tonumber((body or ""):gsub("%s", ""))
+        if n and n >= 1 and n <= 100000 then
+            liveRate = math.floor(n)
+        end
+    end
+
     local function refreshBalance()
         if #nodes == 0 then
             totalBalance = nil; balErr = "No nodes - press [N]"; return

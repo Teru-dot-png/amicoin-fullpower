@@ -164,17 +164,244 @@ local function printMenu()
     term.setTextColor(colors.white)
     print("  [A]  Admin panel")
     print("  [B]  Walk-up buy terminal")
-    print("  [N]  Node manager")
+    print("  [S]  Walk-up sell terminal")
     print("  [R]  Reload listings")
-    print("  [U]  Self-update from GitHub")
     print("  [Q]  Quit")
     term.setTextColor(colors.gray)
     print("  ----------------------------------------")
     term.setTextColor(colors.white)
 end
 
+-- ── Node manager (called from adminLoop) ─────────────────────────────────────
+local function nodeManager()
+    while true do
+        term.setCursorPos(1, 1); term.clear()
+        term.setTextColor(colors.orange)
+        print("=== AmiStore  Node Manager ===")
+        term.setTextColor(colors.white)
+        print("")
+        local cfg = loadCfg()
+        if #cfg.nodes == 0 then
+            print("  (no nodes configured)")
+        else
+            for i, n in ipairs(cfg.nodes) do
+                print(string.format("  [%d] %-16s  %s...", i, n.name, n.key:sub(1, 8)))
+            end
+        end
+        print("")
+        print("Shop name : " .. (cfg.shop_name or "AmiStore"))
+        print("Sweep to  : " .. (#(cfg.sweep_to or "") > 0 and cfg.sweep_to or "(not set)"))
+        print("Sweep %   : " .. (cfg.sweep_pct or 5) .. "%")
+        print("")
+        print("[A]dd  [D]elete  [N]ame  [S]weepTo  [P]assword  [B]ack")
+        local _, k = os.pullEvent("key")
+
+        if k == keys.b then
+            break
+
+        elseif k == keys.a then
+            term.setCursorPos(1, 1); term.clear()
+            term.setTextColor(colors.orange); print("Add Node"); term.setTextColor(colors.white)
+            print("")
+            io.write("Node name: ")
+            local nm = (io.read() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if #nm == 0 then nm = "Node " .. (#loadCfg().nodes + 1) end
+            print("")
+            print("  [1] Enter 32-char key manually")
+            print("  [2] Fetch via setup password")
+            local addKey
+            while not addKey do
+                local _, ak = os.pullEvent("key")
+                if ak == keys.one or ak == keys.n1 then
+                    io.write("Node key (32 hex): ")
+                    local raw = (io.read() or ""):gsub("%s", ""):lower()
+                    if #raw == 32 then
+                        addKey = raw
+                    else
+                        term.setTextColor(colors.red); print("Must be exactly 32 hex chars.")
+                        term.setTextColor(colors.white); os.sleep(1)
+                    end
+                    break
+                elseif ak == keys.two or ak == keys.n2 then
+                    io.write("Setup password: ")
+                    local pw = read("*")
+                    if #pw == 0 then
+                        print("Cancelled."); os.sleep(0.8)
+                    else
+                        term.setTextColor(colors.yellow); print("Contacting node...")
+                        term.setTextColor(colors.white)
+                        local ok2, fetchedKey, ferr = api.fetchNodeKey(pw)
+                        if ok2 and fetchedKey then
+                            addKey = fetchedKey
+                            term.setTextColor(colors.green); print("Got key from node!")
+                            term.setTextColor(colors.white); os.sleep(0.5)
+                        else
+                            term.setTextColor(colors.red)
+                            print("Failed: " .. (ferr or "unknown"))
+                            term.setTextColor(colors.white); os.sleep(2)
+                        end
+                    end
+                    break
+                end
+            end
+            if addKey then
+                local ok, err = api.addNode(nm, addKey)
+                term.setTextColor(ok and colors.green or colors.red)
+                print(ok and ("Added: " .. nm) or ("Error: " .. (err or "?")))
+                term.setTextColor(colors.white); os.sleep(1)
+            end
+
+        elseif k == keys.d then
+            term.setCursorPos(1, 1); term.clear()
+            print("Delete Node")
+            io.write("Index to remove: ")
+            local idx = tonumber(io.read())
+            local ok, err = api.removeNode(idx)
+            term.setTextColor(ok and colors.green or colors.red)
+            print(ok and "Removed." or ("Error: " .. (err or "?")))
+            term.setTextColor(colors.white); os.sleep(1)
+
+        elseif k == keys.n then
+            term.setCursorPos(1, 1); term.clear()
+            print("Set Shop Name (used for DNS registration)")
+            local cfg2 = loadCfg()
+            io.write("New name: ")
+            local nm = (io.read() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if #nm > 0 then
+                cfg2.shop_name = nm; saveCfg(cfg2); api.registerShop()
+                term.setTextColor(colors.green); print("Name updated and re-registered.")
+            else
+                print("Unchanged.")
+            end
+            term.setTextColor(colors.white); os.sleep(1)
+
+        elseif k == keys.s then
+            term.setCursorPos(1, 1); term.clear()
+            print("Set Sweep Target (player name to receive profits)")
+            local cfg2 = loadCfg()
+            print("Current: " .. (#(cfg2.sweep_to or "") > 0 and cfg2.sweep_to or "(none)"))
+            io.write("Player name (blank to clear): ")
+            local nm = (io.read() or ""):gsub("%s", "")
+            cfg2.sweep_to = nm; saveCfg(cfg2)
+            term.setTextColor(colors.green)
+            print(#nm > 0 and ("Sweep target: " .. nm) or "Sweep target cleared.")
+            term.setTextColor(colors.white); os.sleep(1)
+
+        elseif k == keys.p then
+            term.setCursorPos(1, 1); term.clear()
+            print("Change Admin Password"); print("")
+            local pw1, pw2
+            repeat
+                io.write("New password: "); pw1 = read("*")
+                if #pw1 < 4 then
+                    print("Too short — minimum 4 characters."); pw1 = nil
+                else
+                    io.write("Confirm: "); pw2 = read("*")
+                    if pw1 ~= pw2 then print("Passwords do not match."); pw1 = nil end
+                end
+            until pw1 and pw1 == pw2
+            api.setAdminPass(pw1)
+            term.setTextColor(colors.green); print("Password updated.")
+            term.setTextColor(colors.white); os.sleep(1)
+        end
+    end
+    api.registerShop()
+end
+
+-- ── Admin panel loop (called from inputLoop after password check) ─────────────
+local function adminLoop()
+    local lst = api.getListings()
+    local cfg = loadCfg()
+    while true do
+        ui.drawAdmin(lst, cfg)
+        term.setCursorPos(1, 1); term.clear()
+        term.setTextColor(colors.orange)
+        print("  AmiStore -- Admin Panel")
+        term.setTextColor(colors.gray)
+        print("  ----------------------------------------")
+        term.setTextColor(colors.white)
+        print("  [B]  Back to storefront")
+        print("  [P]  Edit listing price")
+        print("  [+]  Add listing")
+        print("  [-]  Remove listing")
+        print("  [S]  Vault sweep %")
+        print("  [N]  Node manager")
+        print("  [U]  Self-update from GitHub")
+        term.setTextColor(colors.gray)
+        print("  ----------------------------------------")
+        term.setTextColor(colors.white)
+        local _, key = os.pullEvent("key")
+
+        if key == keys.b then
+            break
+
+        elseif key == keys.p then
+            term.setCursorPos(1, 1); term.clear()
+            print("Edit Listing Price")
+            io.write("Listing index: ")
+            local idx = tonumber(io.read())
+            if idx and lst[idx] then
+                print(string.format("Current: %s  =  %d uAMI", lst[idx].item, lst[idx].price))
+                io.write("New price (uAMI): ")
+                local p = tonumber(io.read())
+                if p and p > 0 then lst[idx].price = math.floor(p); api.saveListings(lst); print("Saved.") end
+            end
+            os.sleep(0.5)
+
+        elseif key == keys.s then
+            term.setCursorPos(1, 1); term.clear()
+            print("Vault Sweep %")
+            print(string.format("Current: %d%%", cfg.sweep_pct or 5))
+            io.write("New sweep % (1-50): ")
+            local sp = tonumber(io.read())
+            if sp and sp >= 1 and sp <= 50 then cfg.sweep_pct = sp; saveCfg(cfg); print("Saved.") end
+            os.sleep(0.5)
+
+        elseif key == keys.equals then   -- [+]
+            term.setCursorPos(1, 1); term.clear()
+            print("Add Listing")
+            io.write("Type (WTS / WTB): ")
+            local lt = (io.read() or ""):upper():gsub("%s", "")
+            io.write("Item name (e.g. minecraft:diamond): ")
+            local li = (io.read() or ""):gsub("%s", "")
+            io.write("Price in uAMI: ")
+            local lp = tonumber(io.read())
+            if (lt == "WTS" or lt == "WTB") and #li > 3 and lp and lp > 0 then
+                lst[#lst + 1] = {type = lt, item = li, price = math.floor(lp)}
+                api.saveListings(lst)
+                print(string.format("Added: [%s] %s @ %d uAMI", lt, li, math.floor(lp)))
+            else
+                print("Invalid input — not saved.")
+            end
+            os.sleep(0.8)
+
+        elseif key == keys.minus then    -- [-]
+            term.setCursorPos(1, 1); term.clear()
+            print("Remove Listing")
+            io.write("Index to remove: ")
+            local idx = tonumber(io.read())
+            if idx and lst[idx] then
+                local removed = lst[idx].item; table.remove(lst, idx)
+                api.saveListings(lst); print("Removed: " .. removed)
+            else
+                print("Invalid index.")
+            end
+            os.sleep(0.5)
+
+        elseif key == keys.n then
+            nodeManager()
+            cfg = loadCfg()   -- refresh after possible shop_name change
+
+        elseif key == keys.u then
+            selfUpdate()
+            -- only returns on failure; on success it reboots
+        end
+    end
+    api.syncInventory()
+    ui.drawShop(api.getListings(), api.getShopBal())
+end
+
 -- ── Keyboard input loop ────────────────────────────────────────────────────────
--- Handles [A]dmin, [B]uy, [N]odes, [R]eload, [U]pdate, [Q]uit on the terminal.
 local adminToken    = nil
 local adminUnlocked = false
 
@@ -194,18 +421,9 @@ local function inputLoop()
             if api.checkAdminPass(inp) then
                 adminUnlocked = true
                 ui.setAdminUnlocked(true)
-                local lst = api.getListings()
-                local cfg = loadCfg()
-                -- adminLoop blocks until [B]ack is pressed.
-                ui.adminLoop(
-                    lst, cfg,
-                    function(l) api.saveListings(l) end,
-                    function(c) saveCfg(c) end)
+                adminLoop()
                 adminUnlocked = false
                 ui.setAdminUnlocked(false)
-                -- Redraw storefront after returning from admin.
-                api.syncInventory()
-                ui.drawShop(api.getListings(), api.getShopBal())
             else
                 print("Invalid token. Access denied.")
                 os.sleep(1.5)
@@ -312,136 +530,93 @@ local function inputLoop()
             end
             ::continue_input::
 
-        -- [N] — node manager
-        elseif key == keys.n then
-            while true do
-                term.setCursorPos(1, 1); term.clear()
-                term.setTextColor(colors.orange)
-                print("=== AmiStore  Node Manager ===")
-                term.setTextColor(colors.white)
-                print("")
-                local cfg = loadCfg()
-                if #cfg.nodes == 0 then
-                    print("  (no nodes configured)")
-                else
-                    for i, n in ipairs(cfg.nodes) do
-                        print(string.format("  [%d] %-16s  %s...", i,
-                            n.name, n.key:sub(1, 8)))
-                    end
+        -- [S] — walk-up sell terminal (player sells to the shop, WTB listings)
+        elseif key == keys.s then
+            term.setCursorPos(1, 1); term.clear()
+            term.setTextColor(colors.orange)
+            print("=== AmiStore  Walk-Up Sell ===")
+            term.setTextColor(colors.white)
+            print("")
+            local lst2 = api.getListings()
+            local wtb  = {}
+            for _, l in ipairs(lst2) do
+                if l.type == "WTB" then wtb[#wtb + 1] = l end
+            end
+            if #wtb == 0 then
+                print("No WTB listings — shop is not buying anything right now.")
+                os.sleep(2)
+                ui.drawShop(api.getListings(), api.getShopBal())
+            else
+                for i, l in ipairs(wtb) do
+                    local short = (l.item:match(":(.+)$") or l.item)
+                    print(string.format("  [%d] %-24s  %d uAMI each", i, short, l.price))
                 end
                 print("")
-                print("Shop name : " .. (cfg.shop_name or "AmiStore"))
-                print("Sweep to  : " .. (#(cfg.sweep_to or "") > 0
-                    and cfg.sweep_to or "(not set)"))
-                print("Sweep %   : " .. (cfg.sweep_pct or 5) .. "%")
-                print("")
-                print("[A]dd  [D]elete  [N]ame  [S]weepTo  [P]assword  [B]ack")
-                local _, k = os.pullEvent("key")
-                if k == keys.b then
-                    break
-
-                elseif k == keys.a then
-                    term.setCursorPos(1, 1); term.clear()
-                    print("Add Node")
-                    io.write("Node name: ")
-                    local nm = io.read() or ""
-                    io.write("Node key (32 hex): ")
-                    local nk = (io.read() or ""):gsub("%s", "")
-                    local ok, err = api.addNode(nm, nk)
-                    if ok then
-                        term.setTextColor(colors.green)
-                        print("Added: " .. nm)
-                    else
-                        term.setTextColor(colors.red)
-                        print("Error: " .. (err or "?"))
-                    end
-                    term.setTextColor(colors.white)
-                    os.sleep(1)
-
-                elseif k == keys.d then
-                    term.setCursorPos(1, 1); term.clear()
-                    print("Delete Node")
-                    io.write("Index to remove: ")
-                    local idx = tonumber(io.read())
-                    local ok, err = api.removeNode(idx)
-                    if ok then
-                        term.setTextColor(colors.green); print("Removed.")
-                    else
-                        term.setTextColor(colors.red)
-                        print("Error: " .. (err or "?"))
-                    end
-                    term.setTextColor(colors.white)
-                    os.sleep(1)
-
-                elseif k == keys.n then
-                    term.setCursorPos(1, 1); term.clear()
-                    print("Set Shop Name (used for DNS registration)")
-                    local cfg2 = loadCfg()
-                    io.write("New name: ")
-                    local nm = (io.read() or ""):gsub("^%s+", ""):gsub("%s+$", "")
-                    if #nm > 0 then
-                        cfg2.shop_name = nm
-                        saveCfg(cfg2)
-                        api.registerShop()
-                        term.setTextColor(colors.green)
-                        print("Name updated and re-registered.")
-                    else
-                        print("Unchanged.")
-                    end
-                    term.setTextColor(colors.white)
-                    os.sleep(1)
-
-                elseif k == keys.s then
-                    term.setCursorPos(1, 1); term.clear()
-                    print("Set Sweep Target (player name to receive profits)")
-                    local cfg2 = loadCfg()
-                    print("Current: " .. (#(cfg2.sweep_to or "") > 0
-                        and cfg2.sweep_to or "(none)"))
-                    io.write("Player name (blank to clear): ")
-                    local nm = (io.read() or ""):gsub("%s", "")
-                    cfg2.sweep_to = nm
-                    saveCfg(cfg2)
-                    term.setTextColor(colors.green)
-                    print(#nm > 0 and ("Sweep target set to: " .. nm) or "Sweep target cleared.")
-                    term.setTextColor(colors.white)
-                    os.sleep(1)
-
-                elseif k == keys.p then
-                    term.setCursorPos(1, 1); term.clear()
-                    print("Change Admin Password")
+                io.write("Item number (or Enter to cancel): ")
+                local iStr2 = io.read()
+                local idx2  = tonumber(iStr2)
+                if idx2 and wtb[idx2] then
+                    local chosen2 = wtb[idx2]
+                    io.write("Quantity: ")
+                    local qty2 = math.max(1, math.floor(tonumber(io.read() or "1") or 1))
                     print("")
-                    local pw1, pw2
-                    repeat
-                        io.write("New password: ")
-                        pw1 = read("*")
-                        if #pw1 < 4 then
-                            print("Too short — minimum 4 characters.")
-                            pw1 = nil
+                    io.write("Your address or player name: ")
+                    local raw2 = (io.read() or ""):gsub("%s", "")
+                    local sellerAddr = raw2
+                    if #raw2 ~= 128 then
+                        io.write("  Resolving '" .. raw2 .. "'... ")
+                        sellerAddr = api.lookupName(raw2)
+                        if sellerAddr then
+                            print("OK")
                         else
-                            io.write("Confirm: ")
-                            pw2 = read("*")
-                            if pw1 ~= pw2 then
-                                print("Passwords do not match, try again.")
-                                pw1 = nil
-                            end
+                            term.setTextColor(colors.red)
+                            print("Not found. Check spelling or use raw address.")
+                            term.setTextColor(colors.white)
+                            os.sleep(2)
+                            ui.drawShop(api.getListings(), api.getShopBal())
+                            goto continue_input2
                         end
-                    until pw1 and pw1 == pw2
-                    api.setAdminPass(pw1)
-                    term.setTextColor(colors.green)
-                    print("Password updated.")
+                    end
+                    local totalPrice2 = chosen2.price * qty2
+                    print("")
+                    term.setTextColor(colors.yellow)
+                    print(string.format("Order : %d x %s", qty2,
+                        (chosen2.item:match(":(.+)$") or chosen2.item)))
+                    print(string.format("Payout: %d uAMI  (%.4f AMI)",
+                        totalPrice2, totalPrice2 / 1000000))
                     term.setTextColor(colors.white)
+                    print("")
+                    print("Ask the player to place the item in the BOTTOM tray,")
+                    print("then confirm below.")
+                    print("")
+                    io.write("Item in tray and ready? [Y/N]: ")
+                    local conf2 = (io.read() or ""):lower():sub(1, 1)
+                    if conf2 == "y" then
+                        local ok2, txId2, _ = api.localSell(sellerAddr, chosen2, qty2)
+                        if ok2 then
+                            local vok2, verr2 = api.localSellConfirm(txId2)
+                            if vok2 then
+                                term.setTextColor(colors.green)
+                                print("Done! Payment sent and item imported to AE2.")
+                            else
+                                term.setTextColor(colors.red)
+                                print("Failed: " .. (verr2 or "unknown error"))
+                            end
+                            term.setTextColor(colors.white)
+                        end
+                    else
+                        print("Cancelled.")
+                    end
+                    os.sleep(2)
+                    api.syncInventory()
+                    ui.drawShop(api.getListings(), api.getShopBal())
+                else
+                    print("Cancelled.")
                     os.sleep(1)
+                    ui.drawShop(api.getListings(), api.getShopBal())
                 end
             end
-            -- Re-register with (possibly updated) shop name after leaving node manager.
-            api.registerShop()
-            ui.drawShop(api.getListings(), api.getShopBal())
-
-        -- [U] — self-update from GitHub
-        elseif key == keys.u then
-            selfUpdate()
-            -- selfUpdate() only returns on failure; on success it reboots.
-            ui.drawShop(api.getListings(), api.getShopBal())
+            ::continue_input2::
 
         -- [Q] — graceful quit
         elseif key == keys.q then

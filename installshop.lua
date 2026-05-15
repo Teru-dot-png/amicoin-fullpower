@@ -17,15 +17,8 @@ local FILES = {
     { src = "/ami/shop/startup.lua",   dst = "/ami/shop/startup.lua"   },
 }
 
--- Template listings written if listings.json is absent.
-local TEMPLATE_LISTINGS = {
-    listings = {
-        { type = "WTS", item = "minecraft:diamond",         price = 50000  },
-        { type = "WTS", item = "minecraft:emerald",         price = 25000  },
-        { type = "WTB", item = "minecraft:iron_ingot",      price = 500    },
-        { type = "WTB", item = "minecraft:gold_ingot",      price = 2000   },
-    }
-}
+-- Start with no listings; merchant adds their own via the Admin panel.
+local TEMPLATE_LISTINGS = { listings = {} }
 
 -- Template config written if config.json is absent.
 -- Edit vault_addr and vault_node_key to enable profit sweeps.
@@ -175,7 +168,7 @@ end
 if not fs.exists("/ami/shop/listings.json") then
     writeJSON("/ami/shop/listings.json", TEMPLATE_LISTINGS)
     term.setTextColor(colors.lightGray)
-    print("  /ami/shop/listings.json  (template)")
+    print("  /ami/shop/listings.json  (empty — add listings via Admin panel)")
     term.setTextColor(colors.white)
 end
 

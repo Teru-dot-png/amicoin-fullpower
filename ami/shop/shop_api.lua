@@ -210,28 +210,66 @@ end
 function api.getListings() return listings end
 
 -- ── AE2 (me_bridge) helpers ────────────────────────────────────────────────────
--- getItem returns the AE2 stack for an item, or nil.
+-- Reads amount from an item detail table; handles both Advanced Peripherals
+-- ('amount') and other bridge mods that use 'count'.
+local function itemAmt(t)
+    if type(t) ~= "table" then return 0 end
+    return (t.amount or t.count or 0)
+end
+
+-- Returns how many of itemName the ME network currently holds.
 local function meGetStock(itemName)
     if not p_me then return 0 end
-    local ok, item = pcall(p_me.getItem, {name = itemName})
-    if ok and type(item) == "table" and item.amount then return item.amount end
+    -- Primary path: getItem() — Advanced Peripherals / CC:AE2
+    if type(p_me.getItem) == "function" then
+        local ok, item = pcall(p_me.getItem, {name = itemName})
+        if ok then
+            return itemAmt(item)
+        else
+            log("WARN", "meGetStock", "getItem failed: " .. tostring(item))
+        end
+    end
+    -- Fallback: scan listItems() for mods that expose it instead of getItem
+    if type(p_me.listItems) == "function" then
+        local ok2, items = pcall(p_me.listItems)
+        if ok2 and type(items) == "table" then
+            for _, it in ipairs(items) do
+                if it.name == itemName then return itemAmt(it) end
+            end
+            return 0
+        else
+            log("WARN", "meGetStock", "listItems failed: " .. tostring(items))
+        end
+    end
     return 0
 end
 
 -- Export qty of itemName from AE2 to the bottom tray.
+-- Returns transferred count (may be less than qty if stock is short).
 local function meExport(itemName, qty)
     if not p_me then return false, "No me_bridge on RIGHT" end
-    local ok, err = pcall(p_me.exportItem, {name = itemName, count = qty}, "bottom")
-    if not ok then return false, tostring(err) end
-    return true, nil
+    local ok, result = pcall(p_me.exportItem, {name = itemName, count = qty}, "bottom")
+    if not ok then
+        log("ERROR", "meExport", tostring(result))
+        return false, tostring(result)
+    end
+    local transferred = type(result) == "number" and result or qty
+    if transferred < qty then
+        log("WARN", "meExport",
+            string.format("requested %d of %s but only %d transferred", qty, itemName, transferred))
+    end
+    return true, transferred
 end
 
 -- Import the contents of the bottom tray matching itemName into AE2.
 local function meImport(itemName)
     if not p_me then return false, "No me_bridge on RIGHT" end
-    local ok, err = pcall(p_me.importItem, {name = itemName}, "bottom")
-    if not ok then return false, tostring(err) end
-    return true, nil
+    local ok, result = pcall(p_me.importItem, {name = itemName}, "bottom")
+    if not ok then
+        log("ERROR", "meImport", tostring(result))
+        return false, tostring(result)
+    end
+    return true, type(result) == "number" and result or 0
 end
 
 -- Count how many of itemName are in the physical tray.
@@ -357,6 +395,76 @@ function api.lookupName(playerName)
 end
 
 -- ── Node manager ──────────────────────────────────────────────────────────────
+
+-- Derives a 32-hex XTEA key from a plain-text setup password.
+-- Algorithm MUST stay identical to wallet/comms.lua and node/startup.lua.
+local function keyFromPassword(password)
+    local bytes = {}
+    for i = 1, #password do bytes[i] = string.byte(password, i) end
+    if #bytes == 0 then bytes = {0} end
+    local out = {}
+    for i = 1, 16 do
+        local a = bytes[((i - 1) % #bytes) + 1]
+        local b = bytes[(i       % #bytes) + 1]
+        local c = bytes[((i + 3) % #bytes) + 1]
+        out[i] = bit32.bxor(a * 31 + b * 17 + c * 7 + i * 13, i * 97) % 256
+    end
+    for i = 1, 16 do
+        out[i] = bit32.bxor(out[i], out[(i % 16) + 1]) % 256
+    end
+    local hex = ""
+    for _, b in ipairs(out) do hex = hex .. string.format("%02x", b) end
+    return hex
+end
+
+-- Send a GETKEY request using a setup password.
+-- The outgoing packet is encrypted with shopKey (standard).
+-- The reply from the node is encrypted with keyFromPassword(password),
+-- so we can decrypt it without already knowing the node key.
+-- Returns: ok (bool), nodeKey (32-hex string or nil), errMsg (string or nil)
+function api.fetchNodeKey(password)
+    if not p_modem then return false, nil, "No modem on BACK" end
+    local pkt    = { cmd="GETKEY", from=shopAddress, password=password, nonce=os.epoch("utc") }
+    local plain  = textutils.serialiseJSON(pkt)
+    local cipher = xtea.encrypt(plain, shopKey)
+    local wire   = shopKey .. "|" .. cipher
+
+    local replyCh = REPLY_BASE + math.random(0, 999)
+    p_modem.open(MESH_CHANNEL)
+    p_modem.open(replyCh)
+    p_modem.transmit(MESH_CHANNEL, replyCh, wire)
+
+    local pwdKey = keyFromPassword(password)
+    local timer  = os.startTimer(MESH_TIMEOUT)
+    local rok, rkey, rerr = false, nil, "Timeout - no node responded"
+
+    while true do
+        local ev, p1, _, _, p4 = os.pullEvent()
+        if ev == "modem_message" and type(p4) == "string" then
+            local ok2, plain2 = pcall(xtea.decrypt, p4, pwdKey)
+            if ok2 then
+                local d = textutils.unserialiseJSON(plain2)
+                if type(d) == "table" then
+                    if d.ok and type(d.key) == "string" then
+                        os.cancelTimer(timer)
+                        rok = true; rkey = d.key; rerr = nil
+                        break
+                    elseif d.err then
+                        os.cancelTimer(timer)
+                        rerr = d.err
+                        break
+                    end
+                end
+            end
+        elseif ev == "timer" and p1 == timer then
+            break
+        end
+    end
+
+    p_modem.close(replyCh)
+    return rok, rkey, rerr
+end
+
 function api.addNode(name, key)
     if not name or not key or #key ~= 32 then return false, "Key must be 32 hex chars" end
     local cfg = api.loadConfig()
@@ -678,6 +786,36 @@ function api.localBuyConfirm(txId)
     end
     pendingOrders[txId] = nil
     return executeWTS(txId, order.listing, order.qty, order.buyer)
+end
+
+-- Walk-up sell (WTB listing): records a pending order.
+-- The seller places the item in the BOTTOM tray first, then operator confirms.
+-- Returns ok (bool), txId or nil, totalPrice or nil.
+function api.localSell(sellerAddr, listing, qty)
+    if listing.type ~= "WTB" then return false, nil, "Not a WTB listing" end
+    local totalPrice = listing.price * qty
+    local txId = fnv1a(sellerAddr .. listing.item
+                       .. tostring(qty) .. tostring(os.epoch("utc")))
+    pendingOrders[txId] = {
+        item    = listing.item,
+        qty     = qty,
+        price   = listing.price,
+        listing = listing,
+        seller  = sellerAddr,
+        expires = os.epoch("utc") + ORDER_TTL,
+        type    = "WTB",
+    }
+    return true, txId, totalPrice
+end
+
+-- Completes a walk-up sell after the operator confirms the item is in the tray.
+function api.localSellConfirm(txId)
+    local order = pendingOrders[txId]
+    if not order or os.epoch("utc") > order.expires then
+        return false, "Order expired or not found"
+    end
+    pendingOrders[txId] = nil
+    return executeWTB(txId, order.listing, order.qty, order.seller)
 end
 
 -- ── Accessors ─────────────────────────────────────────────────────────────────

@@ -477,12 +477,14 @@ local function screenCommandCenter(nodes, secretKey, address)
                     else
                         node.fp_mismatch = true
                         mis_ct = mis_ct + 1
-                        entry.line = string.format("  [%d] %-12s !! MISMATCH",
+                        entry.line     = string.format("  [%d] %-12s !! MISM",
                             idx, node.name:sub(1,10))
-                        entry.col  = colors.red
-                        entry.sub1 = string.format("       got:  %s", fp)
-                        entry.col2 = colors.red
-                        entry.sub2 = string.format("       want: %s", node.known_fp)
+                        entry.col      = colors.red
+                        entry.sub1     = string.format("       got:  %s", fp)
+                        entry.col2     = colors.red
+                        entry.sub2     = string.format("       want: %s", node.known_fp)
+                        entry.new_fp   = fp       -- new hash from node
+                        entry.node_idx = idx      -- so Trust can update the right slot
                     end
                 else
                     entry.line = string.format("  [%d] %-12s ERR   %s",
@@ -503,8 +505,30 @@ local function screenCommandCenter(nodes, secretKey, address)
             rrow = rrow + 1
             pmsg(string.format("Done: %d/%d OK  %d mismatch", ok_ct, #nodes, mis_ct),
                 rrow, mis_ct > 0 and colors.red or colors.green)
+            if mis_ct > 0 then
+                rrow = rrow + 1
+                pmsg("[T] Trust new  [any] Back", rrow, colors.yellow)
+            end
             saveNodes(nodes)
-            waitKey()
+            if mis_ct > 0 then
+                -- Wait: if user presses T, accept all new fingerprints.
+                local _, tkey = os.pullEvent("key")
+                if tkey == keys.t then
+                    for _, r in ipairs(results) do
+                        if r.new_fp and r.node_idx then
+                            nodes[r.node_idx].known_fp    = r.new_fp
+                            nodes[r.node_idx].fp_mismatch = false
+                        end
+                    end
+                    saveNodes(nodes)
+                    banner("Integrity Handshake")
+                    pmsg("Fingerprints updated and trusted.", 5, colors.green)
+                    pmsg("Re-run handshake to confirm.", 6, colors.lightGray)
+                    os.sleep(1.5)
+                end
+            else
+                waitKey()
+            end
 
         elseif key == keys.g and #nodes > 0 then
             -- ── Gossip DNS cache ────────────────────────────────────────────

@@ -1,15 +1,16 @@
--- installpad.lua  v3.0
+-- installpad.lua  v3.1
 -- AmiCoin Wallet Installer for CC:Tweaked Ender Router Pad.
--- Supports Fresh Install and non-destructive Hard Update mode.
+-- Supports Hard Update, Force Update, Clean Install, and Fresh Install.
 --
--- Modes:
---   Fresh Install  : Downloads all modules and boots the wallet.
---   Hard Update    : Overwrites .lua files only; wallet data preserved.
---                    Delta-checks hashes -- skips unchanged files.
---                    Backs up each .lua to .lua.bak before overwriting.
---                    Restores .bak automatically if download or write fails.
+-- Modes (chosen at runtime):
+--   Hard Update    : Delta-checks hashes -- skips unchanged .lua files.
+--                    Wallet keys and data preserved.
+--   Force Update   : Reinstalls ALL .lua files regardless of local hash.
+--                    Wallet keys and data preserved.
+--   Clean Install  : Wipes all wallet data + lua files then fresh install.
+--   Fresh Install  : (auto, when wallet absent) standard first-time setup.
 
-local VERSION   = "3.0"
+local VERSION   = "3.1"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
@@ -20,7 +21,15 @@ local FILES = {
     { src = "/wallet/comms.lua",          dst = "/comms.lua"          },
 }
 
--- \u2500\u2500 Smart Update Engine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+-- Files/dirs wiped on Clean Install.
+-- /wallet_data/ holds secret.key, address.txt, nodes.json, session.enc, etc.
+local CLEAN_LUAS  = {
+    "/startup.lua", "/secret_manager.lua", "/session.lua", "/comms.lua",
+    "/shared/xtea.lua",
+}
+local CLEAN_DIRS  = { "/wallet_data" }
+
+-- ── Smart Update Engine ──────────────────────────────────────────────────────
 
 local function fnv1a(s)
     local hash = 2166136261
@@ -51,7 +60,7 @@ local function fetchRemote(url)
     return content, fnv1a(content), nil
 end
 
-local function smartInstall(dst, content, remoteHash)
+local function smartInstall(dst, content, remoteHash, forceWrite)
     if not dst:match("%.lua$") then
         return nil, "Refusing to overwrite non-.lua file: " .. dst
     end
@@ -61,10 +70,12 @@ local function smartInstall(dst, content, remoteHash)
     local existed = fs.exists(dst)
     local bakPath = dst .. ".bak"
 
-    if existed then
+    if existed and not forceWrite then
         if hashFile(dst) == remoteHash then
             return "skip", nil
         end
+    end
+    if existed then
         if fs.exists(bakPath) then fs.delete(bakPath) end
         if not pcall(fs.copy, dst, bakPath) then
             return nil, "Backup failed for " .. dst
@@ -93,11 +104,10 @@ local function smartInstall(dst, content, remoteHash)
     return existed and "updated" or "fresh", nil
 end
 
--- \u2500\u2500 Mode detection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
--- The wallet is "installed" when startup.lua (main.lua) and comms.lua both exist.
-local isUpdate = fs.exists("/startup.lua") and fs.exists("/comms.lua")
+-- ── Mode detection ────────────────────────────────────────────────────────────
+local installed = fs.exists("/startup.lua") and fs.exists("/comms.lua")
 
--- \u2500\u2500 Banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+-- ── Banner ────────────────────────────────────────────────────────────────────
 term.setTextColor(colors.red)
 print("===========================================")
 print("  AmiCoin Wallet Installer  v" .. VERSION)
@@ -107,28 +117,91 @@ print("")
 print("Repository : " .. REPO_BASE)
 print("")
 
-if isUpdate then
+-- ── Mode selection ────────────────────────────────────────────────────────────
+local MODE
+local forceWrite = false
+
+if installed then
     term.setTextColor(colors.yellow)
-    print("  [UPDATE MODE] Wallet already installed.")
-    print("  .lua files will be delta-checked and updated.")
-    print("  Your keys and wallet data will NOT be touched.")
+    print("  Existing wallet detected.")
     term.setTextColor(colors.white)
     print("")
-    io.write("Proceed with update? [y/n]: ")
-    if (io.read() or ""):lower():sub(1, 1) ~= "y" then
+    print("  [1]  Hard Update    (delta-check; skip unchanged .lua)")
+    print("  [2]  Force Update   (reinstall ALL .lua; keep wallet data)")
+    term.setTextColor(colors.red)
+    print("  [3]  Clean Install  (WIPE all data + keys + fresh install)")
+    term.setTextColor(colors.white)
+    print("  [Q]  Cancel")
+    print("")
+    io.write("Choice [1/2/3/Q]: ")
+    local ch = (io.read() or ""):gsub("%s", ""):lower()
+    if ch == "1" then
+        MODE = "update"
+    elseif ch == "2" then
+        MODE       = "force"
+        forceWrite = true
+    elseif ch == "3" then
+        MODE = "clean"
+    else
         print("Aborted."); return
     end
 else
+    MODE = "fresh"
+end
+
+-- ── Pre-install steps ─────────────────────────────────────────────────────────
+if MODE == "clean" then
+    print("")
+    term.setTextColor(colors.red)
+    print("  WARNING: Clean Install will permanently delete:")
+    for _, p in ipairs(CLEAN_LUAS) do print("    " .. p) end
+    for _, d in ipairs(CLEAN_DIRS) do print("    " .. d .. "/  (entire directory)") end
+    print("")
+    print("  This CANNOT be undone. Your secret key will be lost.")
+    io.write("  Type CLEAN to confirm: ")
+    term.setTextColor(colors.white)
+    if io.read() ~= "CLEAN" then print("Aborted."); return end
+
+    print("\nWiping...")
+    for _, p in ipairs(CLEAN_LUAS) do
+        if fs.exists(p) then
+            fs.delete(p)
+            term.setTextColor(colors.red); print("  deleted " .. p)
+            term.setTextColor(colors.white)
+        end
+    end
+    for _, d in ipairs(CLEAN_DIRS) do
+        if fs.exists(d) then
+            fs.delete(d)
+            term.setTextColor(colors.red); print("  deleted " .. d .. "/")
+            term.setTextColor(colors.white)
+        end
+    end
+    forceWrite = true
+
+elseif MODE == "fresh" then
     term.setTextColor(colors.lime)
     print("  [FRESH INSTALL] No wallet found on this Pad.")
     term.setTextColor(colors.white)
     print("")
     io.write("Press Enter to install or Ctrl+T to abort... ")
     io.read()
+
+elseif MODE == "force" then
+    print("")
+    term.setTextColor(colors.cyan)
+    print("  Force Update: all .lua files will be reinstalled.")
+    term.setTextColor(colors.white)
 end
 
--- \u2500\u2500 Download and install .lua files \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-print("\n" .. (isUpdate and "Checking for updates..." or "Downloading wallet..."))
+-- ── Download and install .lua files ──────────────────────────────────────────
+local modeLabel = ({
+    update = "Checking for updates...",
+    force  = "Force-reinstalling wallet...",
+    clean  = "Downloading wallet (clean)...",
+    fresh  = "Downloading wallet...",
+})[MODE]
+print("\n" .. modeLabel)
 
 local failed    = false
 local counts    = { skip = 0, fresh = 0, updated = 0, fail = 0 }
@@ -151,7 +224,7 @@ for _, entry in ipairs(FILES) do
             counts.fail = counts.fail + 1
             failed = true
         else
-            local action, instErr = smartInstall(entry.dst, content, remoteHash)
+            local action, instErr = smartInstall(entry.dst, content, remoteHash, forceWrite)
             if not action then
                 term.setTextColor(colors.red)
                 print("FAILED")
@@ -182,18 +255,18 @@ for _, entry in ipairs(FILES) do
     end
 end
 
--- \u2500\u2500 Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+-- ── Summary ───────────────────────────────────────────────────────────────────
 print("")
 if failed then
     term.setTextColor(colors.red)
     print("Some files failed. Check connectivity and REPO_BASE, then re-run.")
-    if isUpdate then
+    if MODE == "update" or MODE == "force" then
         term.setTextColor(colors.yellow)
         print("Backup files (.lua.bak) were preserved for any failed file.")
     end
 else
     term.setTextColor(colors.green)
-    if isUpdate then
+    if MODE == "update" or MODE == "force" then
         print(string.format(
             "Update complete!  %d updated  %d skipped  %d new",
             counts.updated, counts.skip, counts.fresh))
@@ -209,10 +282,10 @@ else
     end
 end
 
--- \u2500\u2500 Post-install/update: apply changes \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+-- ── Post-install/update: apply changes ────────────────────────────────────────
 if not failed then
     print("")
-    if isUpdate then
+    if MODE == "update" or MODE == "force" then
         term.setTextColor(colors.orange)
         print("Apply changes:")
         term.setTextColor(colors.white)

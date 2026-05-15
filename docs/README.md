@@ -232,11 +232,15 @@ wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/h
 
 Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 
+> **Live rate:** The base reward rate is controlled by [`reward_rate.txt`](../reward_rate.txt) in this repository.
+> Nodes fetch this file at startup and every 10 ticks (~10 minutes). If unreachable, they keep the last known value.
+> The rate is **never saved to disk** on the node — edit the file in the repo to change it for all nodes globally.
+
 | Period | Base Rate | Notes |
 |--------|-----------|-------|
-| Ticks 0 – 525,599 | 25 µAMI / min / wallet | ~1 in-game year |
-| Ticks 525,600 – 1,051,199 | 12 µAMI / min / wallet | First halving |
-| Ticks 1,051,200 – 1,576,799 | 6 µAMI / min / wallet | Second halving |
+| Ticks 0 – 525,599 | *live rate* µAMI / min / wallet | ~1 in-game year |
+| Ticks 525,600 – 1,051,199 | *live rate* ÷ 2 | First halving |
+| Ticks 1,051,200 – 1,576,799 | *live rate* ÷ 4 | Second halving |
 | … | Halves each period | Floor: 1 µAMI |
 
 - A wallet is **active** if it has sent any packet to the node within the last 90 seconds.

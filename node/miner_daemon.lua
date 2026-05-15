@@ -17,10 +17,29 @@ local ledger = require("ledger")
 local daemon = {}
 
 -- ── Configuration ────────────────────────────────────────────────────────────
-local REWARD_INTERVAL  = 60          -- seconds between reward ticks
-local HEARTBEAT_TTL    = 90          -- seconds a wallet stays "active" after last packet
-local BASE_RATE        = 25          -- microcoins per active wallet per tick
-local HALVING_TICKS    = 525600      -- ticks before base rate halves
+local REWARD_INTERVAL     = 60       -- seconds between reward ticks
+local HEARTBEAT_TTL       = 90       -- seconds a wallet stays "active" after last packet
+local BASE_RATE           = 25       -- microcoins per active wallet per tick (live from GitHub)
+local HALVING_TICKS       = 525600   -- ticks before base rate halves
+local RATE_URL            = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt"
+local RATE_REFRESH_TICKS  = 10       -- re-fetch remote rate every N ticks
+
+-- ── Remote rate fetch ────────────────────────────────────────────────────────
+-- Fetches BASE_RATE from GitHub.  Never saved to disk; falls back to current
+-- value if the request fails or returns a non-numeric / out-of-range body.
+local function fetchRemoteRate()
+    local ok, res = pcall(http.get, RATE_URL)
+    if not ok or not res then return end
+    local body = res.readAll()
+    res.close()
+    local n = tonumber(body and body:gsub("%s", ""))
+    if n and n >= 1 and n <= 100000 then
+        if n ~= BASE_RATE then
+            print(string.format("[Miner] Remote rate: %d -> %d uAMI/tick", BASE_RATE, n))
+            BASE_RATE = n
+        end
+    end
+end
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 local activeWallets = {}  -- [address] = lastSeenTimestamp
@@ -63,6 +82,7 @@ end
 function daemon.run()
     local state = loadState()
     totalTicks  = state.totalTicks or 0       -- restore halving progress
+    fetchRemoteRate()                          -- pull live rate before first tick
     print("[Miner] Proof-of-Uptime daemon started.")
     print(string.format("[Miner] Reward interval: %ds | Base rate: %d uAMI | Tick: #%d",
         REWARD_INTERVAL, BASE_RATE, totalTicks))
@@ -83,6 +103,7 @@ function daemon.run()
 
         totalTicks = totalTicks + 1
         saveState()
+        if totalTicks % RATE_REFRESH_TICKS == 0 then fetchRemoteRate() end
 
         local now  = os.epoch("utc") / 1000
         local rate = currentRate()

@@ -915,7 +915,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         if not ok or not res then return end
         local body = res.readAll()
         res.close()
-        local n = tonumber((body or ""):gsub("%s", ""))
+        local n = tonumber(((body or ""):gsub("%s", "")))
         if n and n >= 1 and n <= 100000 then
             liveRate = math.floor(n)
         end

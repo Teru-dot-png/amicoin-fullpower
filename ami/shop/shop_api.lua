@@ -303,7 +303,8 @@ end
 function api.registerShop()
     local cfg = api.loadConfig()
     for _, node in ipairs(cfg.nodes) do
-        meshSend(node.key, {cmd = "REGISTER", from = shopAddress, name = "AmiStore"}, true)
+        -- Fire-and-forget: registration needs no reply and must not block boot.
+        meshSend(node.key, {cmd = "REGISTER", from = shopAddress, name = "AmiStore"}, false)
     end
 end
 
@@ -576,9 +577,8 @@ function api.init()
     end
 
     api.loadListings()
-    api.registerShop()
-    api.syncInventory()
-
+    -- Note: registerShop() and syncInventory() are called from startup.lua
+    -- AFTER parallel coroutines start, to avoid blocking the boot sequence.
     return shopAddress
 end
 

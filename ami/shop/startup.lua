@@ -138,8 +138,13 @@ local function networkLoop()
 end
 
 -- ── Periodic inventory sync ────────────────────────────────────────────────────
-local function syncLoop()
-    while true do
+local function syncLoop()    -- Register with nodes immediately (fire-and-forget, non-blocking).
+    api.registerShop()
+    -- First sync: runs right away inside the parallel coroutine so the
+    -- main boot sequence never blocks on network calls.
+    api.syncInventory()
+    api.prunePendingOrders()
+    ui.drawShop(api.getListings(), api.getShopBal())    while true do
         os.sleep(SYNC_INTERVAL)
         api.syncInventory()
         api.prunePendingOrders()
@@ -231,10 +236,9 @@ print(string.format("Loaded %d listing(s).", #listings))
 print("Starting in 3 seconds...")
 os.sleep(3)
 
--- Initial draw
+-- Initial draw with placeholder balance; syncLoop will populate on first tick.
 ui.init(api.getMonitor(), shopAddr)
-api.syncInventory()
-ui.drawShop(api.getListings(), api.getShopBal())
+ui.drawShop(api.getListings(), 0)
 
 -- Run all three loops concurrently.
 -- If inputLoop returns (user pressed Q), the others are killed automatically.

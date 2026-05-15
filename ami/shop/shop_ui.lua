@@ -115,10 +115,47 @@ local function drawHeader(title)
     put(1, 1, center(title or "  AMISTORE  v1.1  ", W), colors.orange, colors.gray)
 end
 
--- ── Footer ────────────────────────────────────────────────────────────────────
+-- ── Footer (auto-wraps to fit monitor width) ─────────────────────────────────
+-- Items must be separated by two or more spaces in the source string.
+local function footerHeight(text)
+    local items = {}
+    for item in (text .. "  "):gmatch("(.-)  +") do
+        if item ~= "" then items[#items + 1] = item end
+    end
+    local rows, cur = 1, 0
+    for _, item in ipairs(items) do
+        local need = (cur == 0 and 0 or 2) + #item
+        if cur > 0 and cur + need > W then
+            rows = rows + 1; cur = #item
+        else
+            cur = cur + need
+        end
+    end
+    return rows
+end
+
 local function drawFooter(text)
-    fill(1, H, W, 1, colors.gray)
-    put(1, H, center(text, W), colors.lightGray, colors.gray)
+    if not hasMon() then return end
+    local items = {}
+    for item in (text .. "  "):gmatch("(.-)  +") do
+        if item ~= "" then items[#items + 1] = item end
+    end
+    local rows = {}
+    local cur  = ""
+    for _, item in ipairs(items) do
+        local sep = cur == "" and "" or "  "
+        if #cur + #sep + #item > W then
+            rows[#rows + 1] = cur; cur = item
+        else
+            cur = cur .. sep .. item
+        end
+    end
+    if cur ~= "" then rows[#rows + 1] = cur end
+    local startRow = H - #rows + 1
+    for i, rowText in ipairs(rows) do
+        fill(1, startRow + i - 1, W, 1, colors.gray)
+        put(1, startRow + i - 1, center(rowText, W), colors.lightGray, colors.gray)
+    end
 end
 
 -- ── Listing card (3 rows tall, w wide) ────────────────────────────────────────
@@ -158,6 +195,12 @@ function ui.drawShop(lst, balance)
     if not hasMon() then return end
     mon.setBackgroundColor(BG); mon.clear()
 
+    local footerText = adminUnlocked
+        and "[A]dmin  [R]eload  [U]pdate  [Q]uit"
+        or  "[A]dmin  [R]eload  [U]pdate"
+    local fh            = footerHeight(footerText)
+    local contentBottom = H - fh
+
     drawHeader("  AMISTORE  v1.1  ")
 
     -- Ami-Head logo in top-right (needs at least 12 cols free)
@@ -185,7 +228,7 @@ function ui.drawShop(lst, balance)
     end
 
     for i = 1, math.max(#wts, #wtb) do
-        if row + 2 > H - 1 then break end
+        if row + 2 > contentBottom then break end
         if wts[i] then drawCard(leftX, row, colW, wts[i]) end
         if wtb[i] then drawCard(rigX,  row, colW, wtb[i]) end
         row = row + 3
@@ -195,9 +238,6 @@ function ui.drawShop(lst, balance)
         put(2, 8, "No listings — edit /ami/shop/listings.json", DIM, BG)
     end
 
-    local footerText = adminUnlocked
-        and "[A]dmin  [R]eload  [U]pdate  [Q]uit"
-        or  "[A]dmin  [R]eload  [U]pdate"
     drawFooter(footerText)
 end
 
@@ -216,9 +256,13 @@ function ui.drawAdmin(lst, cfg)
     hline(1, 6, W, BORDER, BG)
     put(1, 6, center("  Listings  ", W), DIM, BG)
 
+    local footerText    = "[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%  [U]pdate"
+    local fh            = footerHeight(footerText)
+    local contentBottom = H - fh
+
     local row = 7
     for i, l in ipairs(lst or {}) do
-        if row > H - 2 then break end
+        if row > contentBottom then break end
         local tc   = l.type == "WTS" and WTS_C or WTB_C
         local short = (l.item:match(":(.+)$") or l.item):sub(1, 24)
         put(2, row,
@@ -230,7 +274,7 @@ function ui.drawAdmin(lst, cfg)
         put(2, row, "  (empty)", DIM, BG)
     end
 
-    drawFooter("[B]ack  [P]rice  [+]Add  [-]Remove  [S]weep%  [U]pdate")
+    drawFooter(footerText)
 end
 
 -- ── Receipt preview overlay ────────────────────────────────────────────────────
@@ -356,7 +400,7 @@ function ui.init(monitor, addr)
     mon       = monitor
     shopAddr  = addr or "?"
     if mon then
-        mon.setTextScale(1)
+        mon.setTextScale(0.5)   -- 0.5 = maximum resolution on a 3x3 monitor
         W, H = mon.getSize()
         mon.setBackgroundColor(BG)
         mon.clear()

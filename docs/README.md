@@ -26,14 +26,14 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 ┌────────────────────────────────────────────────────┐
 │               AmiCoin Mesh Network                 │
 │                                                    │
-│  ┌──────────────────┐      XTEA-encrypted           │
+│  ┌──────────────────┐      XTEA-encrypted          │
 │  │  Advanced        │◄────────────────────────────►│
-│  │  Computer        │      Ender Router mesh         │
-│  │  (Node / Anchor) │      channel 1337             │
+│  │  Computer        │      Ender Router mesh       │
+│  │  (Node / Anchor) │      channel 1337            │
 │  └──────────────────┘                              │
 │         │                  ┌──────────────────┐    │
-│  Manages ledger,           │  Ender Router Pad │    │
-│  mints rewards,            │  (Wallet App)     │    │
+│  Manages ledger,           │  Ender Router Pad│    │
+│  mints rewards,            │  (Wallet App)    │    │
 │  optional Monitor display  └──────────────────┘    │
 └────────────────────────────────────────────────────┘
 ```
@@ -207,7 +207,7 @@ Player Wallet (Pad)              AmiStore (Merchant Node)
      │── touch listing on monitor ────────►│  Invoice broadcast on ch 1338
      │◄── INVOICE popup on wallet ─────────│
      │── Send payment (wallet → shop) ────►│  Witnessed by mesh node
-     │── PAYMENT_ACK ────────────────────►│  Item exported AE2 → tray
+     │── PAYMENT_ACK ─────────────────────►│  Item exported AE2 → tray
      │                                     │  Receipt printed (optional)
 ```
 

@@ -1003,98 +1003,161 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
     -- ── Draw ─────────────────────────────────────────────────────────────────
     local function draw()
+        -- Always fetch fresh dimensions so layout is correct on any hardware.
+        local w, h = term.getSize()
         banner("AMI-Dashboard")
 
         -- Row 4: divider
-        hRule(4)
+        term.setCursorPos(1, 4); term.setTextColor(colors.gray)
+        term.write(string.rep("-", w))
 
-        -- Row 5: player + short address
+        -- Row 5: player name + short address
         local dispAddr = address:sub(1,8) .. ".." .. address:sub(-4)
         local nameStr  = (playerName or "(unknown)") .. " | " .. dispAddr
-        term.setCursorPos(1, 5)
-        term.setTextColor(colors.orange)
-        term.write(nameStr:sub(1, W))
+        term.setCursorPos(1, 5); term.setTextColor(colors.orange)
+        term.write(nameStr:sub(1, w))
 
-        -- Rows 6-7: balance
+        -- Rows 6-7: balance display
         if balErr then
             term.setCursorPos(1, 6); term.setTextColor(colors.red)
-            term.write(("Balance: [" .. balErr .. "]"):sub(1, W))
-            term.setCursorPos(1, 7); term.write(string.rep(" ", W))
+            term.write(("Balance: [" .. balErr .. "]"):sub(1, w))
+            term.setCursorPos(1, 7); term.clearLine()
         elseif totalBalance then
             term.setCursorPos(1, 6); term.setTextColor(colors.green)
             local ami = string.format("%.4f AMI", totalBalance / 1000000)
-            term.write(ami:sub(1, W))
+            term.write(ami:sub(1, w))
             term.setCursorPos(1, 7); term.setTextColor(colors.lime)
-            term.write(rjust(totalBalance .. " uAMI", W))
+            local ustr = tostring(totalBalance) .. " uAMI"
+            term.write(rjust(ustr, w):sub(1, w))
         else
             term.setCursorPos(1, 6); term.setTextColor(colors.gray)
-            term.write("Balance: press [R]")
-            term.setCursorPos(1, 7); term.write(string.rep(" ", W))
+            term.write(("Balance: press [R]"):sub(1, w))
+            term.setCursorPos(1, 7); term.clearLine()
         end
 
-        -- Row 8: divider + node header
-        hRule(8)
-        term.setCursorPos(1, 9); term.setTextColor(colors.gray)
-        local nodeHdr = string.format("%-12s %9s %6s  %s", "Node", "Balance", "Ping", "St")
-        term.write(nodeHdr:sub(1, W))
+        -- ── Node health table ────────────────────────────────────────────────
+        -- Bottom-anchored layout (menus always visible regardless of node count):
+        --   Row 8         : divider
+        --   Row 9         : column header
+        --   Rows 10..h-5  : node data  (h-14 rows; 6 on h=20 Pad, 5 on h=19 Computer)
+        --   Row h-4       : divider
+        --   Row h-3       : network stats
+        --   Row h-2       : divider
+        --   Row h-1       : hotkey row 1  (always visible)
+        --   Row h         : hotkey row 2  (always visible)
+        --
+        -- narrow = Ender Router Pad (w=26); wide = Advanced Computer (w>=39)
+        local narrow = (w < 39)
 
-        -- Rows 10..: per-node table
-        local nodeRows = math.max(1, #perNode)
-        for i = 1, nodeRows do
+        -- Row 8: divider
+        term.setCursorPos(1, 8); term.setTextColor(colors.gray)
+        term.write(string.rep("-", w))
+
+        -- Row 9: column header
+        -- narrow: name(12)+1+balance(7)+2+status(2) = 24 chars
+        -- wide:   name(12)+1+balance(9)+1+ping(6)+2+status(2) = 33 chars
+        term.setCursorPos(1, 9); term.setTextColor(colors.gray)
+        if narrow then
+            term.write((string.format("%-12s %7s  %s", "Node", "Balance", "St")):sub(1, w))
+        else
+            term.write((string.format("%-12s %9s %6s  %s", "Node", "Balance", "Ping", "St")):sub(1, w))
+        end
+
+        -- Rows 10..(h-5): node data rows; clear any row with no entry
+        local maxRows = (h - 5) - 10 + 1   -- e.g. 6 for h=20, 5 for h=19
+        for i = 1, maxRows do
             local row = 9 + i
             local n   = perNode[i]
+            term.setCursorPos(1, row)
             if not n then
-                term.setCursorPos(1, row); term.setTextColor(colors.gray)
-                term.write("  (no nodes)")
+                -- Clear stale content from a previous draw with more nodes
+                term.clearLine()
             elseif n.err then
-                term.setCursorPos(1, row); term.setTextColor(colors.red)
-                local line = string.format("%-12s %9s %6s  [!]",
-                    n.name:sub(1,12), "---", "---")
-                term.write(line:sub(1, W))
-            else
-                local bal     = string.format("%.4f", n.balance / 1000000)
-                local ping    = n.latency and (n.latency .. "ms") or "---"
-                term.setCursorPos(1, row); term.setTextColor(colors.white)
-                local line = string.format("%-12s %9s %6s  ", n.name:sub(1,12), bal, ping)
-                term.write(line:sub(1, W - 4))
-                if n.fp_ok == false then
-                    term.setTextColor(colors.orange); term.write("[FP]")
-                elseif n.fp_ok == "tofc" or n.fp_ok == nil then
-                    term.setTextColor(colors.gray);   term.write("[??]")
+                term.setTextColor(colors.red)
+                local line
+                if narrow then
+                    line = string.format("%-12s %7s  [!]", n.name:sub(1, 12), "---")
                 else
-                    term.setTextColor(colors.lime);   term.write("[OK]")
+                    line = string.format("%-12s %9s %6s  [!]", n.name:sub(1, 12), "---", "---")
                 end
+                term.write(line:sub(1, w))
+            else
+                local bal  = string.format("%.4f", n.balance / 1000000)
+                local badge, bcol
+                if     n.fp_ok == false                      then badge = "[FP]"; bcol = colors.orange
+                elseif n.fp_ok == "tofc" or n.fp_ok == nil   then badge = "[??]"; bcol = colors.gray
+                else                                              badge = "[OK]"; bcol = colors.lime
+                end
+                -- line is exactly (w-4) chars; badge fills the last 4 columns.
+                local line
+                if narrow then
+                    -- name(12)+1+balance(7)+2 = 22 chars; badge at cols 23-26
+                    line = string.format("%-12s %7s  ", n.name:sub(1, 12), bal:sub(1, 7))
+                else
+                    local ping = n.latency and (n.latency .. "ms") or "---"
+                    -- name(12)+1+balance(9)+1+ping(6)+2 = 31 chars; badge at end
+                    line = string.format("%-12s %9s %6s  ",
+                        n.name:sub(1, 12), bal:sub(1, 9), ping:sub(1, 6))
+                end
+                term.setTextColor(colors.white)
+                term.write(line:sub(1, w - 4))
+                term.setTextColor(bcol)
+                term.write(badge)
             end
         end
 
-        -- Network stats row
-        local statsRow = 10 + nodeRows
-        hRule(statsRow)
-        term.setCursorPos(1, statsRow + 1)
+        -- Row h-4: divider
+        term.setCursorPos(1, h - 4); term.setTextColor(colors.gray)
+        term.write(string.rep("-", w))
+
+        -- Row h-3: network stats
+        term.setCursorPos(1, h - 3)
         if netStats then
             term.setTextColor(colors.lightGray)
             local rate    = liveRate or netStats.current_rate or 0
             local earn_hr = rate * 60
-            local line = string.format("Net %d active  %d uAMI/tick  +%d/hr",
-                netStats.active_wallets or 0,
-                rate,
-                earn_hr)
-            term.write(line:sub(1, W))
+            local line
+            if narrow then
+                -- "Net 7  25/tk  +1500/hr" = 22 chars (safe on w=26)
+                line = string.format("Net %d  %d/tk  +%d/hr",
+                    netStats.active_wallets or 0, rate, earn_hr)
+            else
+                line = string.format("Net %d active  %d uAMI/tick  +%d/hr",
+                    netStats.active_wallets or 0, rate, earn_hr)
+            end
+            term.write(line:sub(1, w))
         else
             term.setTextColor(colors.gray)
-            term.write("[R] to load network stats")
+            term.write(("[R] to load stats"):sub(1, w))
         end
 
-        -- Menu rows
-        local menuRow = statsRow + 2
-        hRule(menuRow)
-        term.setCursorPos(1, menuRow + 1); term.setTextColor(colors.orange)
-        term.write("[S]end [R]efresh [E]xport [N] CmdCtr(" .. #nodes .. ")")
-        term.setCursorPos(1, menuRow + 2)
-        term.setTextColor(colors.pink);   term.write("[V]")
-        term.setTextColor(colors.orange); term.write("ault  ")
-        term.setTextColor(colors.orange); term.write("[U]pdate  ")
-        term.setTextColor(colors.gray);   term.write("[L]ogout")
+        -- Row h-2: divider
+        term.setCursorPos(1, h - 2); term.setTextColor(colors.gray)
+        term.write(string.rep("-", w))
+
+        -- Row h-1: hotkey row 1 (anchored — always visible regardless of node count)
+        term.setCursorPos(1, h - 1); term.setTextColor(colors.orange)
+        if narrow then
+            -- "[S]end [R]efr [E]xp [N](2)" = 26 chars for 1-digit node count
+            term.write(("[S]end [R]efr [E]xp [N](" .. #nodes .. ")"):sub(1, w))
+        else
+            term.write(("[S]end [R]efresh [E]xport [N] CmdCtr(" .. #nodes .. ")"):sub(1, w))
+        end
+
+        -- Row h: hotkey row 2 (anchored)
+        term.setCursorPos(1, h)
+        if narrow then
+            -- "[V]ault  [U]pdate  [L]out" = 25 chars <= 26
+            term.setTextColor(colors.pink);   term.write("[V]")
+            term.setTextColor(colors.orange); term.write("ault  ")
+            term.setTextColor(colors.orange); term.write("[U]pdate  ")
+            term.setTextColor(colors.gray);   term.write("[L]out")
+        else
+            term.setTextColor(colors.pink);   term.write("[V]")
+            term.setTextColor(colors.orange); term.write("ault  ")
+            term.setTextColor(colors.orange); term.write("[U]pdate  ")
+            term.setTextColor(colors.gray);   term.write("[L]ogout")
+        end
     end
 
     -- Open the AmiStore broadcast channel so we receive INVOICE packets.

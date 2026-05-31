@@ -19,12 +19,13 @@ local FILES = {
     { src = "/node/ledger.lua",       dst = "/ledger.lua"        },
     { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
     { src = "/node/xtea.lua",         dst = "/xtea.lua"          },
+    { src = "/node/upgrades.lua",     dst = "/upgrades.lua"      },
 }
 
 -- Files/dirs wiped on Clean Install.
 local CLEAN_LUAS = {
     "/startup.lua", "/ledger.lua", "/miner_daemon.lua", "/xtea.lua",
-    "/shared/xtea.lua",
+    "/shared/xtea.lua", "/upgrades.lua",
 }
 local CLEAN_DIRS = { "/data" }
 

@@ -12,7 +12,8 @@
 -- considered active.  A background coroutine walks the table every
 -- REWARD_INTERVAL seconds and credits each active address.
 
-local ledger = require("ledger")
+local ledger   = require("ledger")
+local upgrades = require("upgrades")
 
 local daemon = {}
 
@@ -110,9 +111,12 @@ function daemon.run()
         local rate = currentRate()
         local rewarded = 0
 
+        local ttl  = upgrades.getHeartbeatTTL()  -- 90s baseline + Heartbeat Extender
+        local mult = upgrades.getMinerMultiplier() -- 1.0 baseline + Overclocked Miner
         for address, lastSeen in pairs(activeWallets) do
-            if (now - lastSeen) <= HEARTBEAT_TTL then
-                ledger.credit(address, rate)
+            if (now - lastSeen) <= ttl then
+                -- Apply Overclocked Miner multiplier; floor to keep integer uAMI
+                ledger.credit(address, math.floor(rate * mult))
                 rewarded = rewarded + 1
             else
                 activeWallets[address] = nil  -- evict stale wallet
@@ -129,9 +133,10 @@ end
 -- Return the current list of active wallet addresses.
 function daemon.getActive()
     local now = os.epoch("utc") / 1000
+    local ttl = upgrades.getHeartbeatTTL()
     local list = {}
     for address, lastSeen in pairs(activeWallets) do
-        if (now - lastSeen) <= HEARTBEAT_TTL then
+        if (now - lastSeen) <= ttl then
             list[#list + 1] = address
         end
     end

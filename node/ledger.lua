@@ -7,6 +7,16 @@ local ledger = {}
 local LEDGER_FILE = "/data/ledger.json"
 local NAMES_FILE  = "/data/names.json"   -- playerName (lower) -> address
 
+-- ── In-memory ledger cache (Smart Cache Aggregator upgrade) ──────────────────
+-- When _flushDelay > 0 the ledger is kept in RAM between writes and only
+-- flushed to disk once per interval.  If the node crashes with unflushed data
+-- the on-disk ledger will be slightly stale (acceptable for a game context).
+-- Call ledger.setFlushDelay(seconds) from startup.lua after loading upgrades.
+local _memDB      = nil    -- in-memory copy; nil = not yet loaded
+local _dirty      = false  -- true if _memDB has unsaved changes
+local _flushDelay = 0      -- 0 = flush on every write (default; safe)
+local _lastFlush  = 0      -- os.epoch seconds of last successful disk write
+
 -- ── Name registry helpers ─────────────────────────────────────────────────────
 
 local function loadNames()
@@ -51,22 +61,48 @@ function ledger.getNameByAddress(address)
 end
 
 local function load()
+    -- Return the in-memory copy when available (cache hit)
+    if _memDB then return _memDB end
     if not fs.exists(LEDGER_FILE) then
-        return {}
+        _memDB = {}; return _memDB
     end
     local f = fs.open(LEDGER_FILE, "r")
-    local raw = f.readAll()
-    f.close()
-    return textutils.unserialiseJSON(raw) or {}
+    local raw = f.readAll(); f.close()
+    _memDB = textutils.unserialiseJSON(raw) or {}
+    return _memDB
+end
+
+local function flushToDisk(db)
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(LEDGER_FILE, "w")
+    f.write(textutils.serialiseJSON(db)); f.close()
+    _dirty     = false
+    _lastFlush = math.floor(os.epoch("utc") / 1000)
 end
 
 local function save(db)
-    if not fs.exists("/data") then
-        fs.makeDir("/data")
+    _memDB = db
+    _dirty = true
+    local now = math.floor(os.epoch("utc") / 1000)
+    if _flushDelay == 0 or (now - _lastFlush >= _flushDelay) then
+        flushToDisk(db)
     end
-    local f = fs.open(LEDGER_FILE, "w")
-    f.write(textutils.serialiseJSON(db))
-    f.close()
+    -- else: change is in _memDB; will be flushed on the next flush interval
+end
+
+-- Force a disk flush of any pending in-memory changes.
+-- Call periodically from startup.lua when Smart Cache is active.
+function ledger.flush()
+    if _dirty and _memDB then
+        flushToDisk(_memDB)
+    end
+end
+
+-- Configure the write-batching interval (called by startup.lua on boot).
+-- seconds=0 restores immediate-flush behaviour (safe default).
+function ledger.setFlushDelay(seconds)
+    _flushDelay = math.max(0, seconds or 0)
+    if _flushDelay == 0 then ledger.flush() end   -- flush any pending data
 end
 
 -- Return the balance (in microcoins) for a given address.

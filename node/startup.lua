@@ -21,12 +21,14 @@
 -- that can decrypt/encrypt with the correct key effectively proves ownership.
 -- (For a production chain you would layer a Schnorr/EdDSA signature on top.)
 
-local xtea   = require("xtea")
-local ledger = require("ledger")
-local miner  = require("miner_daemon")
+local xtea     = require("xtea")
+local ledger   = require("ledger")
+local miner    = require("miner_daemon")
+local upgrades = require("upgrades")
 
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
+local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
 local NODE_VERSION    = "1.0.0"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
@@ -145,12 +147,14 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
     local ok, plain = pcall(xtea.decrypt, cipherhex, senderKey)
     if not ok then
         print("[Net] Decrypt error from channel " .. replyChannel)
+        os.sleep(upgrades.getCollisionDelay())
         return
     end
 
     local pkt = textutils.unserialiseJSON(plain)
     if type(pkt) ~= "table" or not pkt.cmd then
         print("[Net] Malformed packet")
+        os.sleep(upgrades.getCollisionDelay())
         return
     end
 
@@ -160,6 +164,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
 
     if not from or #from ~= 128 then
         print("[Net] Bad 'from' in " .. tostring(cmd) .. " from key " .. senderKey:sub(1,8) .. "...")
+        os.sleep(upgrades.getCollisionDelay())
         return
     end
 
@@ -238,7 +243,12 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         local resp
         if addr then
             print(string.format("[Net] LOOKUP   '%s' -> %s...", name, addr:sub(1,10)))
-            resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
+            -- Privacy Shield: conceal owner's address from third-party lookups
+            if upgrades.hasPrivacyShield(addr) and from ~= addr then
+                resp = textutils.serialiseJSON({ok=true, address="PRIVATE", name=name})
+            else
+                resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
+            end
         else
             print(string.format("[Net] LOOKUP   '%s' -> not found", name))
             resp = textutils.serialiseJSON({ok=false, err="Player '" .. name .. "' not found"})
@@ -349,6 +359,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
             fingerprint    = nodeFingerprint,
+            priority_ping  = upgrades.hasPriorityPing(),
         }
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
@@ -397,6 +408,15 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             return
         end
         local creditAmt = math.floor(amount)
+        -- Fee Snatcher: skim a small routing fee into the node treasury
+        local fee = upgrades.getFeeSnatchAmount()
+        if fee > 0 and creditAmt > fee then
+            local st = upgrades.getState()
+            if type(st.treasury) == "string" and #st.treasury == 128 then
+                ledger.credit(st.treasury, fee)
+                creditAmt = creditAmt - fee
+            end
+        end
         ledger.credit(from, creditAmt)
         print(string.format("[Net] CONSOLIDATE_IN  %s... credited %d uAMI  receipt=%s",
             who, creditAmt, tostring(receipt):sub(1, 8)))
@@ -413,6 +433,7 @@ local UPDATE_FILES = {
     { src="/node/ledger.lua",       dst="/ledger.lua"        },
     { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
     { src="/node/xtea.lua",         dst="/xtea.lua"          },
+    { src="/node/upgrades.lua",     dst="/upgrades.lua"      },
 }
 
 -- Compute a combined FNV-1a hash of all running node files.
@@ -479,8 +500,7 @@ end
 -- ── Status display ───────────────────────────────────────────────────────────
 local function statusLoop()
     while true do
-        os.sleep(30)
-        local active = miner.getActive()
+        os.sleep(30)        ledger.flush()  -- flush any cached ledger writes (Smart Cache safety net)        local active = miner.getActive()
         local snap   = ledger.snapshot()
         local total  = 0
         for _, v in pairs(snap) do total = total + v end
@@ -504,11 +524,28 @@ local function monitorLoop(nodeKey)
             pcall(function()
                 pcall(function() mon.setTextScale(0.5) end)
                 local mw = mon.getSize()
+
+                -- Matrix UI theme (Advanced Matrix UI upgrade)
+                local theme = upgrades.getMatrixTheme()
+                local THEME_COLORS = {
+                    green_phosphor = {fg=colors.lime,       hdr=colors.green},
+                    amber          = {fg=colors.orange,     hdr=colors.brown},
+                    ice_blue       = {fg=colors.cyan,       hdr=colors.lightBlue},
+                    deep_violet    = {fg=colors.purple,     hdr=colors.purple},
+                    neon_pink      = {fg=colors.pink,       hdr=colors.pink},
+                    solar_orange   = {fg=colors.orange,     hdr=colors.red},
+                    arctic_white   = {fg=colors.white,      hdr=colors.lightGray},
+                    spectrum       = {fg=colors.white,      hdr=colors.blue},
+                    void_red       = {fg=colors.red,        hdr=colors.red},
+                    genesis_gold   = {fg=colors.yellow,     hdr=colors.yellow},
+                }
+                local tc = (theme and THEME_COLORS[theme]) or {fg=colors.white, hdr=colors.red}
+
                 mon.setBackgroundColor(colors.black)
                 mon.clear()
 
                 -- Header bar
-                mon.setBackgroundColor(colors.red)
+                mon.setBackgroundColor(tc.hdr)
                 mon.setTextColor(colors.white)
                 mon.setCursorPos(1, 1)
                 mon.clearLine()
@@ -530,23 +567,23 @@ local function monitorLoop(nodeKey)
                 local ami = string.format("%.6f AMI", total / 1000000)
 
                 mon.setCursorPos(1, 3)
-                mon.setTextColor(colors.lightGray)
+                mon.setTextColor(tc.fg)
                 mon.write("Key:    " .. nodeKey:sub(1, 16) .. "...")
 
                 mon.setCursorPos(1, 4)
-                mon.setTextColor(colors.lime)
+                mon.setTextColor(tc.fg)
                 mon.write("Active: " .. #active .. " wallet(s)")
 
                 mon.setCursorPos(1, 5)
-                mon.setTextColor(colors.yellow)
+                mon.setTextColor(tc.fg)
                 mon.write("Supply: " .. total .. " uAMI")
 
                 mon.setCursorPos(1, 6)
-                mon.setTextColor(colors.cyan)
+                mon.setTextColor(tc.fg)
                 mon.write("      = " .. ami)
 
                 mon.setCursorPos(1, 7)
-                mon.setTextColor(colors.gray)
+                mon.setTextColor(tc.fg)
                 mon.write("Chan:   " .. MESH_CHANNEL)
 
                 -- Lag indicator (only shown when lagging)
@@ -592,7 +629,22 @@ local function main()
     end
     router.open(MESH_CHANNEL)
     print("[Net] Ender Router opened on channel " .. MESH_CHANNEL)
+    router.open(SHOP_CHANNEL)
+    print("[Net] Shop channel (" .. SHOP_CHANNEL .. ") opened for upgrade invoices.")
+
+    -- Genesis Protocol: broadcast boot signature if upgrade is purchased
+    local genSig = upgrades.getGenesisSignature()
+    if genSig then
+        router.transmit(MESH_CHANNEL, MESH_CHANNEL,
+            textutils.serialiseJSON({type="GENESIS", msg=genSig}))
+        print("[Genesis] Broadcast: " .. genSig)
+    end
+
+    -- Smart Cache Aggregator: configure ledger flush interval from upgrade level
+    ledger.setFlushDelay(upgrades.getSmartCacheDelay())
+
     print("[Tip] Press U at any time to update from GitHub.")
+    print("[Tip] Press P to open the Node Upgrade Shop.")
     do
         local ok, res = pcall(http.get,
             "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt")
@@ -652,7 +704,8 @@ local function main()
         function()
             while true do
                 local _, key = os.pullEvent("key")
-                if key == keys.u then selfUpdate() end
+                if key == keys.u then selfUpdate()
+                elseif key == keys.p then upgrades.runUpgradeFlow(router) end
             end
         end
     )

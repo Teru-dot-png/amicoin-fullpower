@@ -243,12 +243,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         local resp
         if addr then
             print(string.format("[Net] LOOKUP   '%s' -> %s...", name, addr:sub(1,10)))
-            -- Privacy Shield: conceal owner's address from third-party lookups
-            if upgrades.hasPrivacyShield(addr) and from ~= addr then
-                resp = textutils.serialiseJSON({ok=true, address="PRIVATE", name=name})
-            else
-                resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
-            end
+            resp = textutils.serialiseJSON({ok=true, address=addr, name=name})
         else
             print(string.format("[Net] LOOKUP   '%s' -> not found", name))
             resp = textutils.serialiseJSON({ok=false, err="Player '" .. name .. "' not found"})

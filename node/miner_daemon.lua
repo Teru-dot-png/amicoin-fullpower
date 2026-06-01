@@ -47,6 +47,7 @@ end
 local activeWallets = {}  -- [address] = lastSeenTimestamp
 local totalTicks    = 0
 local lastLagFactor = 1.0  -- 1.0 = perfect timing; < 0.7 = server lag detected
+local lastSurgeTick = 0    -- totalTicks value when the last Mint Surge fired
 
 -- Persist totalTicks so the halving schedule survives reboots.
 local STATE_FILE = "/data/miner_state.json"
@@ -113,10 +114,27 @@ function daemon.run()
 
         local ttl  = upgrades.getHeartbeatTTL()  -- 90s baseline + Heartbeat Extender
         local mult = upgrades.getMinerMultiplier() -- 1.0 baseline + Overclocked Miner
+
+        -- Mint Surge: fire a bonus 2x tick when the cooldown has elapsed
+        local surgeCooldown = upgrades.getMintSurgeCooldown()  -- 0 = disabled
+        local surging = false
+        if surgeCooldown > 0 then
+            -- cooldown is in seconds; convert to ticks (REWARD_INTERVAL s/tick)
+            local cooldownTicks = math.ceil(surgeCooldown / REWARD_INTERVAL)
+            if (totalTicks - lastSurgeTick) >= cooldownTicks then
+                surging = true
+                lastSurgeTick = totalTicks
+                print(string.format("[Miner] MINT SURGE! Bonus 2x tick (Lv%d, every %dm)",
+                    math.floor(upgrades.getMintSurgeCooldown() / 60 + 0.5),
+                    math.floor(surgeCooldown / 60)))
+            end
+        end
+
+        local surgeBonus = surging and 2 or 1
         for address, lastSeen in pairs(activeWallets) do
             if (now - lastSeen) <= ttl then
-                -- Apply Overclocked Miner multiplier; floor to keep integer uAMI
-                ledger.credit(address, math.floor(rate * mult))
+                -- Apply Overclocked Miner multiplier + optional Mint Surge bonus
+                ledger.credit(address, math.floor(rate * mult * surgeBonus))
                 rewarded = rewarded + 1
             else
                 activeWallets[address] = nil  -- evict stale wallet
@@ -124,8 +142,9 @@ function daemon.run()
         end
 
         if rewarded > 0 then
-            print(string.format("[Miner] Tick #%d | Rate: %d uAMI | %d wallet(s) | lag=%.2f",
-                totalTicks, rate, rewarded, lastLagFactor))
+            local surgeTag = surging and "  [SURGE x2!]" or ""
+            print(string.format("[Miner] Tick #%d | Rate: %d uAMI | %d wallet(s) | lag=%.2f%s",
+                totalTicks, rate, rewarded, lastLagFactor, surgeTag))
         end
     end
 end

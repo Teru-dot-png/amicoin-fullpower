@@ -49,10 +49,10 @@ local DEFS = {
         desc  = "Removes reply delay. Wallets sort this node first.",
     },
     {
-        id    = "privacy_shield",
-        name  = "Ledger Privacy Shield",
-        short = "PrivacyShld",
-        desc  = "LOOKUP for your address returns PRIVATE to others.",
+        id    = "mint_surge",
+        name  = "Mint Surge",
+        short = "MintSurge",
+        desc  = "Bonus 2x reward tick every 80-8*(lv-1) min (Lv1=80m, Lv10=8m).",
     },
     {
         id    = "smart_cache",
@@ -167,13 +167,13 @@ function upgrades.hasPriorityPing()
     return getLevel("priority_ping") > 0
 end
 
--- 3. Privacy Shield: returns true if `addr` is the upgrade owner AND shield active.
--- Used in LOOKUP: return "PRIVATE" instead of the real 128-hex address.
-function upgrades.hasPrivacyShield(addr)
-    local st = loadState()
-    return getLevel("privacy_shield") > 0
-        and type(st.owner_address) == "string"
-        and st.owner_address == addr
+-- 3. Mint Surge: cooldown in seconds between bonus 2x ticks.
+-- Lv0 = disabled (0).  Lv1 = 80 min, Lv10 = 8 min.
+-- Formula: (80 - 8*(level-1)) * 60  seconds.
+function upgrades.getMintSurgeCooldown()
+    local lv = getLevel("mint_surge")
+    if lv == 0 then return 0 end
+    return (80 - 8 * (lv - 1)) * 60
 end
 
 -- 4. Smart Cache Aggregator: seconds between ledger disk flushes (0 = immediate).

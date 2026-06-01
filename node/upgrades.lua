@@ -604,4 +604,18 @@ function upgrades.runUpgradeFlow(router)
     print("[Tip] Press U to update  |  P for Upgrade Shop")
 end
 
+-- Returns formatted lines for every active (level > 0) upgrade.
+-- Used by monitorLoop in startup.lua to render the upgrades panel.
+function upgrades.getActiveSummary()
+    local st    = loadState()
+    local lines = {}
+    for _, d in ipairs(DEFS) do
+        local lv = st.levels[d.id] or 0
+        if lv > 0 then
+            lines[#lines + 1] = string.format("%-12s Lv%d", d.short, lv)
+        end
+    end
+    return lines
+end
+
 return upgrades

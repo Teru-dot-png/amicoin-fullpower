@@ -355,6 +355,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             active_wallets = #active,
             total_supply   = total,
             current_rate   = miner.getCurrentRate(),
+            effective_rate = math.floor(miner.getCurrentRate() * upgrades.getMinerMultiplier()),
             total_ticks    = miner.getTotalTicks(),
             lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
@@ -588,15 +589,52 @@ local function monitorLoop(nodeKey)
                 mon.setTextColor(tc.fg)
                 mon.write("Chan:   " .. MESH_CHANNEL)
 
-                -- Lag indicator (only shown when lagging)
+                -- Reward rate panel
+                local baseRate = miner.getCurrentRate()
+                local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
+                -- 3600s/hr ÷ 30s/tick = 120 ticks/hr
+                local amiPerHr = effRate * 120 / 1000000
+
+                mon.setCursorPos(1, 8)
+                mon.setTextColor(colors.gray)
+                mon.write(string.rep("-", mw))
+
+                mon.setCursorPos(1, 9)
+                mon.setTextColor(tc.fg)
+                mon.write(string.format("Rate:   %d uAMI/tk", effRate))
+
+                mon.setCursorPos(1, 10)
+                mon.setTextColor(tc.fg)
+                mon.write(string.format("      = %.4f AMI/hr", amiPerHr))
+
+                -- Lag indicator
+                mon.setCursorPos(1, 11)
                 if lag < 0.7 then
-                    mon.setCursorPos(1, 8)
                     mon.setTextColor(colors.red)
                     mon.write(string.format("LAG:    ~%.0f%% TPS", lag * 100))
                 else
-                    mon.setCursorPos(1, 8)
                     mon.setTextColor(colors.green)
                     mon.write("TPS:    OK")
+                end
+
+                -- Active upgrades panel (only shown if any upgrades are purchased)
+                local upLines = upgrades.getActiveSummary()
+                if #upLines > 0 then
+                    local _, mh = mon.getSize()
+                    mon.setCursorPos(1, 12)
+                    mon.setTextColor(colors.gray)
+                    mon.write(string.rep("-", mw))
+                    mon.setCursorPos(1, 13)
+                    mon.setTextColor(colors.yellow)
+                    mon.write("Upgrades active:")
+                    local ur = 14
+                    for _, line in ipairs(upLines) do
+                        if ur > mh then break end
+                        mon.setCursorPos(1, ur)
+                        mon.setTextColor(tc.fg)
+                        mon.write(line:sub(1, mw))
+                        ur = ur + 1
+                    end
                 end
             end)
         end

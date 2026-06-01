@@ -951,6 +951,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 local sok, sdata = comms.getStats(secretKey, node.key, address)
                 if sok and sdata then
                     if not netStats then netStats = sdata end
+                    entry.stats = sdata  -- store per-node so draw() can sum rates
                     -- Integrity: Trust-On-First-Connect or mismatch detection
                     if sdata.fingerprint then
                         local fp = sdata.fingerprint
@@ -1113,17 +1114,34 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         -- Row h-3: network stats
         term.setCursorPos(1, h - 3)
         if netStats then
+            -- Sum effective_rate (base * miner_boost multiplier) across every
+            -- responding node.  Falls back to current_rate if effective_rate is
+            -- absent (older node software).
+            local totalRate = 0
+            local nodeCount = 0
+            for _, n in ipairs(perNode) do
+                if n.stats then
+                    local r = n.stats.effective_rate or n.stats.current_rate or 0
+                    totalRate = totalRate + r
+                    nodeCount = nodeCount + 1
+                end
+            end
+            -- If no per-node stats yet, fall back to the first netStats entry.
+            if nodeCount == 0 then
+                totalRate = liveRate or netStats.effective_rate or netStats.current_rate or 0
+            end
+            -- 3600s/hr ÷ 30s/tick = 120 ticks/hr
+            local earn_hr = totalRate * 120
             term.setTextColor(colors.lightGray)
-            local rate    = liveRate or netStats.current_rate or 0
-            local earn_hr = rate * 60
             local line
             if narrow then
-                -- "Net 7  25/tk  +1500/hr" = 22 chars (safe on w=26)
+                -- "Net 7  25/tk  +3000/hr" fits w=26
                 line = string.format("Net %d  %d/tk  +%d/hr",
-                    netStats.active_wallets or 0, rate, earn_hr)
+                    netStats.active_wallets or 0, totalRate, earn_hr)
             else
-                line = string.format("Net %d active  %d uAMI/tick  +%d/hr",
-                    netStats.active_wallets or 0, rate, earn_hr)
+                line = string.format("Net %d  %d uAMI/tk (%d nodes)  +%d/hr",
+                    netStats.active_wallets or 0, totalRate,
+                    math.max(nodeCount, #nodes), earn_hr)
             end
             term.write(line:sub(1, w))
         else

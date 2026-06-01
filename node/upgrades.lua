@@ -334,12 +334,22 @@ local SPINNER = { "|", "/", "-", "\\" }
 -- Broadcasts INVOICE on ch 1338 and blocks until PAYMENT_ACK arrives or timeout.
 -- Verifies payment arrived in the treasury ledger before returning success.
 -- Returns: (true, nil) on success | (false, errMsg) on failure/cancel/timeout.
+-- All-zeros address used as a coin sink when the buyer IS the treasury.
+-- Nobody holds the private key for this address, so coins sent here are
+-- permanently removed from circulation (burned).
+local BURN_ADDRESS = string.rep("0", 128)
+
 local function broadcastAndWait(router, treasury, playerAddr, playerName, def, cost, txId)
+    -- If the buyer is the node operator (treasury == buyer), routing the
+    -- payment to the treasury would be a no-op self-transfer.  Instead route
+    -- to the burn address so coins are actually destroyed.
+    local payAddr = (playerAddr == treasury) and BURN_ADDRESS or treasury
+
     local invoice = textutils.serialiseJSON({
         type      = "INVOICE",
         to        = playerAddr,
         tx_id     = txId,
-        shop_addr = treasury,
+        shop_addr = payAddr,
         shop_name = "AmiNode Upgrades",
         item      = "ami:node_upgrade/" .. def.id,
         qty       = 1,

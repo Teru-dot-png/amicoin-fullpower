@@ -398,15 +398,10 @@ local function broadcastAndWait(router, treasury, playerAddr, playerName, def, c
                     if ok2 and type(pkt) == "table"
                     and pkt.type == "PAYMENT_ACK"
                     and pkt.tx_id == txId then
-                        -- ACK received — verify balance propagated (up to 5s)
-                        local vdl = os.epoch("utc") / 1000 + 5
-                        while os.epoch("utc") / 1000 < vdl do
-                            if ledger.getBalance(treasury) >= balBefore + cost then
-                                return true, nil
-                            end
-                            os.sleep(0.5)
-                        end
-                        return false, "ACK received but balance unconfirmed"
+                        -- ACK is the wallet's confirmation that transfer succeeded.
+                        -- The payment may have settled on a different node, so we
+                        -- trust the ACK rather than checking local ledger balance.
+                        return true, nil
                     end
                 end
 
@@ -598,8 +593,15 @@ function upgrades.runUpgradeFlow(router)
     end
 
     -- Restore terminal to plain node state
-    ugCls()
-    print("[Upgrades] Exited upgrade menu.")
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("=====================================")
+    print("  AmiCoin Node -- Upgrade shop closed")
+    print("=====================================")
+    print("[Upgrades] Returned to node shell.")
+    print("[Tip] Press U to update  |  P for Upgrade Shop")
 end
 
 return upgrades

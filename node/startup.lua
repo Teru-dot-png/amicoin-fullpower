@@ -500,7 +500,9 @@ end
 -- ── Status display ───────────────────────────────────────────────────────────
 local function statusLoop()
     while true do
-        os.sleep(30)        ledger.flush()  -- flush any cached ledger writes (Smart Cache safety net)        local active = miner.getActive()
+        os.sleep(30)
+        ledger.flush()  -- flush any cached ledger writes (Smart Cache safety net)
+        local active = miner.getActive()
         local snap   = ledger.snapshot()
         local total  = 0
         for _, v in pairs(snap) do total = total + v end

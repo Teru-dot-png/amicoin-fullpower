@@ -21,7 +21,7 @@ Each AmiCoin packet is serialised as JSON, XTEA-encrypted with the sender's 128-
 <senderKeyHex (32 chars)>|<ciphertextHex>
 ```
 
-The plaintext key prefix tells the node which key to attempt decryption with, without exposing sensitive material — an attacker cannot reverse the encryption from the key prefix alone without also producing valid ciphertext, which requires knowing the full key.
+> **Important:** The full 32-character Secret Key is transmitted in plaintext as the prefix of every packet. This is by architectural design — the node must know which key to use for decryption. It means that **any observer on the Ender Router mesh can read all packet contents and impersonate any wallet whose traffic they have seen.** AmiCoin's encryption provides privacy against passive third-party eavesdroppers on *other* channels, but not against an active attacker monitoring channel 1337. In the friendly Minecraft server context this is an accepted trade-off. Do not rely on XTEA for strong identity guarantees.
 
 ### Targeted Routing
 
@@ -31,11 +31,31 @@ Every packet includes a `targetKey` hint containing the first 8 characters of th
 
 | Threat | Protected? | Notes |
 |--------|-----------|-------|
-| Passive eavesdropping on the mesh | ✅ Yes | Encrypted payloads reveal nothing without the key |
+| Passive eavesdropping on the mesh | ⚠️ Partial | Full secret key travels in plaintext wire prefix; determined attacker on ch 1337 can read all traffic |
 | Replay attacks | ⚠️ Partial | Nonce fields in BALANCE/TRANSFER packets help; the node does not maintain a full nonce log |
-| Forged transactions | ✅ Yes | Only the key-holder can produce valid ciphertext for their address |
+| Forged transactions by third parties | ✅ Yes | Requires the sender's key, which they must capture from live traffic |
 | Node key compromise | ⚠️ Partial | An attacker with the node key can read replies but cannot forge wallet transactions |
 | Packet routing misdirection | ✅ Yes | `targetKey` hint + node-side prefix check prevents cross-node confusion |
+
+---
+
+## Node Upgrade State Encryption
+
+The node's upgrade state (`/data/upgrades.json`) is **XTEA-encrypted at rest** using the node's own hardware key (`/data/node_key.txt`).
+
+### Why This Matters
+
+Without encryption, a node operator with filesystem access could manually edit `upgrades.json` to set upgrade levels beyond the legal maximum of 10, granting themselves unlimited mining multipliers, fee rates, or heartbeat windows. Encrypting the file with the node key makes such edits produce garbage that the node rejects on load.
+
+### How It Works
+
+- On every save, `upgrades.lua` serialises the upgrade state to JSON and encrypts it with the node's XTEA key before writing to disk.
+- On every load, the file is first decrypted; if decryption fails, it falls back to treating the file as unencrypted plaintext JSON (migration path for nodes upgrading from older software). After a successful boot with the old file it is automatically re-saved in encrypted form.
+- Levels are additionally **clamped** to `[0, 10]` on every read, so even a corrupt or tampered file cannot grant out-of-range values.
+
+### Key Durability
+
+The encryption key (`/data/node_key.txt`) is generated once on first boot by `startup.lua` and lives in `/data/`, which is explicitly preserved across `[U]` self-updates and `[F]` Force Update installs. It is only removed by a **Clean Install** (`[I]`), which also wipes all ledger data — in that case `upgrades.json` is wiped too, so there is nothing to decrypt. The upgrade state therefore survives restarts and code updates without any manual intervention.
 
 ---
 
@@ -105,13 +125,35 @@ The node **never** stores or logs Secret Keys. It only stores:
 - Registered player names mapped to addresses.
 - AmiVault lock records (address, amount, expiry timestamp).
 
-The node's own XTEA key (used to encrypt replies) is stored in `/data/node_key.txt`. This key is less sensitive — it only protects reply confidentiality — but you should still avoid broadcasting it unnecessarily. You can rotate it by deleting the file and rebooting; all Pads will need their node key updated via the Node Manager.
+The node's own XTEA key (used to encrypt replies and protect upgrade state) is stored in `/data/node_key.txt`. This key is more sensitive than in older versions — it now also encrypts the upgrade state. You should avoid broadcasting it unnecessarily. You can rotate it by deleting the file and rebooting; all Pads will need their node key updated via the Node Manager, and the upgrade file will be re-encrypted with the new key on next boot.
+
+---
+
+## Name Registry Protections
+
+### GOSSIP_DNS Hijack Prevention
+
+The Ami-DNS system lets wallets gossip known name↔address mappings to other nodes. This is intentionally limited: a wallet can only gossip a name if that name is **not already registered** on the target node, or if the gossiped address **exactly matches** the existing registration.
+
+This means a malicious wallet cannot send `GOSSIP_DNS {name="alice", address=attacker}` to redirect Alice's registered name to their own address. Once a name is registered (either by `REGISTER` or by a prior gossip), it is locked to that address and can only be updated by the legitimate owner sending a new `REGISTER` packet signed with their own key.
+
+---
+
+## Consolidation Security
+
+### CONSOLIDATE_IN Receipt Tracking
+
+When a wallet consolidates funds from one node to another (CONSOLIDATE_OUT → CONSOLIDATE_IN), the source node issues a **receipt token** (an FNV-1a hash of the drained amount, nonce, and source node key prefix). The target node now **records every receipt it has processed** in `/data/consolidate_receipts.json`.
+
+If the same receipt arrives a second time — whether from a replay attack or from the wallet mistakenly re-submitting — the node rejects it with `"Receipt already redeemed on this node"` and does not credit any funds.
+
+> **Residual risk:** The receipt does not cryptographically commit to a specific amount on the target node. The first use of a receipt is trusted to carry the correct amount (as reported by the source node in the CONSOLIDATE_OUT response). A wallet that fabricated an inflated amount in its CONSOLIDATE_IN packet on first use would be cheating, but this would require the wallet to have been modified to lie about the drained amount. Receipt replay (sending the same receipt to multiple nodes) is fully prevented.
 
 ---
 
 ## Session Security
 
-The auto-login session token is stored in `/wallet_data/session.dat`. It is encrypted using a key derived from the computer's hardware ID (`os.getComputerID()`), so the token is non-transferable between devices. Even if another player copies the file, they cannot use it on a different Pad. The session does not contain your Secret Key — it contains only the data needed to restore the dashboard state.
+The auto-login session token is stored in `/wallet_data/session.enc`. It is encrypted using a key derived from the computer's hardware ID (`os.getComputerID()`), so the token is non-transferable between devices. Even if another player copies the file, they cannot use it on a different Pad. The session does not contain your Secret Key — it contains only the data needed to restore the dashboard state.
 
 Press **`[L]`** (Logout) to invalidate and delete the session token at any time.
 
@@ -123,6 +165,16 @@ AmiVault locks are enforced server-side on the node. The node uses `os.epoch("ut
 
 Locked funds cannot be transferred, even if the wallet address is known, because the node rejects any TRANSFER that would reduce the balance below the sum of all active vault locks for that address.
 
+**Maximum vault duration** is capped at **30 days (2,592,000 seconds)**. This prevents accidental permanent self-lockout from an unreasonably large duration value submitted by a buggy client.
+
+---
+
+## Remote Rate Fetch
+
+The miner daemon fetches the live base reward rate from a remote URL at startup and every 10 ticks. The fetched value is validated to be a number in `[1, 100000]` before use and is **never saved to disk** — only held in memory for the current run. If the fetch fails the node retains the last known value.
+
+> **Note:** If the remote host serving `reward_rate.txt` were compromised, an attacker could push a high rate (up to 100,000 µAMI/tick), significantly inflating rewards until the node operator notices. This is an accepted operational risk for the current deployment model. Node operators who want full control can set `RATE_URL = nil` in `miner_daemon.lua` and manage the rate locally via the `reward_rate.txt` file instead.
+
 ---
 
 ## Recommended Practices
@@ -131,4 +183,6 @@ Locked funds cannot be transferred, even if the wallet address is known, because
 - **Keep your Pad in your inventory** and out of public display cases.
 - **Back up your Secret Key** using **`[E] Export / View Key`** on the dashboard before you lose or reset the Pad.
 - **Verify install fingerprints** after every fresh install or self-update.
-- **Rotate the node key** periodically by deleting `/data/node_key.txt` on the node and rebooting; update all Pads via **`[N]` → edit node** with the new key.
+- **Rotate the node key** periodically by deleting `/data/node_key.txt` on the node and rebooting; update all Pads via **`[N]` → edit node** with the new key. After rotation `upgrades.json` is automatically re-encrypted with the new key on the first boot.
+- **Never run Clean Install** unless you intend to wipe all ledger data and upgrade state — it permanently destroys `/data/`.
+

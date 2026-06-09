@@ -139,6 +139,34 @@ local function fnv1a(s)
     return string.format("%08x", hash)
 end
 
+-- ── CONSOLIDATE_IN receipt log ───────────────────────────────────────────────
+-- Tracks receipt tokens that have already been used for a CONSOLIDATE_IN on
+-- this node.  Prevents a wallet from replaying the same receipt to credit its
+-- balance multiple times across different nodes.
+-- Stored in /data/consolidate_receipts.json as { [receipt_hex] = true }.
+local RECEIPTS_FILE = "/data/consolidate_receipts.json"
+
+local function loadReceipts()
+    if not fs.exists(RECEIPTS_FILE) then return {} end
+    local f = fs.open(RECEIPTS_FILE, "r")
+    local raw = f.readAll(); f.close()
+    return textutils.unserialiseJSON(raw) or {}
+end
+
+local function markReceiptUsed(receipt)
+    if type(receipt) ~= "string" or #receipt == 0 then return end
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local db = loadReceipts()
+    db[receipt] = true
+    local f = fs.open(RECEIPTS_FILE, "w")
+    f.write(textutils.serialiseJSON(db)); f.close()
+end
+
+local function isReceiptUsed(receipt)
+    if type(receipt) ~= "string" or #receipt == 0 then return false end
+    return loadReceipts()[receipt] == true
+end
+
 -- ── Packet handling ──────────────────────────────────────────────────────────
 local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex, replyChannel)
     -- Try to decrypt using the sender's key (passed as the first 32 chars of
@@ -206,6 +234,14 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         end
         if type(amount) ~= "number" or amount <= 0 then
             local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey)
+            router.transmit(replyChannel, MESH_CHANNEL, err)
+            return
+        end
+        -- Floor to whole microcoins; prevents fractional balance accumulation
+        -- that could cause floating-point ledger drift over many transactions.
+        amount = math.floor(amount)
+        if amount <= 0 then
+            local err = xtea.encrypt(textutils.serialiseJSON({ok=false, err="Amount rounds to zero"}), nodeKey)
             router.transmit(replyChannel, MESH_CHANNEL, err)
             return
         end
@@ -284,7 +320,18 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
                 xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid duration"}), nodeKey))
             return
         end
-        local ok, result = ledger.vaultLock(from, amount, math.floor(duration))
+        -- Cap vault lock to 30 days max (2,592,000 s) to prevent accidental
+        -- permanent self-lockout from wildly large duration values.
+        local MAX_VAULT_DURATION = 2592000  -- 30 days in seconds
+        if math.floor(duration) > MAX_VAULT_DURATION then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({
+                    ok=false, err="Duration exceeds maximum (30 days / 2592000 s)"
+                }), nodeKey))
+            return
+        end
+        -- Floor amount to whole microcoins.
+        local ok, result = ledger.vaultLock(from, math.floor(amount), math.floor(duration))
         if ok then
             print(string.format("[Net] VAULT_LOCK %s... %d uAMI for %ds -> %s...", who, amount, duration, result:sub(1,8)))
             router.transmit(replyChannel, MESH_CHANNEL,
@@ -331,11 +378,18 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
     elseif cmd == "GOSSIP_DNS" then
         -- Wallet gossiping a name<->address mapping discovered elsewhere.
         -- Encrypted with wallet key + targeted routing = private to this node.
+        -- Security: only accept gossip if the name is NOT already registered,
+        -- or if the gossiped address matches the existing registration exactly.
+        -- This prevents a malicious wallet from redirecting another player's
+        -- registered name to an attacker-controlled address.
         local gname = pkt.name
         local gaddr = pkt.address
         if type(gname) == "string" and #gname > 0
         and type(gaddr) == "string" and #gaddr == 128 then
-            ledger.registerName(gname, gaddr)
+            local existing = ledger.lookupName(gname)
+            if not existing or existing == gaddr then
+                ledger.registerName(gname, gaddr)
+            end
             -- Fire-and-forget; no reply needed.
         end
 
@@ -403,6 +457,16 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
                 xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
             return
         end
+        -- Reject replayed receipts: a receipt may only be used ONCE per node.
+        -- This prevents a wallet from replaying a single CONSOLIDATE_OUT receipt
+        -- to illegitimately credit the same coins on multiple target nodes.
+        if type(receipt) == "string" and isReceiptUsed(receipt) then
+            print(string.format("[Net] CONSOLIDATE_IN %s... REJECTED: receipt %s already used",
+                who, tostring(receipt):sub(1, 8)))
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Receipt already redeemed on this node"}), nodeKey))
+            return
+        end
         local creditAmt = math.floor(amount)
         -- Fee Snatcher: skim a small routing fee into the node treasury
         local fee = upgrades.getFeeSnatchAmount()
@@ -414,6 +478,10 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             end
         end
         ledger.credit(from, creditAmt)
+        -- Mark receipt consumed so it cannot be replayed on this node again.
+        if type(receipt) == "string" and #receipt > 0 then
+            markReceiptUsed(receipt)
+        end
         print(string.format("[Net] CONSOLIDATE_IN  %s... credited %d uAMI  receipt=%s",
             who, creditAmt, tostring(receipt):sub(1, 8)))
         router.transmit(replyChannel, MESH_CHANNEL,

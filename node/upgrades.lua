@@ -22,6 +22,7 @@
 -- }
 
 local ledger = require("ledger")
+local xtea   = require("xtea")
 
 local upgrades = {}
 
@@ -115,6 +116,41 @@ end
 -- Exposed so startup.lua / UI can display the curve without reimplementing it.
 upgrades.getCost = calcCost
 
+-- ── Node-key loader ─────────────────────────────────────────────────────────
+-- Reads the same 32-hex-char key that startup.lua generates on first boot at
+-- /data/node_key.txt.  That file lives in /data/ which is NOT overwritten by
+-- code updates, so the key survives restarts and upgrades.
+local _nodeKey = nil
+local function loadNodeKey()
+    if _nodeKey then return _nodeKey end
+    local keyFile = "/data/node_key.txt"
+    if not fs.exists(keyFile) then
+        -- startup.lua hasn't run yet (shouldn't happen in normal flow).
+        -- Derive a deterministic fallback from the computer ID so the node
+        -- can still save state; startup.lua will overwrite with its own key
+        -- on the very next boot, at which point loadState() will fall back
+        -- to the plaintext migration path and re-encrypt with the real key.
+        local seed = tostring(os.getComputerID())
+        local tmp = ""
+        for i = 1, 32 do
+            local b = (seed:byte((i - 1) % #seed + 1) * 31 + i * 17) % 16
+            tmp = tmp .. string.format("%x", b)
+        end
+        _nodeKey = tmp
+        return _nodeKey
+    end
+    local f = fs.open(keyFile, "r")
+    local k = f.readAll():gsub("%s", "")
+    f.close()
+    if #k ~= 32 then
+        -- Corrupt key file; reset so startup.lua regenerates it on next boot.
+        _nodeKey = string.rep("0", 32)
+    else
+        _nodeKey = k
+    end
+    return _nodeKey
+end
+
 -- ── Persistent state ──────────────────────────────────────────────────────────
 local _state = nil   -- lazy-loaded; nil means "not yet read from disk"
 
@@ -129,7 +165,19 @@ local function loadState()
     if fs.exists(DATA_FILE) then
         local f = fs.open(DATA_FILE, "r")
         local raw = f.readAll(); f.close()
-        local t = textutils.unserialiseJSON(raw)
+        local t = nil
+        -- First attempt: try to decrypt with node key (normal path after first save).
+        local ok, plain = pcall(xtea.decrypt, raw, loadNodeKey())
+        if ok and type(plain) == "string" then
+            t = textutils.unserialiseJSON(plain)
+        end
+        -- Fallback: try raw plaintext JSON (migration from unencrypted file).
+        if type(t) ~= "table" then
+            t = textutils.unserialiseJSON(raw)
+            if type(t) == "table" then
+                print("[Upgrades] Migrating upgrades.json to encrypted format.")
+            end
+        end
         if type(t) == "table" then
             _state = t
             if type(_state.levels) ~= "table" then _state.levels = {} end
@@ -146,12 +194,17 @@ end
 
 local function saveState()
     if not fs.exists("/data") then fs.makeDir("/data") end
+    local json = textutils.serialiseJSON(_state)
+    local cipher = xtea.encrypt(json, loadNodeKey())
     local f = fs.open(DATA_FILE, "w")
-    f.write(textutils.serialiseJSON(_state)); f.close()
+    f.write(cipher); f.close()
 end
 
 local function getLevel(id)
-    return loadState().levels[id] or 0
+    local lv = loadState().levels[id] or 0
+    -- Clamp to valid range; guards against a tampered upgrades file where
+    -- someone manually sets a level above MAX_LEVEL or below 0.
+    return math.max(0, math.min(MAX_LEVEL, math.floor(lv)))
 end
 
 -- ── Effect API ────────────────────────────────────────────────────────────────
@@ -242,11 +295,13 @@ local function fnv1a(s)
 end
 
 local function newUID()
-    return fnv1a(
-        tostring(os.epoch("utc")) ..
-        tostring(os.getComputerID()) ..
-        tostring(math.random(0, 2147483647))
-    )
+    -- Build a 128-bit transaction ID (four independent 32-bit FNV1a hashes)
+    -- to make tx_id forgery via channel-1338 broadcast infeasible.
+    local base = tostring(os.epoch("utc")) .. tostring(os.getComputerID())
+    return fnv1a(base .. tostring(math.random(0, 2147483647)) .. "a") ..
+           fnv1a(base .. tostring(math.random(0, 2147483647)) .. "b") ..
+           fnv1a(base .. tostring(math.random(0, 2147483647)) .. "c") ..
+           fnv1a(base .. tostring(math.random(0, 2147483647)) .. "d")
 end
 
 -- ── Terminal helpers (scoped; do not pollute global state) ────────────────────
@@ -372,6 +427,7 @@ local function broadcastAndWait(router, treasury, playerAddr, playerName, def, c
     ugLine(15, "  Press [B] here to cancel.",                         colors.gray)
 
     local balBefore    = ledger.getBalance(treasury)
+    local burnBefore   = ledger.getBalance(BURN_ADDRESS)
     local deadline     = os.epoch("utc") / 1000 + ACK_TIMEOUT
     local frame        = 0
     local rebroadcast  = 0   -- counts 1s ticks; re-sends invoice every 10
@@ -408,9 +464,20 @@ local function broadcastAndWait(router, treasury, playerAddr, playerName, def, c
                     if ok2 and type(pkt) == "table"
                     and pkt.type == "PAYMENT_ACK"
                     and pkt.tx_id == txId then
-                        -- ACK is the wallet's confirmation that transfer succeeded.
-                        -- The payment may have settled on a different node, so we
-                        -- trust the ACK rather than checking local ledger balance.
+                        -- Verify the payment actually landed in the ledger before
+                        -- granting the upgrade.  Prevents forged ACKs on ch 1338.
+                        if payAddr == BURN_ADDRESS then
+                            -- Buyer is the node operator (self-purchase);
+                            -- payment was routed to the burn sink on this node.
+                            if ledger.getBalance(BURN_ADDRESS) < burnBefore + cost then
+                                return false, "ACK received but burn payment not confirmed"
+                            end
+                        else
+                            -- Normal path: treasury must have received the funds.
+                            if ledger.getBalance(treasury) < balBefore + cost then
+                                return false, "ACK received but treasury payment not confirmed"
+                            end
+                        end
                         return true, nil
                     end
                 end

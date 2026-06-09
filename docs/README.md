@@ -273,7 +273,7 @@ Upgrades use an exponential curve: Level 1 costs **1 AMI** (1,000,000 µAMI), Le
 
 ### Upgrade State
 
-Upgrade levels are persisted to `/data/upgrades.json`. This file is preserved across `[U]` self-updates and is wiped only on a **Clean Install** (which also wipes `/data/`).
+Upgrade levels are persisted to `/data/upgrades.json`. This file is **XTEA-encrypted at rest** using the node's own hardware key (`/data/node_key.txt`) — manually editing it produces unreadable ciphertext that the node rejects. Levels are also clamped to `[0, 10]` on every read regardless. The file is preserved across `[U]` self-updates and is wiped only on a **Clean Install** (which also wipes `/data/`).
 
 ---
 

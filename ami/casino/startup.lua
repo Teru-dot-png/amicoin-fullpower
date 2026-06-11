@@ -620,6 +620,9 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     local page = 1
 
     while sessionBalance > 0 do
+        -- Update session header so all game banners show current balance
+        ui.setSession(playerName, sessionBalance, deposit)
+
         local list = GAME_PAGES[page]
         ui.banner("Game Select")
         ui.rule(4)
@@ -710,6 +713,8 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
         end
     end
 
+    -- Clear session header before cashout screen
+    ui.setSession(nil, nil, nil)
     -- ── Step 3: Cashout ───────────────────────────────────────────────────────
     ui.banner("Cashout")
     ui.rule(4)

@@ -100,6 +100,72 @@ local function deriveAddress(keyHex)
     return addr
 end
 
+-- ── Password-based key derivation (mirrors wallet/comms.lua exactly) ────────────
+-- Derives a 32-hex XTEA key from a plain-text password.
+-- Used to decrypt GETKEY replies before the node key is known.
+local function keyFromPassword(password)
+    local bytes = {}
+    for i = 1, #password do bytes[i] = string.byte(password, i) end
+    if #bytes == 0 then bytes = {0} end
+    local out = {}
+    for i = 1, 16 do
+        local a = bytes[((i - 1) % #bytes) + 1]
+        local b = bytes[(i       % #bytes) + 1]
+        local c = bytes[((i + 3) % #bytes) + 1]
+        out[i] = bit32.bxor(a * 31 + b * 17 + c * 7 + i * 13, i * 97) % 256
+    end
+    for i = 1, 16 do
+        out[i] = bit32.bxor(out[i], out[(i % 16) + 1]) % 256
+    end
+    local hex = ""
+    for _, b in ipairs(out) do hex = hex .. string.format("%02x", b) end
+    return hex
+end
+
+-- Fetch a node's XTEA key using a setup password.
+-- Broadcasts GETKEY on the mesh; reply is encrypted with keyFromPassword(pw)
+-- so we can decrypt it without already knowing the node key.
+-- Returns: key (string) or nil, errMsg (string or nil)
+local function fetchNodeKey(modem, casinoKey, casinoAddr, password)
+    local replyChannel = REPLY_BASE + math.random(0, 999)
+    modem.open(replyChannel)
+
+    local pkt    = { cmd="GETKEY", from=casinoAddr, password=password, nonce=os.epoch("utc") }
+    local cipher = xtea.encrypt(textutils.serialiseJSON(pkt), casinoKey)
+    modem.transmit(MESH_CHANNEL, replyChannel, casinoKey .. "|" .. cipher)
+
+    local pwdKey  = keyFromPassword(password)
+    local deadline = os.epoch("utc") / 1000 + MESH_TIMEOUT
+    local resultKey, resultErr = nil, "Timeout — no node responded"
+
+    while os.epoch("utc") / 1000 < deadline do
+        local tid = os.startTimer(0.5)
+        while true do
+            local ev, a, chan, _, msg = os.pullEvent()
+            if ev == "timer" and a == tid then break end
+            if ev == "modem_message" and chan == replyChannel and type(msg) == "string" then
+                local ok2, plain = pcall(xtea.decrypt, msg, pwdKey)
+                if ok2 then
+                    local data = textutils.unserialiseJSON(plain)
+                    if type(data) == "table" then
+                        if data.ok and type(data.key) == "string" and #data.key == 32 then
+                            resultKey = data.key
+                            resultErr = nil
+                            goto done
+                        elseif data.err then
+                            resultErr = data.err
+                            goto done
+                        end
+                    end
+                end
+            end
+        end
+    end
+    ::done::
+    modem.close(replyChannel)
+    return resultKey, resultErr
+end
+
 -- ── Casino key (for signing mesh packets) ─────────────────────────────────────
 local function loadOrCreateCasinoKey()
     if not fs.exists(DATA_DIR) then fs.makeDir(DATA_DIR) end
@@ -208,7 +274,7 @@ local function deductLoss(modem, casinoKey, node, playerKey, address, amount)
 end
 
 -- ── Admin: node configuration ─────────────────────────────────────────────────
-local function adminMenu(cfg)
+local function adminMenu(cfg, modem, casinoKey, casinoAddr)
     while true do
         ui.banner("Casino Admin")
         ui.rule(4)
@@ -233,17 +299,52 @@ local function adminMenu(cfg)
             local name = read()
             name = name:gsub("^%s*(.-)%s*$", "%1")
             if #name == 0 then name = "Node " .. (#cfg.nodes + 1) end
-            ui.line(7, "32-char XTEA node key:", colors.yellow)
-            term.setCursorPos(1, 8); io.write("> ")
-            local key = read():gsub("%s", ""):lower()
-            if #key == 32 then
-                cfg.nodes[#cfg.nodes + 1] = { name = name, key = key }
+
+            ui.line(8,  "How to add?", colors.yellow)
+            ui.line(9,  "  [1] Enter 32-char key manually", colors.white)
+            ui.line(10, "  [2] Fetch via setup password",   colors.orange)
+
+            local addKey
+            while not addKey do
+                local _, mk = os.pullEvent("key")
+                if mk == keys.one or mk == keys.n1 then
+                    ui.line(12, "32-char XTEA key:", colors.yellow)
+                    term.setCursorPos(1, 13); io.write("> ")
+                    local raw = read():gsub("%s", ""):lower()
+                    if #raw == 32 then
+                        addKey = raw
+                    else
+                        ui.center(15, "Invalid (need 32 hex chars)", colors.red)
+                        os.sleep(1.2)
+                    end
+                    break
+                elseif mk == keys.two or mk == keys.n2 then
+                    ui.line(12, "Setup password for this node:", colors.orange)
+                    term.setCursorPos(1, 13); io.write("> ")
+                    local pw = read("*")
+                    if #pw == 0 then
+                        ui.center(15, "Cancelled.", colors.gray); os.sleep(0.8)
+                    else
+                        ui.center(15, "Contacting node...", colors.yellow)
+                        local fetchedKey, fetchErr = fetchNodeKey(modem, casinoKey, casinoAddr, pw)
+                        if fetchedKey then
+                            addKey = fetchedKey
+                            ui.center(15, "Got key!  " .. fetchedKey:sub(1,8) .. "...", colors.lime)
+                            os.sleep(0.6)
+                        else
+                            ui.center(15, "Failed: " .. (fetchErr or "unknown"), colors.red)
+                            os.sleep(1.5)
+                        end
+                    end
+                    break
+                end
+            end
+
+            if addKey then
+                cfg.nodes[#cfg.nodes + 1] = { name = name, key = addKey }
                 saveConfig(cfg)
-                ui.center(10, "Node added!", colors.lime)
+                ui.center(17, "Node '" .. name .. "' added!", colors.lime)
                 os.sleep(0.8)
-            else
-                ui.center(10, "Invalid key (need 32 hex chars)", colors.red)
-                os.sleep(1.2)
             end
         elseif k == keys.d and #cfg.nodes > 0 then
             ui.banner("Remove Node")
@@ -463,7 +564,7 @@ local function gameMenu(modem, casinoKey, cfg, playerName, playerAddr, playerNod
 end
 
 -- ── Lobby ─────────────────────────────────────────────────────────────────────
-local function lobby(modem, casinoKey, cfg)
+local function lobby(modem, casinoKey, casinoAddr, cfg)
     ui.banner("AmiCasino")
     ui.rule(4)
     ui.center(5, "Welcome to AmiCasino!", colors.yellow)
@@ -491,7 +592,7 @@ local function lobby(modem, casinoKey, cfg)
             return true   -- reload
 
         elseif k == keys.a then
-            adminMenu(cfg)
+            adminMenu(cfg, modem, casinoKey, casinoAddr)
             return true   -- reload lobby
 
         elseif k == keys.p then
@@ -557,7 +658,7 @@ local function main()
     print(string.format("[Casino] %d node(s) configured. Press P to play.", #cfg.nodes))
     os.sleep(1)
 
-    while lobby(modem, casinoKey, cfg) do
+    while lobby(modem, casinoKey, casinoAddr, cfg) do
         cfg = loadConfig()   -- reload after admin changes
     end
 end

@@ -15,9 +15,10 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 5. [Node Features](#node-features)
 6. [Node Upgrades](#node-upgrades)
 7. [AmiStore Marketplace](#amistore-marketplace)
-8. [Reward Schedule](#reward-schedule)
-9. [File Structure](#file-structure)
-10. [Further Reading](#further-reading)
+8. [AmiCasino](#amicasino)
+9. [Reward Schedule](#reward-schedule)
+10. [File Structure](#file-structure)
+11. [Further Reading](#further-reading)
 
 ---
 
@@ -137,8 +138,6 @@ Type `a` + Enter for AMI (human-friendly, decimal) or `u` + Enter for µAMI (int
 ### Ami-DNS Name Cache
 
 Player names are cached locally in `/wallet_data/names_cache.json`. Addresses appear as `"Steve"` wherever known instead of raw 128-character hex strings. The cache is populated automatically on register and on successful lookups during a Send operation, and is gossiped to all nodes automatically.
-
-> **Note:** If a node has the **Privacy Shield** upgrade active, LOOKUP for that node operator's address returns `PRIVATE` to all wallets except their own.
 
 ### Command Center (Node Manager)
 
@@ -262,7 +261,7 @@ Upgrades use an exponential curve: Level 1 costs **1 AMI** (1,000,000 µAMI), Le
 |----|------|-----------|--------|
 | `miner_boost` | Overclocked Miner | 10 | +20% mining payout multiplier per level (1.0× → 3.0×) |
 | `priority_ping` | Priority Ping Response | 10 | Removes error-path reply delay; advertises `priority_ping=true` in STATS |
-| `privacy_shield` | Ledger Privacy Shield | 10 | LOOKUP returns `PRIVATE` for the node operator's address |
+| `mint_surge` | Mint Surge | 10 | Fires a bonus 2× reward tick on a cooldown: Lv1 = every 80 min → Lv10 = every 8 min |
 | `smart_cache` | Smart Cache Aggregator | 10 | Batches ledger disk writes; +3 s flush interval per level (0 → 30 s) |
 | `collision_fix` | Collision Handler | 10 | Reduces error-path backoff by 0.05 s per level (0.5 s → 0.0 s) |
 | `fee_snatcher` | Routing Fee Snatcher | 10 | Skims 100 µAMI per level from every CONSOLIDATE_IN operation |
@@ -306,9 +305,82 @@ Player Wallet (Pad)              AmiStore (Merchant Node)
 wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installshop.lua
 ```
 
----
+## AmiCasino
 
-## Reward Schedule
+AmiCasino is a standalone gamble station that runs on any CC:Tweaked computer with an Ender Router or modem. Players bet AmiCoin on 9 different games. Winnings are credited and losses are collected through the same INVOICE / PAYMENT_ACK flow used by AmiStore — no special trust required on the node side.
+
+### Install
+
+```
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installcasino.lua
+```
+
+Choose **[I] Install** on first setup. After installation, run `shell.run("/ami/casino/startup")` (or reboot if `/startup.lua` was written by the installer).
+
+### First-Time Setup
+
+1. Press **`[A]`** from the lobby to open the Admin panel.
+2. Add at least one AmiCoin node (name + 32-char XTEA key).
+3. Fund the **casino wallet** with enough AMI to cover potential payouts — the casino address is printed at startup. Transfer AMI to it from any wallet.
+4. Press **`[P]`** to start playing.
+
+### Playing
+
+From the lobby press **`[P]`**. You are asked:
+
+```
+Who's Playing?
+  Enter your Ami-DNS name:
+  > Steve
+```
+
+The casino looks up your name on the configured nodes. Once found, the **game menu** opens across two pages:
+
+| Page | # | Game | House Edge |
+|------|---|------|------------|
+| 1 | 1 | **Mines** | ~2% |
+| 1 | 2 | **Crash** | ~4% |
+| 1 | 3 | **Slots** | ~5% |
+| 1 | 4 | **Blackjack** | ~3% |
+| 1 | 5 | **Roulette** | ~2.7% |
+| 2 | 1 | **Higher / Lower** | ~4% |
+| 2 | 2 | **Pachinko** | ~4% |
+| 2 | 3 | **Craps** | ~1.4% |
+| 2 | 4 | **Coin Flip** | 4% |
+
+Navigate pages with **`[N]`** / **`[P]`**. Select a game with **`[1–5]`**. Press **`[B]`** to return to the lobby.
+
+### Game Summaries
+
+- **Mines** — 5×5 grid with hidden mines. Reveal safe tiles to grow a multiplier, cash out any time with `[C]`. Hit a mine and lose the bet. More mines = higher potential reward.
+- **Crash** — A multiplier rises from 1.0× until it randomly crashes. Press `[C]` to cash out before it does. The longer you wait, the bigger the reward — but it can crash at any moment.
+- **Slots** — 3 weighted reels. Three 7s = 10× your bet. Any matching pair on the left two reels returns 0.5×.
+- **Blackjack** — Standard rules. Dealer stands on soft 17. Natural blackjack pays 3:2. Hit `[H]`, stand `[S]`.
+- **Roulette** — European single-zero. Bet on a number (35:1), red/black, odd/even, or high/low (1:1).
+- **Higher / Lower** — Guess whether the next of 5 cards is higher or lower. Correct streak builds a multiplier up to 3.2×. Equal card = free round.
+- **Pachinko** — Animated 7-row peg board. The ball bounces left or right at each row. Outer buckets pay 12×; centre buckets pay 0.5×.
+- **Craps** — Pass-line craps. 7 or 11 on the come-out wins; 2, 3, or 12 loses; any other number sets the point. Roll the point before a 7 to win.
+- **Coin Flip** — Pick heads or tails. Win pays 1.92× (net +0.92× your bet).
+
+### Money Flow
+
+```
+Player wins  →  Casino wallet TRANSFER to player address  (coins move)
+Player loses →  Casino broadcasts INVOICE on ch 1338
+                Player accepts [Y] on Wallet Pad
+                Coins sent to burn address (128-zero) → destroyed
+```
+
+> **Important:** The casino wallet must hold enough AMI to cover payouts. If it runs dry, winning players will not receive funds. Top it up periodically via any AmiCoin wallet.
+
+### Lobby Keys
+
+| Key | Action |
+|-----|--------|
+| `P` | Play (enter Ami-DNS name → game menu) |
+| `A` | Admin (add/remove nodes) |
+| `U` | Self-update from GitHub |
+| `Q` | Quit |
 
 Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 
@@ -335,7 +407,7 @@ Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 ```
 amicoin/
 ├── shared/
-│   └── xtea.lua              XTEA cipher library (node, wallet, and shop)
+│   └── xtea.lua              XTEA cipher library (node, wallet, shop, and casino)
 ├── node/
 │   ├── startup.lua           Node entry point; packet dispatcher, monitor, watchdog, key input
 │   ├── ledger.lua            Ledger, name registry, AmiVault, in-memory write cache
@@ -351,6 +423,11 @@ amicoin/
 │   ├── startup.lua           AmiStore entry point; parallel network/sync/input loops
 │   ├── shop_api.lua          AE2, listings, pipeline, structured logging
 │   └── shop_ui.lua           Glass Cockpit monitor UI
+├── ami/casino/
+│   ├── startup.lua           AmiCasino entry point; lobby, login, admin, money flow
+│   ├── games.lua             All 9 games (Mines, Crash, Slots, Blackjack, Roulette,
+│   │                         Higher/Lower, Pachinko, Craps, Coin Flip)
+│   └── ui.lua                Shared terminal drawing helpers, bet prompt, animations
 ├── docs/
 │   ├── README.md             This file
 │   ├── SHOP.md               AmiStore Merchant Manual
@@ -358,7 +435,8 @@ amicoin/
 │   └── MIGRATION.md          How to move your wallet to a new Pad
 ├── installnode.lua           One-command node installer (includes upgrades.lua)
 ├── installpad.lua            One-command wallet installer
-└── installshop.lua           One-command AmiStore installer
+├── installshop.lua           One-command AmiStore installer
+└── installcasino.lua         One-command AmiCasino installer
 ```
 
 ---
@@ -368,6 +446,3 @@ amicoin/
 - [SHOP.md](SHOP.md) — AmiStore Merchant Manual: hardware layout, listing format, receipts, admin gate.
 - [SECURITY.md](SECURITY.md) — XTEA encryption, source verification, and keeping your Secret Key safe.
 - [MIGRATION.md](MIGRATION.md) — Moving your wallet to a new Ender Router Pad.
-
-
----

@@ -121,9 +121,9 @@ function ui.line(y, text, col, bg)
     term.setCursorPos(1, y)
     term.setTextColor(col or colors.white)
     term.setBackgroundColor(bg or colors.black)
+    term.clearLine()   -- clear old content first; cursor stays at (1,y)
     if #text > w then text = text:sub(1, w) end
     term.write(text)
-    term.clearLine()
 end
 
 function ui.center(y, text, col, bg)

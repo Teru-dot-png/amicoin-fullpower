@@ -1,19 +1,18 @@
 -- ami/casino/startup.lua
--- AmiCasino v1.0
+-- AmiCasino v1.1
 -- Proof-of-Uptime gamble station for AmiCoin.
 --
 -- Requires:
 --   BACK (or any side): Ender Router / Wireless Modem (mesh comms)
 --
 -- Run: shell.run("/ami/casino/startup")
--- The program stays up permanently.  Players walk up, press [P] to play,
--- enter their Ami-DNS name, and choose from the game menu.
 --
--- Funds flow:
---   WIN  → ledger.credit(address, winAmount)    coins minted from nothing
---   LOSE → ledger.drain(address, lossAmount)    coins burned from the ledger
--- This means the casino IS the house — it mints and burns AmiCoin directly.
--- The house edge on each game ranges from 2% (Mines) to 4% (most others).
+-- Money model: Model A (escrow)
+--   1. Player deposits via INVOICE; coins land in casino wallet.
+--   2. Session balance tracked in memory AND persisted to SESSION_FILE.
+--   3. On cashout: single TRANSFER casino->player for sessionBalance.
+--   4. Deposit verified by checking casino wallet balance actually rose.
+--   5. Bets are capped so the casino can always pay the maximum possible win.
 
 package.path = package.path .. ";/ami/casino/?.lua"
 local ui    = require("ui")
@@ -27,7 +26,23 @@ local MESH_TIMEOUT  = 8       -- seconds to wait for a node response
 local DATA_DIR      = "/ami/casino/data"
 local LOG_FILE      = DATA_DIR .. "/casino.log"
 local CONFIG_FILE   = DATA_DIR .. "/config.json"
+local SESSION_FILE  = DATA_DIR .. "/session.json"  -- P1: crash-safe session state
 local REPO_BASE     = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+
+-- P3: maximum payout multiplier per game (used for solvency cap).
+-- Mines theoretical max is 25x but only reachable with 1 mine; practical cap 25.
+-- Crash is unbounded in theory; we cap exposure at 100x.
+local GAME_MAX_MULT = {
+    Mines          = 25,
+    Crash          = 100,
+    Slots          = 10,
+    Blackjack      = 1.5,
+    Roulette       = 35,
+    ["Higher / Lower"] = 3.2,
+    Pachinko       = 12,
+    Craps          = 1,
+    ["Coin Flip"]  = 1.92,
+}
 
 -- ── FNV-1a ────────────────────────────────────────────────────────────────────
 local function fnv1a(s)
@@ -46,6 +61,28 @@ local function log(msg)
     local f = fs.open(LOG_FILE, "a")
     f.write("[" .. ts .. "] " .. msg .. "\n")
     f.close()
+end
+
+-- ── P1: Session persistence ───────────────────────────────────────────────────
+-- Written immediately after deposit confirms; updated after every game outcome.
+-- Deleted on clean cashout.  If present on startup an orphaned session exists.
+local function saveSession(data)
+    if not fs.exists(DATA_DIR) then fs.makeDir(DATA_DIR) end
+    local f = fs.open(SESSION_FILE, "w")
+    f.write(textutils.serialiseJSON(data))
+    f.close()
+end
+
+local function loadSession()
+    if not fs.exists(SESSION_FILE) then return nil end
+    local f = fs.open(SESSION_FILE, "r")
+    local t = textutils.unserialiseJSON(f.readAll())
+    f.close()
+    return type(t) == "table" and t or nil
+end
+
+local function clearSession()
+    if fs.exists(SESSION_FILE) then fs.delete(SESSION_FILE) end
 end
 
 -- ── Config (node key list) ────────────────────────────────────────────────────
@@ -441,8 +478,10 @@ local function registerOnNodes(modem, casinoKey, casinoAddr, nodes, name)
     return ok_ct, fail_ct
 end
 
--- Send an INVOICE on ch 1338 and wait for PAYMENT_ACK.  Returns true on ACK.
-local function waitForPayment(modem, playerAddr, casinoAddr, amount, purpose, timeoutSecs)
+-- Send an INVOICE on ch 1338 and wait for PAYMENT_ACK, then verify the
+-- casino wallet balance actually increased (P2: ACK authentication).
+-- Returns true, nil on confirmed payment; false, errMsg otherwise.
+local function waitForPayment(modem, playerAddr, casinoAddr, casinoKey, playerNode, amount, purpose, timeoutSecs)
     local txId   = fnv1a(tostring(os.epoch("utc")) .. playerAddr .. purpose)
     local invoice = textutils.serialiseJSON({
         type      = "INVOICE",
@@ -458,11 +497,10 @@ local function waitForPayment(modem, playerAddr, casinoAddr, amount, purpose, ti
     modem.transmit(1338, 1338, invoice)
     local deadline    = os.epoch("utc") / 1000 + (timeoutSecs or 120)
     local lastResend  = os.epoch("utc") / 1000
-    local paid        = false
+    local ackReceived = false
     while os.epoch("utc") / 1000 < deadline do
         local rem = math.floor(deadline - os.epoch("utc") / 1000)
         ui.center(12, string.format("Waiting for Pad [Y]...  %3ds", rem), colors.cyan)
-        -- Re-broadcast every 10s
         if os.epoch("utc") / 1000 - lastResend >= 10 then
             modem.transmit(1338, 1338, invoice)
             lastResend = os.epoch("utc") / 1000
@@ -477,17 +515,35 @@ local function waitForPayment(modem, playerAddr, casinoAddr, amount, purpose, ti
                 if ok2 and type(pkt) == "table"
                 and pkt.type == "PAYMENT_ACK"
                 and pkt.tx_id == txId then
-                    paid = true; break
+                    ackReceived = true; break
                 end
             end
             if ev == "key" and a == keys.b then
                 modem.close(1338); return false, "Cancelled"
             end
         end
-        if paid then break end
+        if ackReceived then break end
     end
     modem.close(1338)
-    return paid, paid and nil or "Timed out"
+    if not ackReceived then return false, "Timed out" end
+
+    -- P2: verify the deposit actually landed in the casino wallet.
+    -- The ACK is plaintext and spoofable; the balance check is authoritative.
+    ui.center(12, "Verifying payment on ledger...", colors.yellow)
+    local balBefore = getBalance(modem, casinoKey, playerNode, casinoAddr) or 0
+    local verified  = false
+    local vdeadline = os.epoch("utc") / 1000 + 6   -- up to 6s for ledger propagation
+    while os.epoch("utc") / 1000 < vdeadline do
+        local bal = getBalance(modem, casinoKey, playerNode, casinoAddr) or 0
+        if bal >= balBefore + amount then
+            verified = true; break
+        end
+        os.sleep(0.5)
+    end
+    if not verified then
+        return false, "ACK received but payment not confirmed on ledger"
+    end
+    return true, nil
 end
 
 -- ── Game menu ─────────────────────────────────────────────────────────────────
@@ -533,7 +589,7 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     ui.line(9,  "  Press [Y] on your Pad to confirm the deposit.", colors.lightGray)
     ui.line(10, "  Press [B] here to cancel.", colors.gray)
 
-    local paid, payErr = waitForPayment(modem, playerAddr, casinoAddr, deposit, "deposit")
+    local paid, payErr = waitForPayment(modem, playerAddr, casinoAddr, casinoKey, playerNode, deposit, "deposit")
     if not paid then
         ui.banner("Deposit Cancelled")
         ui.center(6, payErr or "Cancelled", colors.red)
@@ -542,6 +598,20 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     end
 
     log(string.format("DEPOSIT player=%s amount=%d", playerName, deposit))
+
+    -- P1: persist session to disk immediately after deposit is confirmed.
+    -- This record survives a reboot; startup will offer to resume or auto-cashout.
+    local sessionData = {
+        player      = playerName,
+        playerAddr  = playerAddr,
+        nodeKey     = playerNode.key,
+        nodeName    = playerNode.name,
+        casinoAddr  = casinoAddr,
+        deposit     = deposit,
+        balance     = deposit,
+        startedAt   = os.epoch("utc"),
+    }
+    saveSession(sessionData)
 
     -- ── Step 2: Session ───────────────────────────────────────────────────────
     -- All wins/losses tracked in sessionBalance; nothing touches the ledger
@@ -580,12 +650,62 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
             }
             local pick = numMap[k]
             if pick and list[pick] then
-                local net, desc = list[pick].fn(ui, sessionBalance)
-                sessionBalance = sessionBalance + net
-                if sessionBalance < 0 then sessionBalance = 0 end
-                log(string.format("%s player=%s game=%s net=%+d  session=%d  %s",
-                    net >= 0 and "WIN" or "LOSS",
-                    playerName, list[pick].name, net, sessionBalance, desc))
+                local gameName = list[pick].name
+
+                -- P3: solvency cap — limit effective bet so casino can always pay.
+                local maxMult    = GAME_MAX_MULT[gameName] or 1
+                local casinoBal  = getBalance(modem, casinoKey, playerNode, casinoAddr) or 0
+                local maxBet     = math.floor(casinoBal / maxMult)
+                local cappedBal  = math.min(sessionBalance, math.max(0, maxBet))
+                if cappedBal <= 0 then
+                    ui.banner("Casino Insufficient Funds")
+                    ui.center(6, "Casino wallet cannot cover a win right now.", colors.red)
+                    ui.center(7, "Tell the operator to top up the casino.",      colors.lightGray)
+                    ui.center(8, string.format("Casino balance: %d uAMI", casinoBal), colors.gray)
+                    os.sleep(3)
+                elseif cappedBal < sessionBalance then
+                    ui.center(base + 2,
+                        string.format("  Bet capped to %d uAMI (solvency limit)", cappedBal),
+                        colors.yellow)
+                    os.sleep(1.2)
+                    -- P4: pcall isolation — a crash in any game returns to menu
+                    local ok, net, desc = pcall(list[pick].fn, ui, cappedBal)
+                    if not ok then
+                        log(string.format("GAME_ERROR player=%s game=%s err=%s", playerName, gameName, tostring(net)))
+                        ui.banner("Game Error")
+                        ui.center(6, "A game error occurred. Session intact.", colors.red)
+                        ui.center(7, "Your balance is unchanged.", colors.lightGray)
+                        os.sleep(2)
+                    else
+                        net = net or 0
+                        sessionBalance = sessionBalance + net
+                        if sessionBalance < 0 then sessionBalance = 0 end
+                        sessionData.balance = sessionBalance
+                        saveSession(sessionData)   -- P1: persist after every outcome
+                        log(string.format("%s player=%s game=%s bet_cap=%d net=%+d session=%d  %s",
+                            net >= 0 and "WIN" or "LOSS",
+                            playerName, gameName, cappedBal, net, sessionBalance, tostring(desc)))
+                    end
+                else
+                    -- P4: pcall isolation — a crash in any game returns to menu
+                    local ok, net, desc = pcall(list[pick].fn, ui, sessionBalance)
+                    if not ok then
+                        log(string.format("GAME_ERROR player=%s game=%s err=%s", playerName, gameName, tostring(net)))
+                        ui.banner("Game Error")
+                        ui.center(6, "A game error occurred. Session intact.", colors.red)
+                        ui.center(7, "Your balance is unchanged.", colors.lightGray)
+                        os.sleep(2)
+                    else
+                        net = net or 0
+                        sessionBalance = sessionBalance + net
+                        if sessionBalance < 0 then sessionBalance = 0 end
+                        sessionData.balance = sessionBalance
+                        saveSession(sessionData)   -- P1: persist after every outcome
+                        log(string.format("%s player=%s game=%s net=%+d session=%d  %s",
+                            net >= 0 and "WIN" or "LOSS",
+                            playerName, gameName, net, sessionBalance, tostring(desc)))
+                    end
+                end
             end
         end
     end
@@ -603,18 +723,28 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
 
     if sessionBalance == 0 then
         ui.center(11, "Session balance is 0. Nothing to return.", colors.gray)
-        log(string.format("CASHOUT player=%s returned=0 pnl=%d", playerName, pnl))
+        -- P5: log casino wallet balance at cashout
+        local casinoBal = getBalance(modem, casinoKey, playerNode, casinoAddr) or -1
+        log(string.format("CASHOUT player=%s returned=0 pnl=%d casino_bal=%d", playerName, pnl, casinoBal))
+        clearSession()   -- P1: clean up session file
         os.sleep(2); return
     end
 
     ui.center(11, string.format("Transferring %d uAMI back to you...", sessionBalance), colors.yellow)
     local ok = creditWin(modem, casinoKey, playerNode, playerAddr, sessionBalance)
+    -- P5: snapshot casino balance after cashout for audit log
+    local casinoBalAfter = getBalance(modem, casinoKey, playerNode, casinoAddr) or -1
     if ok then
         ui.center(12, "Done! Thanks for playing.", colors.lime)
-        log(string.format("CASHOUT player=%s returned=%d pnl=%d", playerName, sessionBalance, pnl))
+        log(string.format("CASHOUT player=%s returned=%d pnl=%d casino_bal=%d",
+            playerName, sessionBalance, pnl, casinoBalAfter))
+        clearSession()   -- P1: clean up session file on successful cashout
     else
         ui.center(12, "Transfer failed! Tell the operator.", colors.red)
-        log(string.format("CASHOUT_FAIL player=%s returned=%d", playerName, sessionBalance))
+        log(string.format("CASHOUT_FAIL player=%s returned=%d casino_bal=%d",
+            playerName, sessionBalance, casinoBalAfter))
+        -- P1: session file intentionally NOT cleared on failed cashout
+        -- so the operator can manually inspect and recover the amount owed
     end
     os.sleep(2.5)
 end
@@ -700,7 +830,7 @@ end
 local function main()
     term.clear(); term.setCursorPos(1, 1)
     print("===========================================")
-    print("  AmiCasino v1.0")
+    print("  AmiCasino v1.1")
     print("  AmiCoin Gamble Station")
     print("===========================================")
 
@@ -717,8 +847,53 @@ local function main()
     print("[Casino] Modem open on ch " .. MESH_CHANNEL)
 
     local cfg = loadConfig()
-    print(string.format("[Casino] %d node(s) configured. Press P to play.", #cfg.nodes))
-    os.sleep(1)
+    print(string.format("[Casino] %d node(s) configured.", #cfg.nodes))
+
+    -- P1: orphaned session recovery.
+    -- If the computer rebooted mid-session a session.json will exist.
+    -- Attempt to auto-cashout so the stranded player gets their money back.
+    local orphan = loadSession()
+    if orphan and type(orphan.playerAddr) == "string" and type(orphan.nodeKey) == "string" then
+        term.setTextColor(colors.red)
+        print("[Casino] ORPHANED SESSION DETECTED!")
+        print(string.format("[Casino]   Player : %s", orphan.player or "?"))
+        print(string.format("[Casino]   Balance: %d uAMI", orphan.balance or 0))
+        print(string.format("[Casino]   Node   : %s", orphan.nodeName or "?"))
+        term.setTextColor(colors.yellow)
+        print("[Casino] Attempting auto-cashout...")
+        term.setTextColor(colors.white)
+        if orphan.balance and orphan.balance > 0 then
+            local recovNode = nil
+            for _, n in ipairs(cfg.nodes) do
+                if n.key == orphan.nodeKey then recovNode = n; break end
+            end
+            if not recovNode then
+                recovNode = { name = orphan.nodeName or "?", key = orphan.nodeKey }
+            end
+            local ok = creditWin(modem, casinoKey, recovNode, orphan.playerAddr, orphan.balance)
+            local casinoBal = getBalance(modem, casinoKey, recovNode, casinoAddr) or -1
+            if ok then
+                log(string.format("ORPHAN_CASHOUT player=%s returned=%d casino_bal=%d",
+                    orphan.player or "?", orphan.balance, casinoBal))
+                print(string.format("[Casino] Auto-cashout OK: %d uAMI returned.", orphan.balance))
+                clearSession()
+            else
+                log(string.format("ORPHAN_CASHOUT_FAIL player=%s owed=%d",
+                    orphan.player or "?", orphan.balance))
+                term.setTextColor(colors.red)
+                print("[Casino] Auto-cashout FAILED. session.json preserved.")
+                print(string.format("[Casino] Owe %s %d uAMI manually.",
+                    orphan.player or "?", orphan.balance))
+                term.setTextColor(colors.white)
+            end
+        else
+            clearSession()  -- zero-balance orphan, just clean up
+        end
+        os.sleep(2)
+    end
+
+    print("[Casino] Press P to play.")
+    os.sleep(0.5)
 
     while lobby(modem, casinoKey, casinoAddr, cfg) do
         cfg = loadConfig()   -- reload after admin changes

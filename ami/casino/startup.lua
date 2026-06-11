@@ -310,6 +310,21 @@ local function deductLoss(modem, casinoKey, node, playerKey, address, amount)
     return true
 end
 
+-- Register the casino's own address+name on every configured node.
+local function registerOnNodes(modem, casinoKey, casinoAddr, nodes, name)
+    local ok_ct, fail_ct = 0, 0
+    for _, node in ipairs(nodes) do
+        local resp = meshSend(modem, casinoKey, node.key, {
+            cmd  = "REGISTER",
+            from = casinoAddr,
+            name = name,
+        })
+        if resp and resp.ok then ok_ct = ok_ct + 1
+        else                     fail_ct = fail_ct + 1 end
+    end
+    return ok_ct, fail_ct
+end
+
 -- ── Admin: node configuration ─────────────────────────────────────────────────
 local function adminMenu(cfg, modem, casinoKey, casinoAddr)
     while true do
@@ -461,21 +476,6 @@ local function selfUpdate()
         os.sleep(3); os.reboot()
     end
     ui.waitKey()
-end
-
--- Register the casino's own address+name on every configured node.
-local function registerOnNodes(modem, casinoKey, casinoAddr, nodes, name)
-    local ok_ct, fail_ct = 0, 0
-    for _, node in ipairs(nodes) do
-        local resp = meshSend(modem, casinoKey, node.key, {
-            cmd  = "REGISTER",
-            from = casinoAddr,
-            name = name,
-        })
-        if resp and resp.ok then ok_ct = ok_ct + 1
-        else                     fail_ct = fail_ct + 1 end
-    end
-    return ok_ct, fail_ct
 end
 
 -- Send an INVOICE on ch 1338 and wait for PAYMENT_ACK, then verify the

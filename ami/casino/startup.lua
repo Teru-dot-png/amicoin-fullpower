@@ -51,7 +51,7 @@ end
 -- ── Config (node key list) ────────────────────────────────────────────────────
 local function loadConfig()
     if not fs.exists(CONFIG_FILE) then
-        return { nodes = {} }
+        return { nodes = {}, casino_name = nil }
     end
     local f = fs.open(CONFIG_FILE, "r")
     local t = textutils.unserialiseJSON(f.readAll()) or {}
@@ -288,10 +288,29 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
         end
         local base = 6 + #cfg.nodes
         ui.rule(base)
-        ui.line(base + 1, "[A] Add node  [D] Delete  [B] Back", colors.orange)
+        ui.line(base + 1, "[A] Add node  [D] Delete  [R] Register name  [B] Back", colors.orange)
 
         local _, k = os.pullEvent("key")
         if k == keys.b then break
+        elseif k == keys.r then
+            ui.banner("Register Casino Name")
+            local current = cfg.casino_name or "(not set)"
+            ui.line(5, "  Current name: " .. current, colors.lightGray)
+            ui.line(6, "  New name (Enter=keep, B=cancel):", colors.yellow)
+            term.setCursorPos(1, 7); io.write("> ")
+            local newName = read()
+            newName = newName:gsub("^%s*(.-)%s*$", "%1")
+            if newName == "b" or newName == "B" then
+                -- cancelled
+            elseif #newName > 0 then
+                cfg.casino_name = newName
+                saveConfig(cfg)
+                ui.center(9, "Registering on " .. #cfg.nodes .. " node(s)...", colors.yellow)
+                local ok_ct, fail_ct = registerOnNodes(modem, casinoKey, casinoAddr, cfg.nodes, newName)
+                ui.center(10, string.format("%d OK  %d failed", ok_ct, fail_ct),
+                    fail_ct > 0 and colors.red or colors.lime)
+                os.sleep(1.5)
+            end
         elseif k == keys.a then
             ui.banner("Add Node")
             ui.line(5, "Node name:", colors.yellow)
@@ -407,6 +426,70 @@ local function selfUpdate()
     ui.waitKey()
 end
 
+-- Register the casino's own address+name on every configured node.
+local function registerOnNodes(modem, casinoKey, casinoAddr, nodes, name)
+    local ok_ct, fail_ct = 0, 0
+    for _, node in ipairs(nodes) do
+        local resp = meshSend(modem, casinoKey, node.key, {
+            cmd  = "REGISTER",
+            from = casinoAddr,
+            name = name,
+        })
+        if resp and resp.ok then ok_ct = ok_ct + 1
+        else                     fail_ct = fail_ct + 1 end
+    end
+    return ok_ct, fail_ct
+end
+
+-- Send an INVOICE on ch 1338 and wait for PAYMENT_ACK.  Returns true on ACK.
+local function waitForPayment(modem, playerAddr, casinoAddr, amount, purpose, timeoutSecs)
+    local txId   = fnv1a(tostring(os.epoch("utc")) .. playerAddr .. purpose)
+    local invoice = textutils.serialiseJSON({
+        type      = "INVOICE",
+        to        = playerAddr,
+        tx_id     = txId,
+        shop_addr = casinoAddr,
+        shop_name = "AmiCasino",
+        item      = "ami:casino/" .. purpose,
+        qty       = 1,
+        total     = amount,
+    })
+    modem.open(1338)
+    modem.transmit(1338, 1338, invoice)
+    local deadline    = os.epoch("utc") / 1000 + (timeoutSecs or 120)
+    local lastResend  = os.epoch("utc") / 1000
+    local paid        = false
+    while os.epoch("utc") / 1000 < deadline do
+        local rem = math.floor(deadline - os.epoch("utc") / 1000)
+        ui.center(12, string.format("Waiting for Pad [Y]...  %3ds", rem), colors.cyan)
+        -- Re-broadcast every 10s
+        if os.epoch("utc") / 1000 - lastResend >= 10 then
+            modem.transmit(1338, 1338, invoice)
+            lastResend = os.epoch("utc") / 1000
+        end
+        local tid = os.startTimer(1)
+        while true do
+            local ev, a, b, _, d = os.pullEvent()
+            if ev == "timer" and a == tid then break end
+            if ev == "modem_message" and b == 1338
+            and type(d) == "string" and d:sub(1,1) == "{" then
+                local ok2, pkt = pcall(textutils.unserialiseJSON, d)
+                if ok2 and type(pkt) == "table"
+                and pkt.type == "PAYMENT_ACK"
+                and pkt.tx_id == txId then
+                    paid = true; break
+                end
+            end
+            if ev == "key" and a == keys.b then
+                modem.close(1338); return false, "Cancelled"
+            end
+        end
+        if paid then break end
+    end
+    modem.close(1338)
+    return paid, paid and nil or "Timed out"
+end
+
 -- ── Game menu ─────────────────────────────────────────────────────────────────
 local GAME_PAGES = {
     {
@@ -424,38 +507,70 @@ local GAME_PAGES = {
     },
 }
 
-local function gameMenu(modem, casinoKey, cfg, playerName, playerAddr, playerNode)
+local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAddr, playerNode)
+    -- ── Step 1: Deposit ───────────────────────────────────────────────────────
+    ui.banner("Deposit")
+    ui.rule(4)
+    ui.line(5, string.format("  Welcome, %s!", playerName), colors.orange)
+    ui.line(6, "  How much do you want to play with?", colors.yellow)
+    ui.line(7, "  (You will get any unspent amount back.)", colors.lightGray)
+    ui.rule(8)
+
+    -- Fetch player's real balance to cap the deposit prompt
+    local playerBal = getBalance(modem, casinoKey, playerNode, playerAddr) or 0
+    ui.line(9, string.format("  Your balance: %.4f AMI  (%d uAMI)", playerBal / 1000000, playerBal), colors.lightGray)
+
+    local deposit = ui.readBet(10, playerBal)
+    if not deposit then return end
+
+    -- Broadcast INVOICE so player pays the casino from their Pad
+    ui.banner("Deposit")
+    ui.rule(4)
+    ui.line(5, string.format("  Depositing %d uAMI", deposit), colors.yellow)
+    ui.line(6, string.format("  = %.4f AMI", deposit / 1000000), colors.yellow)
+    ui.rule(7)
+    ui.line(8,  "  An invoice has been sent to your Wallet Pad.", colors.lightGray)
+    ui.line(9,  "  Press [Y] on your Pad to confirm the deposit.", colors.lightGray)
+    ui.line(10, "  Press [B] here to cancel.", colors.gray)
+
+    local paid, payErr = waitForPayment(modem, playerAddr, casinoAddr, deposit, "deposit")
+    if not paid then
+        ui.banner("Deposit Cancelled")
+        ui.center(6, payErr or "Cancelled", colors.red)
+        ui.center(7, "No funds moved.", colors.gray)
+        os.sleep(2); return
+    end
+
+    log(string.format("DEPOSIT player=%s amount=%d", playerName, deposit))
+
+    -- ── Step 2: Session ───────────────────────────────────────────────────────
+    -- All wins/losses tracked in sessionBalance; nothing touches the ledger
+    -- until the player cashes out.
+    local sessionBalance = deposit
     local page = 1
-    while true do
+
+    while sessionBalance > 0 do
         local list = GAME_PAGES[page]
         ui.banner("Game Select")
         ui.rule(4)
         ui.line(5, string.format("  Player: %s", playerName), colors.orange)
-
-        -- Fetch current balance
-        local bal = getBalance(modem, casinoKey, playerNode, playerAddr)
-        if bal then
-            ui.line(6, string.format("  Balance: %.4f AMI  (%d uAMI)", bal / 1000000, bal), colors.lime)
-        else
-            ui.line(6, "  Balance: (unreachable)", colors.red)
-            bal = 0
-        end
-
-        ui.rule(7)
+        ui.line(6, string.format("  Session: %.4f AMI  (%d uAMI)",
+            sessionBalance / 1000000, sessionBalance), colors.lime)
+        ui.line(7, string.format("  Deposited: %d uAMI   P&L: %+d uAMI",
+            deposit, sessionBalance - deposit), sessionBalance >= deposit and colors.lime or colors.red)
+        ui.rule(8)
         for i, g in ipairs(list) do
-            ui.line(7 + i, string.format("  [%d] %s", i, g.name), colors.white)
+            ui.line(8 + i, string.format("  [%d] %s", i, g.name), colors.white)
         end
-        local base = 8 + #list
+        local base = 9 + #list
         ui.rule(base)
-        if page < #GAME_PAGES then
-            ui.line(base + 1, "  [N]ext page  [B]ack to lobby", colors.gray)
-        else
-            ui.line(base + 1, "  [P]rev page  [B]ack to lobby", colors.gray)
-        end
+        local pageHint = page < #GAME_PAGES and "[N]ext" or "[P]rev"
+        ui.line(base + 1,
+            string.format("  [1-5] select  %s page  [B] Cashout", pageHint),
+            colors.gray)
 
         local _, k = os.pullEvent("key")
-
-        if k == keys.b then return
+        if k == keys.b then break
         elseif k == keys.n and page < #GAME_PAGES then page = page + 1
         elseif k == keys.p and page > 1            then page = page - 1
         else
@@ -465,102 +580,43 @@ local function gameMenu(modem, casinoKey, cfg, playerName, playerAddr, playerNod
             }
             local pick = numMap[k]
             if pick and list[pick] then
-                if bal <= 0 then
-                    ui.banner("No Funds")
-                    ui.center(6, "Your balance is 0 on this node.", colors.red)
-                    ui.center(7, "Transfer some AMI here first.", colors.lightGray)
-                    os.sleep(2); return
-                end
-
-                -- Run the game; it returns net µAMI change and a description
-                local net, desc = list[pick].fn(ui, bal)
-
-                -- Apply the result to the ledger
-                if net > 0 then
-                    -- WIN: credit winnings
-                    ui.banner("Processing...")
-                    ui.center(6, string.format("Crediting +%d uAMI...", net), colors.yellow)
-                    local ok = creditWin(modem, casinoKey, playerNode, playerAddr, net)
-                    if ok then
-                        ui.center(7, "Done!", colors.lime)
-                        log(string.format("WIN  player=%s game=%s net=+%d  %s",
-                            playerName, list[pick].name, net, desc))
-                    else
-                        ui.center(7, "Node unreachable! Winnings not credited.", colors.red)
-                        log(string.format("WIN_FAIL player=%s game=%s net=+%d  %s",
-                            playerName, list[pick].name, net, desc))
-                    end
-                    os.sleep(1.5)
-                elseif net < 0 then
-                    -- LOSS: deduct from player via signed transfer
-                    -- The player's wallet already accepted the bet deduction
-                    -- because we used TRANSFER from player's address at bet time.
-                    -- In this architecture we ask the player to sign a loss transfer
-                    -- by sending an INVOICE on channel 1338 and waiting for ACK.
-                    local lossAmt = -net
-                    ui.banner("Processing...")
-                    ui.center(6, string.format("Sending invoice for -%d uAMI...", lossAmt), colors.yellow)
-                    ui.center(7, "Accept on your Wallet Pad!", colors.orange)
-
-                    local txId = fnv1a(tostring(os.epoch("utc")) .. playerAddr)
-                    local invoice = textutils.serialiseJSON({
-                        type      = "INVOICE",
-                        to        = playerAddr,
-                        tx_id     = txId,
-                        shop_addr = string.rep("0", 128),  -- burn address
-                        shop_name = "AmiCasino",
-                        item      = "ami:casino/loss",
-                        qty       = 1,
-                        total     = lossAmt,
-                    })
-                    modem.transmit(1338, 1338, invoice)
-
-                    -- Wait up to 60s for PAYMENT_ACK
-                    local paid = false
-                    local deadline = os.epoch("utc") / 1000 + 60
-                    modem.open(1338)
-                    while os.epoch("utc") / 1000 < deadline do
-                        local tid = os.startTimer(1)
-                        while true do
-                            local ev, a, b, _, d = os.pullEvent()
-                            if ev == "timer" and a == tid then break end
-                            if ev == "modem_message" and b == 1338 then
-                                if type(d) == "string" and d:sub(1,1) == "{" then
-                                    local ok2, pkt = pcall(textutils.unserialiseJSON, d)
-                                    if ok2 and type(pkt) == "table"
-                                    and pkt.type == "PAYMENT_ACK"
-                                    and pkt.tx_id == txId then
-                                        paid = true; break
-                                    end
-                                end
-                            end
-                        end
-                        if paid then break end
-                        local rem = math.floor(deadline - os.epoch("utc") / 1000)
-                        ui.center(8, string.format("Waiting for Pad ACK... %ds", rem), colors.gray)
-                        -- Rebroadcast invoice every 10s
-                        if rem % 10 == 0 then modem.transmit(1338, 1338, invoice) end
-                    end
-                    modem.close(1338)
-
-                    if paid then
-                        ui.center(9, "Loss confirmed. Better luck next time!", colors.gray)
-                        log(string.format("LOSS player=%s game=%s net=-%d  %s",
-                            playerName, list[pick].name, lossAmt, desc))
-                    else
-                        ui.center(9, "Timed out — loss not confirmed.", colors.red)
-                        log(string.format("LOSS_TIMEOUT player=%s game=%s net=-%d",
-                            playerName, list[pick].name, lossAmt))
-                    end
-                    os.sleep(1.5)
-                else
-                    -- Push / cancelled
-                    log(string.format("PUSH player=%s game=%s  %s",
-                        playerName, list[pick].name, desc))
-                end
+                local net, desc = list[pick].fn(ui, sessionBalance)
+                sessionBalance = sessionBalance + net
+                if sessionBalance < 0 then sessionBalance = 0 end
+                log(string.format("%s player=%s game=%s net=%+d  session=%d  %s",
+                    net >= 0 and "WIN" or "LOSS",
+                    playerName, list[pick].name, net, sessionBalance, desc))
             end
         end
     end
+
+    -- ── Step 3: Cashout ───────────────────────────────────────────────────────
+    ui.banner("Cashout")
+    ui.rule(4)
+    local pnl = sessionBalance - deposit
+    ui.line(5, string.format("  Player     : %s", playerName), colors.orange)
+    ui.line(6, string.format("  Deposited  : %d uAMI", deposit), colors.lightGray)
+    ui.line(7, string.format("  Returning  : %d uAMI", sessionBalance), colors.white)
+    ui.line(8, string.format("  P&L        : %+d uAMI", pnl),
+        pnl >= 0 and colors.lime or colors.red)
+    ui.rule(9)
+
+    if sessionBalance == 0 then
+        ui.center(11, "Session balance is 0. Nothing to return.", colors.gray)
+        log(string.format("CASHOUT player=%s returned=0 pnl=%d", playerName, pnl))
+        os.sleep(2); return
+    end
+
+    ui.center(11, string.format("Transferring %d uAMI back to you...", sessionBalance), colors.yellow)
+    local ok = creditWin(modem, casinoKey, playerNode, playerAddr, sessionBalance)
+    if ok then
+        ui.center(12, "Done! Thanks for playing.", colors.lime)
+        log(string.format("CASHOUT player=%s returned=%d pnl=%d", playerName, sessionBalance, pnl))
+    else
+        ui.center(12, "Transfer failed! Tell the operator.", colors.red)
+        log(string.format("CASHOUT_FAIL player=%s returned=%d", playerName, sessionBalance))
+    end
+    os.sleep(2.5)
 end
 
 -- ── Lobby ─────────────────────────────────────────────────────────────────────
@@ -568,18 +624,24 @@ local function lobby(modem, casinoKey, casinoAddr, cfg)
     ui.banner("AmiCasino")
     ui.rule(4)
     ui.center(5, "Welcome to AmiCasino!", colors.yellow)
-    ui.center(6, "All games mint or burn AmiCoin directly.", colors.lightGray)
-    ui.rule(7)
-    ui.line(8, "  [P] Play", colors.lime)
+    ui.rule(6)
+    -- Show casino address for top-up transfers
+    local shortAddr = casinoAddr:sub(1,16) .. "..."
+    local casinoLabel = cfg.casino_name
+        and ("  Name: " .. cfg.casino_name .. "  (" .. shortAddr .. ")")
+        or  ("  Addr: " .. shortAddr .. "  (unregistered)")
+    ui.line(7, casinoLabel:sub(1, ui.W()), cfg.casino_name and colors.lime or colors.gray)
+    ui.rule(8)
+    ui.line(9,  "  [P] Play", colors.lime)
     if #cfg.nodes == 0 then
-        ui.line(9, "  [A] Admin (setup nodes first!)", colors.red)
+        ui.line(10, "  [A] Admin (setup nodes first!)", colors.red)
     else
-        ui.line(9, "  [A] Admin", colors.orange)
+        ui.line(10, "  [A] Admin", colors.orange)
     end
-    ui.line(10, "  [U] Update from GitHub", colors.gray)
-    ui.line(11, "  [Q] Quit", colors.gray)
-    ui.rule(12)
-    ui.line(13, string.format("  %d node(s) configured", #cfg.nodes), colors.lightGray)
+    ui.line(11, "  [U] Update from GitHub", colors.gray)
+    ui.line(12, "  [Q] Quit", colors.gray)
+    ui.rule(13)
+    ui.line(14, string.format("  %d node(s) configured", #cfg.nodes), colors.lightGray)
 
     while true do
         local _, k = os.pullEvent("key")
@@ -628,7 +690,7 @@ local function lobby(modem, casinoKey, casinoAddr, cfg)
             ui.center(9, "Found! Node: " .. playerNode.name, colors.lime)
             os.sleep(0.6)
 
-            gameMenu(modem, casinoKey, cfg, playerName, playerAddr, playerNode)
+            gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAddr, playerNode)
             return true
         end
     end

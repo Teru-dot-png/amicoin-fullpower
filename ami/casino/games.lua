@@ -137,6 +137,7 @@ function games.mines(ui, balance)
                     for gy = 1, GRID_H do
                         local row = GRID_ROW_START + gy - 1
                         term.setCursorPos(1, row)
+                        term.clearLine()   -- clear before writing tiles
                         term.write("  ")
                         for gx = 1, GRID_W do
                             local pos = (gy - 1) * GRID_W + gx
@@ -151,7 +152,6 @@ function games.mines(ui, balance)
                                 term.write("[ . ]")
                             end
                         end
-                        term.clearLine()
                     end
                     ui.rule(9)
                     ui.line(10, string.format("  x%.3f  Cashout: %d uAMI  Safe: %d/%d  Mines: %d",
@@ -422,6 +422,7 @@ function games.blackjack(ui, balance)
         local w = ui.W()
         ui.banner("Blackjack")
         -- Dealer row
+        term.clearLine()  -- clear row before writing dealer hand
         term.setCursorPos(1, 4); term.setTextColor(colors.lightGray)
         term.write("  Dealer: ")
         if hideDealer then
@@ -435,21 +436,18 @@ function games.blackjack(ui, balance)
             term.setTextColor(handVal(dealer) > 21 and colors.red or colors.white)
             term.write("(" .. handVal(dealer) .. ")")
         end
-        term.clearLine()
         -- Player row
         local pv = handVal(player)
         local pCol = pv > 21 and colors.red or colors.white
-        term.setCursorPos(1, 5); term.setTextColor(pCol)
+        term.setCursorPos(1, 5); term.clearLine(); term.setTextColor(pCol)
         term.write("  You:    ")
         for _, c in ipairs(player) do
             term.setTextColor(ui.cardColor(c.suit)); term.write(ui.cardStr(c.rank, c.suit) .. " ")
         end
         term.setTextColor(pCol); term.write("(" .. pv .. ")")
-        term.clearLine()
         ui.rule(6)
-        term.setCursorPos(1, 7); term.setTextColor(colors.yellow)
+        term.setCursorPos(1, 7); term.clearLine(); term.setTextColor(colors.yellow)
         term.write(string.format("  Bet: %d uAMI", bet))
-        term.clearLine()
         if note then
             ui.line(8, "  " .. note, colors.orange)
         else
@@ -656,8 +654,7 @@ function games.higherLower(ui, balance)
         local w = ui.W()
         ui.banner("Higher / Lower")
         -- Multiplier ladder with current position highlighted
-        term.setCursorPos(1, 4)
-        term.setTextColor(colors.gray)
+        term.setCursorPos(1, 4); term.clearLine(); term.setTextColor(colors.gray)
         term.write("  ")
         for i, m in ipairs(MULTS) do
             if i == streak + 1 then
@@ -666,7 +663,7 @@ function games.higherLower(ui, balance)
                 term.setTextColor(colors.gray);   term.write(string.format(" %.1fx ", m))
             end
         end
-        term.clearLine()
+        -- no clearLine here (multiplier ladder fills the row)
 
         -- Big card display
         local cardW = 4; local cardX = math.floor((w - cardW) / 2) + 1

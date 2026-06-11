@@ -91,7 +91,9 @@ function games.mines(ui, balance)
         if raw == "?" then ui.helpOverlay("Mines — Help", _HELP.mines) else
             local mc = tonumber(raw)
             if mc and mc >= 1 and mc <= 12 then
-                local bet = ui.readBet(8, balance)
+                ui.banner("Mines")
+                ui.line(4, string.format("  Mine count: %d   Bet:", mc), colors.yellow)
+                local bet = ui.readBet(5, balance)
                 if not bet then return 0, "Cancelled" end
 
                 -- Place mines
@@ -539,7 +541,7 @@ function games.roulette(ui, balance)
 
     ui.banner("Roulette")
     ui.line(4, "  Single-zero European roulette.  [?] help  [B] back", colors.yellow)
-    ui.line(5, "  [N]um(35:1)  [R]ed  [B]lack  [O]dd  [E]ven", colors.lightGray)
+    ui.line(5, "  [N]um(35:1)  [R]ed  [K]Black  [O]dd  [E]ven", colors.lightGray)
     ui.line(6, "  [H]igh  [L]ow  [1][2][3]=dozen  [C]ol 1/2/3  (1:2)", colors.lightGray)
 
     local bet = ui.readBet(7, balance)
@@ -547,20 +549,22 @@ function games.roulette(ui, balance)
 
     ui.rule(11)
     ui.line(12, "  Bet type?  [B]=cancel  [?]=help", colors.yellow)
+    ui.line(13, "  [R]ed  [K]Black  [O]dd  [E]ven  [H]igh  [L]ow", colors.lightGray)
+    ui.line(14, "  [N]um(35:1)  [1][2][3]=dozen  [C]ol 1/2/3", colors.lightGray)
 
     local betType, betNum
     while not betType do
         local _, k = os.pullEvent("key")
-        if k == keys.b then return 0, "Cancelled"
+        if     k == keys.b then return 0, "Cancelled"
         elseif k == keys.q or k == keys.equals then
             ui.helpOverlay("Roulette — Help", _HELP.roul)
         elseif k == keys.n then
-            ui.line(13, "  Number (0-36): ", colors.yellow)
-            term.setCursorPos(1, 14); io.write("> ")
+            ui.line(15, "  Number (0-36): ", colors.yellow)
+            term.setCursorPos(1, 16); io.write("> ")
             local raw = read(); betNum = tonumber(raw)
             if betNum and betNum >= 0 and betNum <= 36 then betType = "number" end
         elseif k == keys.r then betType = "red"
-        elseif k == keys.b then betType = "black"
+        elseif k == keys.k then betType = "black"   -- [K] for blacK (avoids [B]=back conflict)
         elseif k == keys.o then betType = "odd"
         elseif k == keys.e then betType = "even"
         elseif k == keys.h then betType = "high"
@@ -569,8 +573,8 @@ function games.roulette(ui, balance)
         elseif k == keys.two   then betType = "dozen2"
         elseif k == keys.three then betType = "dozen3"
         elseif k == keys.c then
-            ui.line(13, "  Column 1/2/3? ", colors.yellow)
-            term.setCursorPos(1, 14); io.write("> ")
+            ui.line(15, "  Column 1/2/3? ", colors.yellow)
+            term.setCursorPos(1, 16); io.write("> ")
             local cv = tonumber(read())
             if cv == 1 then betType = "col1"
             elseif cv == 2 then betType = "col2"
@@ -667,7 +671,7 @@ function games.higherLower(ui, balance)
 
         -- Big card display
         local cardW = 4; local cardX = math.floor((w - cardW) / 2) + 1
-        ui.drawCardBox(cardX, 5, current, _SUITS[math.random(4)], false)
+        ui.drawCardBox(cardX, 5, current, displaySuit, false)
         ui.center(8, string.format("Round %d/%d   Streak %d   Mult x%.1f",
             round, ROUNDS, streak, MULTS[math.max(1, streak)] or 1), colors.lightGray)
         ui.rule(9)

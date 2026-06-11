@@ -15,55 +15,17 @@
 
 local ui = {}
 
--- ── Real terminal (captured once at load, before any redirect) ────────────────
-local _realTerm = term.current()
+-- ui.W() / ui.H() always query the live terminal size.
+function ui.W() local w = term.getSize(); return w end
+function ui.H() local _, h = term.getSize(); return h end
 
-function ui.W() return select(1, _realTerm.getSize()) end
-function ui.H() return select(2, _realTerm.getSize()) end
-
--- ── Double-buffer ─────────────────────────────────────────────────────────────
-local _buf     = nil
-local _bufW    = 0
-local _bufH    = 0
-local _oldTerm = nil   -- saved terminal ref while inside a frame
-
-local function ensureBuf()
-    local w, h = _realTerm.getSize()
-    if not _buf or w ~= _bufW or h ~= _bufH then
-        _buf  = window.create(_realTerm, 1, 1, w, h, false)
-        _bufW = w; _bufH = h
-    end
-    return _buf
-end
-
--- Start an off-screen frame. All term.* calls go to the buffer until endFrame().
--- Call ui.cls() after beginFrame() to clear the buffer for a fresh draw.
-function ui.beginFrame()
-    local buf = ensureBuf()
-    _oldTerm = term.redirect(buf)
-end
-
--- Flush the buffer to the real terminal atomically (no flicker).
-function ui.endFrame()
-    if _oldTerm then
-        term.redirect(_oldTerm)
-        _oldTerm = nil
-    end
-    if _buf then
-        _buf.setVisible(true)
-        _buf.setVisible(false)
-    end
-end
-
--- One-shot flush for static screens drawn outside of beginFrame/endFrame.
--- Call after drawing a static screen and before a read() call so the cursor
--- appears on the already-flushed screen.
-function ui.flush()
-    if _buf and not _oldTerm then
-        _buf.setVisible(true)
-        _buf.setVisible(false)
-    end
-end
+-- beginFrame / endFrame are intentional no-ops.
+-- The window double-buffer (setVisible false/true) was hiding all static
+-- content because setVisible(false) restores the parent's cleared framebuffer.
+-- Games draw directly to term; the slight per-frame flicker is acceptable.
+function ui.beginFrame() end
+function ui.endFrame()   end
+function ui.flush()      end
 
 -- ── Sound ─────────────────────────────────────────────────────────────────────
 local _speaker = peripheral.find("speaker")
@@ -255,7 +217,7 @@ end
 -- Draws a floating box over the current screen. Waits for any key.
 -- Caller MUST redraw their screen after this returns.
 function ui.helpOverlay(title, lines)
-    local w, h = _realTerm.getSize()
+    local w, h = term.getSize()
     local bw = math.min(w - 2, 44)
     local bh = math.min(#lines + 4, h - 2)
     local bx = math.floor((w - bw) / 2) + 1
@@ -281,7 +243,6 @@ function ui.helpOverlay(title, lines)
     local foot = " [Any key] Close "
     term.setCursorPos(bx + math.floor((bw - #foot) / 2), by + bh - 1)
     term.write(foot)
-    if _buf and not _oldTerm then _buf.setVisible(true); _buf.setVisible(false) end
     os.pullEvent("key")
 end
 
@@ -360,12 +321,12 @@ end
 
 -- ── Win / loss banners ────────────────────────────────────────────────────────
 function ui.winBanner(title, sub)
-    local w, h = _realTerm.getSize()
+    local w, h = term.getSize()
     ui.sfx("win")
     local row = math.floor(h / 2) - 1
-    for flash = 1, 4 do
-        ui.beginFrame()
-        term.setBackgroundColor(flash % 2 == 0 and colors.lime or colors.green)
+    local bgs  = {colors.lime, colors.green, colors.lime, colors.green}
+    for _, bg in ipairs(bgs) do
+        term.setBackgroundColor(bg)
         term.setTextColor(colors.black)
         term.setCursorPos(1, row); term.clearLine()
         local t = (title or "YOU WIN!"):sub(1, w)
@@ -375,19 +336,18 @@ function ui.winBanner(title, sub)
             local s = sub:sub(1, w)
             term.setCursorPos(math.floor((w - #s) / 2) + 1, row + 1); term.write(s)
         end
-        ui.endFrame()
-        os.sleep(0.25)
+        os.sleep(0.2)
     end
     term.setBackgroundColor(colors.black)
 end
 
 function ui.loseBanner(title, sub)
-    local w, h = _realTerm.getSize()
+    local w, h = term.getSize()
     ui.sfx("loss")
     local row = math.floor(h / 2) - 1
-    for flash = 1, 4 do
-        ui.beginFrame()
-        term.setBackgroundColor(flash % 2 == 0 and colors.red or colors.orange)
+    local bgs  = {colors.red, colors.orange, colors.red, colors.orange}
+    for _, bg in ipairs(bgs) do
+        term.setBackgroundColor(bg)
         term.setTextColor(colors.white)
         term.setCursorPos(1, row); term.clearLine()
         local t = (title or "YOU LOSE!"):sub(1, w)
@@ -397,8 +357,7 @@ function ui.loseBanner(title, sub)
             local s = sub:sub(1, w)
             term.setCursorPos(math.floor((w - #s) / 2) + 1, row + 1); term.write(s)
         end
-        ui.endFrame()
-        os.sleep(0.25)
+        os.sleep(0.2)
     end
     term.setBackgroundColor(colors.black)
 end

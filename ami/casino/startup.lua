@@ -406,6 +406,7 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
         elseif k == keys.p then
             -- Change password
             ui.banner("Change Admin Password")
+            local passOk = true
             if cfg.admin_pass and cfg.admin_pass ~= "" then
                 ui.line(4, "  Current password:", colors.yellow)
                 term.setCursorPos(1, 5); io.write("  > ")
@@ -413,92 +414,99 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
                 if not checkAdminPass(cfg, old) then
                     ui.center(7, "Wrong password.", colors.red)
                     os.sleep(1.2)
-                    goto continue
+                    passOk = false
                 end
             end
-            ui.line(6, "  New password (blank=remove):", colors.yellow)
-            term.setCursorPos(1, 7); io.write("  > ")
-            local np = read("*")
-            if #np == 0 then
-                cfg.admin_pass = ""
-                ui.center(9, "Password removed.", colors.gray)
-            else
-                term.setCursorPos(1, 8); io.write("  Confirm: ")
-                local np2 = read("*")
-                if np ~= np2 then
-                    ui.center(10, "Mismatch — unchanged.", colors.red)
-                    os.sleep(1.2); goto continue
+            if passOk then
+                ui.line(6, "  New password (blank=remove):", colors.yellow)
+                term.setCursorPos(1, 7); io.write("  > ")
+                local np = read("*")
+                if #np == 0 then
+                    cfg.admin_pass = ""
+                    ui.center(9, "Password removed.", colors.gray)
+                    saveConfig(cfg)
+                    os.sleep(1)
+                else
+                    term.setCursorPos(1, 8); io.write("  Confirm: ")
+                    local np2 = read("*")
+                    if np ~= np2 then
+                        ui.center(10, "Mismatch — unchanged.", colors.red)
+                        os.sleep(1.2)
+                    else
+                        cfg.admin_pass = hashPass(np)
+                        ui.center(9, "Password updated.", colors.lime)
+                        saveConfig(cfg)
+                        os.sleep(1)
+                    end
                 end
-                cfg.admin_pass = hashPass(np)
-                ui.center(9, "Password updated.", colors.lime)
             end
-            saveConfig(cfg)
-            os.sleep(1)
         elseif k == keys.w then
             -- Withdraw: transfer casino balance to operator's wallet
             if #cfg.nodes == 0 then
                 ui.banner("Withdraw")
                 ui.center(6, "No nodes configured.", colors.red)
-                os.sleep(1.5); goto continue
-            end
-            ui.banner("Withdraw to Wallet")
-            -- Show casino balance
-            local node = cfg.nodes[1]
-            local casinoBal = getBalance(modem, casinoKey, node, casinoAddr) or 0
-            ui.line(4, string.format("  Casino balance: %d uAMI (%.4f AMI)",
-                casinoBal, casinoBal / 1000000), colors.yellow)
-            ui.rule(5)
-            ui.line(6, "  Your Ami-DNS name:", colors.lightGray)
-            term.setCursorPos(1, 7); io.write("  > ")
-            local recipName = read()
-            recipName = recipName:gsub("^%s*(.-)%s*$", "%1")
-            if #recipName == 0 then goto continue end
-            -- Resolve name
-            ui.center(9, "Looking up '" .. recipName .. "'...", colors.yellow)
-            local recipAddr = nil
-            for _, n in ipairs(cfg.nodes) do
-                local resp = meshSend(modem, casinoKey, n.key, {
-                    cmd  = "LOOKUP",
-                    from = casinoAddr,
-                    name = recipName,
-                })
-                if resp and resp.ok and type(resp.address) == "string" and #resp.address == 128 then
-                    recipAddr = resp.address; break
+                os.sleep(1.5)
+            else
+                ui.banner("Withdraw to Wallet")
+                local node = cfg.nodes[1]
+                local casinoBal = getBalance(modem, casinoKey, node, casinoAddr) or 0
+                ui.line(4, string.format("  Casino balance: %d uAMI (%.4f AMI)",
+                    casinoBal, casinoBal / 1000000), colors.yellow)
+                ui.rule(5)
+                ui.line(6, "  Your Ami-DNS name:", colors.lightGray)
+                term.setCursorPos(1, 7); io.write("  > ")
+                local recipName = read()
+                recipName = recipName:gsub("^%s*(.-)%s*$", "%1")
+                if #recipName > 0 then
+                    ui.center(9, "Looking up '" .. recipName .. "'...", colors.yellow)
+                    local recipAddr = nil
+                    for _, n in ipairs(cfg.nodes) do
+                        local resp = meshSend(modem, casinoKey, n.key, {
+                            cmd  = "LOOKUP",
+                            from = casinoAddr,
+                            name = recipName,
+                        })
+                        if resp and resp.ok and type(resp.address) == "string" and #resp.address == 128 then
+                            recipAddr = resp.address; break
+                        end
+                    end
+                    if not recipAddr then
+                        ui.center(9, "Name not found on any node.", colors.red)
+                        os.sleep(2)
+                    else
+                        ui.line(10, "  Amount to withdraw (AMI, M=all):", colors.yellow)
+                        term.setCursorPos(1, 11); io.write("  > ")
+                        local amtRaw = (read() or ""):gsub("%s","")
+                        local withdrawAmt
+                        if amtRaw:lower() == "m" then
+                            withdrawAmt = casinoBal
+                        else
+                            local n2 = tonumber(amtRaw)
+                            withdrawAmt = n2 and math.floor(n2 * 1000000) or 0
+                        end
+                        if withdrawAmt <= 0 or withdrawAmt > casinoBal then
+                            ui.center(13, "Invalid amount.", colors.red)
+                            os.sleep(1.2)
+                        else
+                            ui.center(13, string.format("Sending %d uAMI to %s...", withdrawAmt, recipName), colors.yellow)
+                            local wresp = meshSend(modem, casinoKey, node.key, {
+                                cmd    = "TRANSFER",
+                                from   = casinoAddr,
+                                to     = recipAddr,
+                                amount = withdrawAmt,
+                            })
+                            if wresp and wresp.ok then
+                                ui.center(14, "Done! Withdrawn " .. withdrawAmt .. " uAMI.", colors.lime)
+                                log(string.format("WITHDRAW to=%s amount=%d", recipName, withdrawAmt))
+                            else
+                                ui.center(14, "Transfer failed: " .. tostring(wresp and wresp.err or "no response"), colors.red)
+                                log(string.format("WITHDRAW_FAIL to=%s amount=%d", recipName, withdrawAmt))
+                            end
+                            os.sleep(2)
+                        end
+                    end
                 end
             end
-            if not recipAddr then
-                ui.center(9, "Name not found on any node.", colors.red)
-                os.sleep(2); goto continue
-            end
-            ui.line(10, "  Amount to withdraw (AMI, M=all):", colors.yellow)
-            term.setCursorPos(1, 11); io.write("  > ")
-            local amtRaw = read(); amtRaw = (amtRaw or ""):gsub("%s","")
-            local withdrawAmt
-            if amtRaw:lower() == "m" then
-                withdrawAmt = casinoBal
-            else
-                local n = tonumber(amtRaw)
-                withdrawAmt = n and math.floor(n * 1000000) or 0
-            end
-            if withdrawAmt <= 0 or withdrawAmt > casinoBal then
-                ui.center(13, "Invalid amount.", colors.red)
-                os.sleep(1.2); goto continue
-            end
-            ui.center(13, string.format("Sending %d uAMI to %s...", withdrawAmt, recipName), colors.yellow)
-            local resp = meshSend(modem, casinoKey, node.key, {
-                cmd    = "TRANSFER",
-                from   = casinoAddr,
-                to     = recipAddr,
-                amount = withdrawAmt,
-            })
-            if resp and resp.ok then
-                ui.center(14, "Done! Withdrawn " .. withdrawAmt .. " uAMI.", colors.lime)
-                log(string.format("WITHDRAW to=%s amount=%d", recipName, withdrawAmt))
-            else
-                ui.center(14, "Transfer failed: " .. tostring(resp and resp.err or "no response"), colors.red)
-                log(string.format("WITHDRAW_FAIL to=%s amount=%d", recipName, withdrawAmt))
-            end
-            os.sleep(2)
         elseif k == keys.r then
             ui.banner("Register Casino Name")
             local current = cfg.casino_name or "(not set)"
@@ -585,7 +593,6 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
                 saveConfig(cfg)
             end
         end
-        ::continue::
     end
 end
 
@@ -944,15 +951,14 @@ local function lobby(modem, casinoKey, casinoAddr, cfg)
             -- First-time: no password set yet → run setup wizard
             if cfg.admin_pass == nil then
                 local ok = setupAdminPassword(cfg)
-                cfg = loadConfig()   -- reload after potential save
-                if not ok then goto lobbyRedraw end
+                cfg = loadConfig()
+                if not ok then return true end  -- reload lobby (redraw)
             end
             -- Password gate
-            if not promptAdminPass(cfg) then goto lobbyRedraw end
+            if not promptAdminPass(cfg) then return true end
             adminMenu(cfg, modem, casinoKey, casinoAddr)
             return true   -- reload lobby
 
-        ::lobbyRedraw::
         elseif k == keys.p then
             if #cfg.nodes == 0 then
                 ui.banner("No Nodes")

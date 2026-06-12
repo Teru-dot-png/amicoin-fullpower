@@ -384,7 +384,9 @@ Configure via the Admin Dashboard (`[S]` key) or directly in `config.json`.
 
 ## Buyer / Seller Protocol
 
-Third-party clients (other pads, turtles) communicate with AmiStore on **channel 1338** using XTEA-encrypted JSON packets. Wire format is identical to the AmiCoin mesh: `senderKeyHex|cipherHex`.
+Third-party clients (other pads, turtles) communicate with AmiStore on **channel 1338** using XTEA-encrypted JSON packets for shop commands, and plaintext JSON for invoice/payment events. Wire format for shop commands is identical to the AmiCoin mesh: `senderKeyHex|cipherHex`.
+
+> **Note:** `INVOICE` and `PAYMENT_ACK` packets on channel 1338 are **plaintext JSON** (not XTEA-encrypted). Only `SHOP_QUOTE`, `SHOP_CONFIRM`, `SHOP_SELL`, and `SHOP_PING` use the XTEA wire format.
 
 ### Commands
 

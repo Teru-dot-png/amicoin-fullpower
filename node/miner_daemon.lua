@@ -3,9 +3,9 @@
 -- Tracks which wallet addresses have been heard on the mesh within the
 -- active window, then mints coins proportional to their online time.
 --
--- Reward schedule (per node, per real-time minute of uptime):
---   Base rate : 25 microcoins / minute  (0.000025 AMI)
---   Halving   : every 525,600 minutes (~1 Minecraft year of real time)
+-- Reward schedule (per node, per 30-second tick of uptime):
+--   Base rate : 25 microcoins / tick  (0.000025 AMI per tick per wallet)
+--   Halving   : every 525,600 ticks (~182 real days at 30s/tick)
 --
 -- The daemon keeps an in-memory "heartbeat" table.  Wallets that send
 -- any signed packet to the node within HEARTBEAT_TTL seconds are

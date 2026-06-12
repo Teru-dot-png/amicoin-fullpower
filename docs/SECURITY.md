@@ -107,7 +107,7 @@ Your **Secret Key** is a 128-bit (32 hexadecimal character) random value generat
 
 - It is the **sole master credential** for your wallet.
 - It is used to encrypt every packet your Pad sends.
-- Your **public address** is deterministically derived from it (64-byte SHA-512-style derivation → 128 hex chars).
+- Your **public address** is deterministically derived from it (128-bit key expanded to 64 bytes via two-pass XOR/multiply mixing → 128 hex chars).
 - Anyone who obtains your Secret Key can impersonate you on the network, send your funds, and earn your uptime rewards.
 
 ### Rules for the Secret Key
@@ -163,7 +163,9 @@ Press **`[L]`** (Logout) to invalidate and delete the session token at any time.
 
 AmiVault locks are enforced server-side on the node. The node uses `os.epoch("utc")` for unlock time comparisons. Because CC:Tweaked computers derive time from the server clock, a player cannot bypass a vault lock by manipulating their local clock — the check happens on the node, not the Pad.
 
-Locked funds cannot be transferred, even if the wallet address is known, because the node rejects any TRANSFER that would reduce the balance below the sum of all active vault locks for that address.
+Locked funds cannot be transferred, even if the wallet address is known, because the node rejects any TRANSFER that would reduce the balance below zero.
+
+> **Note (known limitation):** The TRANSFER handler does not currently check active vault locks. A wallet that has exactly `X` µAMI locked in a vault could still transfer that `X` away via TRANSFER, leaving the vault unable to return funds on unlock. This is a known bug tracked separately. Vault funds are safest when the wallet maintains headroom above the locked amount.
 
 **Maximum vault duration** is capped at **30 days (2,592,000 seconds)**. This prevents accidental permanent self-lockout from an unreasonably large duration value submitted by a buggy client.
 

@@ -364,12 +364,9 @@ Navigate pages with **`[N]`** / **`[P]`**. Select a game with **`[1–5]`**. Pre
 
 ### Money Flow
 
-```
-Player wins  →  Casino wallet TRANSFER to player address  (coins move)
-Player loses →  Casino broadcasts INVOICE on ch 1338
-                Player accepts [Y] on Wallet Pad
-                Coins sent to burn address (128-zero) → destroyed
-```
+**Win:**  Casino TRANSFER to player address (coins move from casino wallet)
+**Loss:** Session balance decreases in memory; no per-game on-chain movement
+**Cashout:** Single TRANSFER at session end. If casino is short, pays what it has and records the remainder owed in the session file.
 
 > **Important:** The casino wallet must hold enough AMI to cover payouts. If it runs dry, winning players will not receive funds. Top it up periodically via any AmiCoin wallet.
 
@@ -390,13 +387,14 @@ Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 
 | Period | Base Rate | Notes |
 |--------|-----------|-------|
-| Ticks 0 – 525,599 | *live rate* µAMI / tick / wallet | ~1 in-game year |
+| Ticks 0 – 525,599 | *live rate* µAMI / tick / wallet | ~182 real days at 30s/tick |
 | Ticks 525,600 – 1,051,199 | *live rate* ÷ 2 | First halving |
 | Ticks 1,051,200 – 1,576,799 | *live rate* ÷ 4 | Second halving |
 | … | Halves each period | Floor: 1 µAMI |
 
 - A wallet is **active** if it has sent any packet to the node within the last 90 seconds (extendable to 180 s with the Heartbeat Extender upgrade).
 - Each reward cycle is **30 seconds** (120 ticks/hr). All active wallets receive the current effective rate simultaneously.
+- The `HALVING_TICKS` constant is 525,600 ticks = 525,600 × 30s ≈ **182 real days** per halving period.
 - The **effective rate** paid per wallet per tick is `floor(base_rate × miner_multiplier)` where `miner_multiplier = 1.0 + 0.2 × miner_boost_level`.
 - `totalTicks` is persisted to `/data/miner_state.json` and survives reboots, so the halving schedule is never reset.
 

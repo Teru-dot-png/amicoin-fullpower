@@ -9,7 +9,7 @@
 -- Data store : /data/upgrades.json
 -- Invoice ch : 1338  (same channel as AmiStore PAYMENT_ACK)
 --
--- upgrades.json schema:
+-- upgrades.json schema (plaintext; the file itself is XTEA-encrypted on disk):
 -- {
 --   "treasury":      "<128-hex>",  -- wallet address that receives upgrade revenue
 --   "owner_name":    "PlayerName", -- human label for the treasury

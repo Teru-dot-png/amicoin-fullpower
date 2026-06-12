@@ -11,8 +11,11 @@
 --   1. Player deposits via INVOICE; coins land in casino wallet.
 --   2. Session balance tracked in memory AND persisted to SESSION_FILE.
 --   3. On cashout: single TRANSFER casino->player for sessionBalance.
---   4. Deposit verified by checking casino wallet balance actually rose.
+--   4. Payment confirmed when PAYMENT_ACK is received from wallet.
+--      (Balance re-query was removed: it caused false negatives on multi-node
+--       setups where payment settles on a different node than the casino queries.)
 --   5. Bets are capped so the casino can always pay the maximum possible win.
+--   6. Pre-cashout solvency check: partial payout if casino wallet is short.
 
 package.path = package.path .. ";/ami/casino/?.lua"
 local ui    = require("ui")

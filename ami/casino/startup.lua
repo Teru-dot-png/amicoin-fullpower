@@ -88,7 +88,7 @@ end
 -- ── Config (node key list) ────────────────────────────────────────────────────
 local function loadConfig()
     if not fs.exists(CONFIG_FILE) then
-        return { nodes = {}, casino_name = nil }
+        return { nodes = {}, casino_name = nil, admin_pass = nil }
     end
     local f = fs.open(CONFIG_FILE, "r")
     local t = textutils.unserialiseJSON(f.readAll()) or {}
@@ -325,6 +325,65 @@ local function registerOnNodes(modem, casinoKey, casinoAddr, nodes, name)
     return ok_ct, fail_ct
 end
 
+-- ── Admin password helpers ───────────────────────────────────────────────────
+local function hashPass(plain)
+    return fnv1a(plain .. "amicasino_salt_v1")
+end
+
+-- Returns true if plain matches stored hash, or if no password is set.
+local function checkAdminPass(cfg, plain)
+    if not cfg.admin_pass or cfg.admin_pass == "" then return true end
+    return hashPass(plain) == cfg.admin_pass
+end
+
+-- First-time password setup.  Runs once when admin_pass is absent.
+-- Returns false if operator cancels (presses B with empty input).
+local function setupAdminPassword(cfg)
+    ui.banner("Admin Password Setup")
+    ui.line(4, "  Set a password for the Admin menu.", colors.yellow)
+    ui.line(5, "  This protects node keys and withdrawals.", colors.lightGray)
+    ui.line(6, "  Leave blank and press Enter to skip (not recommended).", colors.gray)
+    ui.rule(7)
+    term.setCursorPos(1, 8); term.setTextColor(colors.white)
+    io.write("  Password: ")
+    local pw = read("*")
+    if #pw == 0 then
+        ui.center(10, "No password set. Admin is unprotected.", colors.red)
+        os.sleep(1.5)
+        cfg.admin_pass = ""
+    else
+        term.setCursorPos(1, 9); io.write("  Confirm:  ")
+        local pw2 = read("*")
+        if pw ~= pw2 then
+            ui.center(11, "Passwords do not match. Try again.", colors.red)
+            os.sleep(1.5)
+            return false
+        end
+        cfg.admin_pass = hashPass(pw)
+        ui.center(11, "Password set!", colors.lime)
+        os.sleep(0.8)
+    end
+    saveConfig(cfg)
+    return true
+end
+
+-- Prompts for the admin password and returns true on success.
+-- If no password is configured, returns true immediately.
+local function promptAdminPass(cfg)
+    if not cfg.admin_pass or cfg.admin_pass == "" then return true end
+    ui.banner("Admin Login")
+    ui.line(4, "  Enter admin password:", colors.yellow)
+    term.setCursorPos(1, 5); io.write("  > ")
+    local pw = read("*")
+    if checkAdminPass(cfg, pw) then
+        return true
+    else
+        ui.center(7, "Wrong password.", colors.red)
+        os.sleep(1.2)
+        return false
+    end
+end
+
 -- ── Admin: node configuration ─────────────────────────────────────────────────
 local function adminMenu(cfg, modem, casinoKey, casinoAddr)
     while true do
@@ -340,10 +399,106 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
         end
         local base = 6 + #cfg.nodes
         ui.rule(base)
-        ui.line(base + 1, "[A] Add node  [D] Delete  [R] Register name  [B] Back", colors.orange)
+        ui.line(base + 1, "[A] Add  [D] Del  [R] Reg name  [W] Withdraw  [P] Passwd  [B] Back", colors.orange)
 
         local _, k = os.pullEvent("key")
         if k == keys.b then break
+        elseif k == keys.p then
+            -- Change password
+            ui.banner("Change Admin Password")
+            if cfg.admin_pass and cfg.admin_pass ~= "" then
+                ui.line(4, "  Current password:", colors.yellow)
+                term.setCursorPos(1, 5); io.write("  > ")
+                local old = read("*")
+                if not checkAdminPass(cfg, old) then
+                    ui.center(7, "Wrong password.", colors.red)
+                    os.sleep(1.2)
+                    goto continue
+                end
+            end
+            ui.line(6, "  New password (blank=remove):", colors.yellow)
+            term.setCursorPos(1, 7); io.write("  > ")
+            local np = read("*")
+            if #np == 0 then
+                cfg.admin_pass = ""
+                ui.center(9, "Password removed.", colors.gray)
+            else
+                term.setCursorPos(1, 8); io.write("  Confirm: ")
+                local np2 = read("*")
+                if np ~= np2 then
+                    ui.center(10, "Mismatch — unchanged.", colors.red)
+                    os.sleep(1.2); goto continue
+                end
+                cfg.admin_pass = hashPass(np)
+                ui.center(9, "Password updated.", colors.lime)
+            end
+            saveConfig(cfg)
+            os.sleep(1)
+        elseif k == keys.w then
+            -- Withdraw: transfer casino balance to operator's wallet
+            if #cfg.nodes == 0 then
+                ui.banner("Withdraw")
+                ui.center(6, "No nodes configured.", colors.red)
+                os.sleep(1.5); goto continue
+            end
+            ui.banner("Withdraw to Wallet")
+            -- Show casino balance
+            local node = cfg.nodes[1]
+            local casinoBal = getBalance(modem, casinoKey, node, casinoAddr) or 0
+            ui.line(4, string.format("  Casino balance: %d uAMI (%.4f AMI)",
+                casinoBal, casinoBal / 1000000), colors.yellow)
+            ui.rule(5)
+            ui.line(6, "  Your Ami-DNS name:", colors.lightGray)
+            term.setCursorPos(1, 7); io.write("  > ")
+            local recipName = read()
+            recipName = recipName:gsub("^%s*(.-)%s*$", "%1")
+            if #recipName == 0 then goto continue end
+            -- Resolve name
+            ui.center(9, "Looking up '" .. recipName .. "'...", colors.yellow)
+            local recipAddr = nil
+            for _, n in ipairs(cfg.nodes) do
+                local resp = meshSend(modem, casinoKey, n.key, {
+                    cmd  = "LOOKUP",
+                    from = casinoAddr,
+                    name = recipName,
+                })
+                if resp and resp.ok and type(resp.address) == "string" and #resp.address == 128 then
+                    recipAddr = resp.address; break
+                end
+            end
+            if not recipAddr then
+                ui.center(9, "Name not found on any node.", colors.red)
+                os.sleep(2); goto continue
+            end
+            ui.line(10, "  Amount to withdraw (AMI, M=all):", colors.yellow)
+            term.setCursorPos(1, 11); io.write("  > ")
+            local amtRaw = read(); amtRaw = (amtRaw or ""):gsub("%s","")
+            local withdrawAmt
+            if amtRaw:lower() == "m" then
+                withdrawAmt = casinoBal
+            else
+                local n = tonumber(amtRaw)
+                withdrawAmt = n and math.floor(n * 1000000) or 0
+            end
+            if withdrawAmt <= 0 or withdrawAmt > casinoBal then
+                ui.center(13, "Invalid amount.", colors.red)
+                os.sleep(1.2); goto continue
+            end
+            ui.center(13, string.format("Sending %d uAMI to %s...", withdrawAmt, recipName), colors.yellow)
+            local resp = meshSend(modem, casinoKey, node.key, {
+                cmd    = "TRANSFER",
+                from   = casinoAddr,
+                to     = recipAddr,
+                amount = withdrawAmt,
+            })
+            if resp and resp.ok then
+                ui.center(14, "Done! Withdrawn " .. withdrawAmt .. " uAMI.", colors.lime)
+                log(string.format("WITHDRAW to=%s amount=%d", recipName, withdrawAmt))
+            else
+                ui.center(14, "Transfer failed: " .. tostring(resp and resp.err or "no response"), colors.red)
+                log(string.format("WITHDRAW_FAIL to=%s amount=%d", recipName, withdrawAmt))
+            end
+            os.sleep(2)
         elseif k == keys.r then
             ui.banner("Register Casino Name")
             local current = cfg.casino_name or "(not set)"
@@ -430,6 +585,7 @@ local function adminMenu(cfg, modem, casinoKey, casinoAddr)
                 saveConfig(cfg)
             end
         end
+        ::continue::
     end
 end
 
@@ -785,9 +941,18 @@ local function lobby(modem, casinoKey, casinoAddr, cfg)
             return true   -- reload
 
         elseif k == keys.a then
+            -- First-time: no password set yet → run setup wizard
+            if cfg.admin_pass == nil then
+                local ok = setupAdminPassword(cfg)
+                cfg = loadConfig()   -- reload after potential save
+                if not ok then goto lobbyRedraw end
+            end
+            -- Password gate
+            if not promptAdminPass(cfg) then goto lobbyRedraw end
             adminMenu(cfg, modem, casinoKey, casinoAddr)
             return true   -- reload lobby
 
+        ::lobbyRedraw::
         elseif k == keys.p then
             if #cfg.nodes == 0 then
                 ui.banner("No Nodes")

@@ -887,28 +887,59 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
 
     if sessionBalance == 0 then
         ui.center(11, "Session balance is 0. Nothing to return.", colors.gray)
-        -- P5: log casino wallet balance at cashout
         local casinoBal = getBalance(modem, casinoKey, playerNode, casinoAddr) or -1
         log(string.format("CASHOUT player=%s returned=0 pnl=%d casino_bal=%d", playerName, pnl, casinoBal))
-        clearSession()   -- P1: clean up session file
+        clearSession()
         os.sleep(2); return
     end
 
-    ui.center(11, string.format("Transferring %d uAMI back to you...", sessionBalance), colors.yellow)
-    local ok = creditWin(modem, casinoKey, playerNode, playerAddr, sessionBalance)
-    -- P5: snapshot casino balance after cashout for audit log
+    -- Check casino balance BEFORE attempting the transfer so the player
+    -- gets a clear message if the house can't cover the full payout.
+    local casinoBal = getBalance(modem, casinoKey, playerNode, casinoAddr) or 0
+    local payAmt    = sessionBalance
+
+    if casinoBal < sessionBalance then
+        -- Casino is short.  Pay whatever is available; log the shortfall.
+        ui.rule(10)
+        if casinoBal <= 0 then
+            ui.center(11, "Casino wallet is empty!", colors.red)
+            ui.center(12, string.format("You are owed %d uAMI.", sessionBalance), colors.orange)
+            ui.center(13, "Session file saved. Tell the operator.", colors.lightGray)
+            log(string.format("CASHOUT_INSOLVENT player=%s owed=%d casino_bal=0", playerName, sessionBalance))
+            os.sleep(4); return   -- session file NOT cleared — operator must settle manually
+        else
+            payAmt = casinoBal
+            ui.center(11, string.format("Casino only has %d uAMI!", casinoBal), colors.red)
+            ui.center(12, string.format("Paying %d of %d uAMI owed.", payAmt, sessionBalance), colors.orange)
+            ui.center(13, "Remainder logged — tell the operator.", colors.lightGray)
+            log(string.format("CASHOUT_PARTIAL player=%s owed=%d paying=%d casino_bal=%d",
+                playerName, sessionBalance, payAmt, casinoBal))
+            os.sleep(3)
+        end
+    end
+
+    ui.center(11, string.format("Transferring %d uAMI back to you...", payAmt), colors.yellow)
+    local ok = creditWin(modem, casinoKey, playerNode, playerAddr, payAmt)
     local casinoBalAfter = getBalance(modem, casinoKey, playerNode, casinoAddr) or -1
     if ok then
-        ui.center(12, "Done! Thanks for playing.", colors.lime)
-        log(string.format("CASHOUT player=%s returned=%d pnl=%d casino_bal=%d",
-            playerName, sessionBalance, pnl, casinoBalAfter))
-        clearSession()   -- P1: clean up session file on successful cashout
+        if payAmt < sessionBalance then
+            -- Partial pay: keep session file with the remaining shortfall
+            sessionData.balance = sessionBalance - payAmt
+            saveSession(sessionData)
+            ui.center(12, string.format("Paid %d uAMI. Still owed %d uAMI.", payAmt, sessionBalance - payAmt), colors.orange)
+            log(string.format("CASHOUT_PARTIAL_OK player=%s paid=%d still_owed=%d casino_bal=%d",
+                playerName, payAmt, sessionBalance - payAmt, casinoBalAfter))
+        else
+            ui.center(12, "Done! Thanks for playing.", colors.lime)
+            log(string.format("CASHOUT player=%s returned=%d pnl=%d casino_bal=%d",
+                playerName, sessionBalance, pnl, casinoBalAfter))
+            clearSession()
+        end
     else
         ui.center(12, "Transfer failed! Tell the operator.", colors.red)
         log(string.format("CASHOUT_FAIL player=%s returned=%d casino_bal=%d",
             playerName, sessionBalance, casinoBalAfter))
-        -- P1: session file intentionally NOT cleared on failed cashout
-        -- so the operator can manually inspect and recover the amount owed
+        -- session file NOT cleared — operator must settle manually
     end
     os.sleep(2.5)
 end

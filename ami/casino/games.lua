@@ -63,13 +63,13 @@ end
 
 -- ── HELP texts ────────────────────────────────────────────────────────────────
 local _HELP = {
-    mines  = {"5x5 grid hides N mines. Reveal safe tiles","to grow a multiplier. Cash out [C] any time.","Hit a mine and lose your bet. More mines = more","risk but higher multipliers per safe tile.","","  Safe tiles cleared: bigger multiplier","  Mines = 1: low risk, moderate reward","  Mines = 12: extreme risk, huge reward"},
+    mines  = {"5x5 grid hides N mines. Reveal safe tiles","to grow a multiplier. Cash out [C] any time.","Hit a mine and lose your bet. More mines = more","risk AND higher multipliers per safe tile.","","  Multiplier per tile = (tiles_left / safe_left) x 0.97","  Mines = 1: low risk, low reward per tile","  Mines = 12: extreme risk, huge reward per tile"},
     crash  = {"A multiplier starts at 1x and climbs. It will","CRASH at a random point drawn from a skewed","distribution (many low crashes, rare high ones).","","  Press [C] or click to cash out NOW.","  Your cashout is honoured even on the exact","  tick the crash would fire (race-condition fix).","  House edge: ~4% (P(crash<=x) = 1 - 0.96/x)"},
     slots  = {"3 weighted reels. Left reel stops first.","","  3x 7  = 10x bet  (jackpot)","  3x $  =  5x bet","  3x A  =  3x bet","  3x K  =  2x bet","  3x J  =  1x bet","  Pair (leftmost two)  = 0.5x bet","  No match = lose bet","  House edge: ~5%"},
     bj     = {"Get as close to 21 as possible.","Dealer draws until 17+ (stands on soft 17).","Blackjack (A+10-card) pays 3:2.","","  [H]it   - draw another card","  [S]tand - end your turn","  [D]ouble-down - double bet, draw 1 card","","  House edge: ~2.2% with optimal play","  (Double-down ENABLED — reduces edge ~0.3pp)"},
-    roul   = {"European single-zero roulette (37 pockets).","","  [N]umber  (0-36) → 35:1","  [R]ed  [B]lack → 1:1","  [O]dd  [E]ven  → 1:1","  [H]igh(19-36)  [L]ow(1-18) → 1:1","  [1][2][3] Dozen → 2:1","  [C]olumn 1/2/3 → 2:1","  House edge: 1/37 ≈ 2.7% on ALL bets"},
+    roul   = {"European single-zero roulette (37 pockets).","","  1. Enter chip size (bet placed per click).","  2. Left-click any spot to place a chip.","     Right-click to remove one chip from a spot.","     Click multiple different spots to multi-bet.","  3. Press [Enter] to spin.  [C] clears all bets.","","  Spots: numbers 0-36 (35:1)","         [D1]/[D2]/[D3] dozen (2:1)","         [C1]/[C2]/[C3] column (2:1)","         Red/Black/Odd/Even/Low/High (1:1)","","  House edge: 1/37 ≈ 2.7% on ALL bets"},
     hl     = {"Guess if the next card is Higher or Lower.","Equal card = free round (no loss).","","  5 rounds. Multiply streak up to 3.2x.","  [Q] or [B] at any time = cash out current win.","","  Multiplier ladder:","  1 correct: 1.2x   3 correct: 1.9x","  2 correct: 1.5x   4 correct: 2.5x   5: 3.2x"},
-    pach   = {"Ball drops through 7 rows of pegs,","bouncing left or right at each one.","Final position determines payout:","","  Bucket:  1   2   3   4   5   6   7   8","  Payout: 12x  5x  2x .5x .5x  2x  5x 12x","","  Outer edge = jackpot; centre = low pay.","  House edge: ~4%"},
+    pach   = {"Ball drops through 7 rows of pegs,","bouncing left or right at each one.","Final position determines payout:","","  Bucket:  1   2   3   4   5   6   7   8","  Payout: 12x  5x  2x .5x .5x  2x  5x 12x","","  Choose 1-10 balls. Bet is per ball.","  Each ball is animated separately.","  Outer edge = jackpot; centre = low pay.","  House edge: ~4%"},
     craps  = {"Pass Line Craps.","","  Come-out roll:","    7 or 11 → WIN   2, 3, or 12 → LOSE","    Any other → sets the POINT","","  Point phase: roll until...","    Point again → WIN   7 → LOSE","","  House edge: ~1.4%"},
     coinflip={"Heads or Tails. 50/50 chance.","","  Win pays 1.92x total (0.92x net profit).","  House edge: 4%","","  After a WIN you may Let It Ride:","  bet the winnings again for 1.92x (parlay).","  You keep going until you stop or lose."},
 }
@@ -109,9 +109,15 @@ function games.mines(ui, balance)
                 local safeFound = 0
 
                 local function currentMult()
+                    -- Fair odds multiplier: each step k scales by the probability
+                    -- of picking a safe tile from the remaining unseen tiles.
+                    --   step k factor = (TOTAL - k) / (TOTAL - mc - k)
+                    -- This correctly grows faster with more mines because the
+                    -- denominator (safe tiles left) shrinks more aggressively.
+                    -- 0.97 per step = 3% house edge per reveal.
                     local m = 1.0
                     for k = 0, safeFound - 1 do
-                        m = m * (TOTAL - mc) / (TOTAL - mc - k) * 0.98
+                        m = m * (TOTAL - k) / (TOTAL - mc - k) * 0.97
                     end
                     return m
                 end
@@ -533,108 +539,272 @@ function games.blackjack(ui, balance)
 end
 
 -- ── 5. Roulette ──────────────────────────────────────────────────────────────
--- Added: dozens (1/2/3) and column (C1/C2/C3) bet types.
--- All pay 2:1 on 12/37 numbers → identical 2.7% house edge. NO edge change.
+-- Click-to-bet board: choose chip size, then left-click any spot to place a
+-- chip, right-click to remove one chip. Multiple spots / stacked chips allowed.
+-- Press [Enter] to spin.  House edge 2.7% on all bet types (unchanged).
 function games.roulette(ui, balance)
     local RED = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
     local redSet = {}; for _, n in ipairs(RED) do redSet[n] = true end
 
+    -- ── Screen layout (1-indexed rows/cols, standard 51×19 terminal) ─────────
+    -- Row  4 : [  0  ] zero pocket
+    -- Rows 5-16 : 12 number rows, 3 cells wide + dozen column
+    -- Row 17 : [C1] [C2] [C3] column bets
+    -- Row 18 : side bets  Red / Black / Odd / Even / Low / High
+    -- Row 19 : hint / total bet status
+    local ZERO_ROW  = 4
+    local NUM_ROW_S = 5
+    local COL_ROW   = 17
+    local SIDE_ROW  = 18
+    local HINT_ROW  = 19
+
+    -- Number cell x-ranges ("[nn]" = 4 chars each)
+    local X1S, X1E = 2,  5   -- game col 1: n%3==1  (1,4,7,...,34)
+    local X2S, X2E = 7,  10  -- game col 2: n%3==2  (2,5,8,...,35)
+    local X3S, X3E = 12, 15  -- game col 3: n%3==0  (3,6,9,...,36)
+    local XDZ_S     = 17     -- dozen cell " D1 " (4 chars, ends at 20)
+
+    -- Side bet descriptors: label (6 chars), start-x, end-x
+    local SIDES = {
+        {key="red",   lbl="[Red] ", xs=2,  xe=7 },
+        {key="black", lbl="[Blk] ", xs=9,  xe=14},
+        {key="odd",   lbl="[Odd] ", xs=16, xe=21},
+        {key="even",  lbl="[Evn] ", xs=23, xe=28},
+        {key="low",   lbl="[Low] ", xs=30, xe=35},
+        {key="high",  lbl="[High]", xs=37, xe=42},
+    }
+
+    -- ── Step 1: choose chip size ──────────────────────────────────────────────
     ui.banner("Roulette")
-    ui.line(4, "  Single-zero European roulette.  [?] help  [B] back", colors.yellow)
-    ui.line(5, "  [N]um(35:1)  [R]ed  [K]Black  [O]dd  [E]ven", colors.lightGray)
-    ui.line(6, "  [H]igh  [L]ow  [1][2][3]=dozen  [C]ol 1/2/3  (1:2)", colors.lightGray)
+    ui.line(4, "  Single-zero European Roulette.  [?]=help  [B]=back", colors.yellow)
+    ui.line(5, "  Enter chip size — each click places this amount on a spot.", colors.lightGray)
+    local chipSize = ui.readBet(6, balance)
+    if not chipSize then return 0, "Cancelled" end
 
-    local bet = ui.readBet(7, balance)
-    if not bet then return 0, "Cancelled" end
+    -- ── Bet state ─────────────────────────────────────────────────────────────
+    -- placed[key] = total µAMI staked on that spot (multiples of chipSize).
+    -- Key: integer 0-36 for straight-up; string for outside bets.
+    local placed = {}
+    local function totalPlaced()
+        local t = 0; for _, v in pairs(placed) do t = t + v end; return t
+    end
 
-    ui.rule(11)
-    ui.line(12, "  Bet type?  [B]=cancel  [?]=help", colors.yellow)
-    ui.line(13, "  [R]ed  [K]Black  [O]dd  [E]ven  [H]igh  [L]ow", colors.lightGray)
-    ui.line(14, "  [N]um(35:1)  [1][2][3]=dozen  [C]ol 1/2/3", colors.lightGray)
+    -- ── Click → bet key ───────────────────────────────────────────────────────
+    local function clickKey(cx, cy)
+        -- Zero pocket
+        if cy == ZERO_ROW and cx >= 2 and cx <= 8 then return 0 end
+        -- Number grid
+        if cy >= NUM_ROW_S and cy <= NUM_ROW_S + 11 then
+            local br = cy - NUM_ROW_S + 1  -- board row 1..12
+            if     cx >= X1S and cx <= X1E  then return br*3 - 2
+            elseif cx >= X2S and cx <= X2E  then return br*3 - 1
+            elseif cx >= X3S and cx <= X3E  then return br*3
+            elseif cx >= XDZ_S and cx <= XDZ_S+3 then
+                return br <= 4 and "dozen1" or br <= 8 and "dozen2" or "dozen3"
+            end
+        end
+        -- Column bets
+        if cy == COL_ROW then
+            if     cx >= X1S and cx <= X1E then return "col1"
+            elseif cx >= X2S and cx <= X2E then return "col2"
+            elseif cx >= X3S and cx <= X3E then return "col3"
+            end
+        end
+        -- Side bets
+        if cy == SIDE_ROW then
+            for _, s in ipairs(SIDES) do
+                if cx >= s.xs and cx <= s.xe then return s.key end
+            end
+        end
+        return nil
+    end
 
-    local betType, betNum
-    while not betType do
-        local _, k = os.pullEvent("key")
-        if     k == keys.b then return 0, "Cancelled"
-        elseif k == keys.q or k == keys.equals then
+    -- ── Draw board ────────────────────────────────────────────────────────────
+    local function drawBoard(winNum)
+        local w = ui.W()
+        ui.banner("Roulette")
+
+        -- Zero (row 4)
+        term.setCursorPos(1, ZERO_ROW); term.clearLine()
+        do
+            local bet = placed[0] or 0
+            local isWin = (winNum == 0)
+            local fg = (isWin or bet > 0) and colors.black or colors.green
+            local bg = isWin and colors.yellow or (bet > 0 and colors.lime or colors.black)
+            term.setCursorPos(2, ZERO_ROW)
+            term.setTextColor(fg); term.setBackgroundColor(bg)
+            term.write("[  0  ]")
+            term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
+        end
+
+        -- Number grid (rows 5-16)
+        for br = 1, 12 do
+            local y  = NUM_ROW_S + br - 1
+            term.setCursorPos(1, y); term.clearLine()
+            local nums = {br*3-2, br*3-1, br*3}
+            local xs   = {X1S, X2S, X3S}
+            for ci = 1, 3 do
+                local n   = nums[ci]
+                local bet = placed[n] or 0
+                local isWin = (winNum == n)
+                local isRed = redSet[n]
+                local fg, bg
+                if isWin     then fg = colors.black; bg = colors.yellow
+                elseif bet>0 then fg = colors.black; bg = colors.lime
+                else              fg = isRed and colors.red or colors.lightGray; bg = colors.black
+                end
+                term.setCursorPos(xs[ci], y)
+                term.setTextColor(fg); term.setBackgroundColor(bg)
+                term.write(string.format("[%2d]", n))
+                term.setBackgroundColor(colors.black)
+            end
+            -- Dozen column (same label on all 4 rows of each dozen section)
+            local dzKey = br <= 4 and "dozen1" or br <= 8 and "dozen2" or "dozen3"
+            local dzBet = placed[dzKey] or 0
+            local dzLbl = br <= 4 and " D1 " or br <= 8 and " D2 " or " D3 "
+            term.setCursorPos(XDZ_S, y)
+            term.setTextColor(dzBet > 0 and colors.black or colors.gray)
+            term.setBackgroundColor(dzBet > 0 and colors.lime or colors.black)
+            term.write(dzLbl)
+            term.setBackgroundColor(colors.black)
+        end
+
+        -- Column bet row (row 17)
+        term.setCursorPos(1, COL_ROW); term.clearLine()
+        for i, key in ipairs({"col1","col2","col3"}) do
+            local bet = placed[key] or 0
+            term.setCursorPos(({X1S,X2S,X3S})[i], COL_ROW)
+            term.setTextColor(bet > 0 and colors.black or colors.gray)
+            term.setBackgroundColor(bet > 0 and colors.lime or colors.black)
+            term.write(string.format("[C%d]", i))
+            term.setBackgroundColor(colors.black)
+        end
+
+        -- Side bets row (row 18)
+        term.setCursorPos(1, SIDE_ROW); term.clearLine()
+        for _, s in ipairs(SIDES) do
+            local bet = placed[s.key] or 0
+            -- Resting colour: red=red, black=gray, others=white
+            local restFg = s.key=="red" and colors.red or s.key=="black" and colors.gray or colors.white
+            -- Active background: red=red, black=lightGray, others=lime
+            local actBg  = s.key=="red" and colors.red or s.key=="black" and colors.lightGray or colors.lime
+            local fg = bet > 0 and colors.black or restFg
+            local bg = bet > 0 and actBg         or colors.black
+            term.setCursorPos(s.xs, SIDE_ROW)
+            term.setTextColor(fg); term.setBackgroundColor(bg)
+            term.write(s.lbl)
+            term.setBackgroundColor(colors.black)
+        end
+
+        -- Hint / status row (row 19)
+        term.setCursorPos(1, HINT_ROW); term.clearLine()
+        local tot  = totalPlaced()
+        local hint = tot > 0
+            and string.format("  Bet:%d  [Enter]=SPIN  [C]clear  RClick=undo chip", tot)
+            or  "  LClick=place chip   RClick=remove   [Enter]=SPIN   [B]=back"
+        term.setTextColor(tot > 0 and colors.yellow or colors.gray)
+        term.write(hint:sub(1, w))
+        term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
+    end
+
+    -- ── Bet-placement loop ────────────────────────────────────────────────────
+    drawBoard(nil)
+    while true do
+        local ev, a, b, c = os.pullEvent()
+        if ev == "key" then
+            if a == keys.b then
+                placed = {}; return 0, "Cancelled"
+            elseif a == keys.c then
+                placed = {}; drawBoard(nil)
+            elseif a == keys.enter or a == keys.numPadEnter then
+                if totalPlaced() > 0 then break end  -- spin
+            end
+        elseif ev == "char" and a == "?" then
             ui.helpOverlay("Roulette — Help", _HELP.roul)
-        elseif k == keys.n then
-            ui.line(15, "  Number (0-36): ", colors.yellow)
-            term.setCursorPos(1, 16); io.write("> ")
-            local raw = read(); betNum = tonumber(raw)
-            if betNum and betNum >= 0 and betNum <= 36 then betType = "number" end
-        elseif k == keys.r then betType = "red"
-        elseif k == keys.k then betType = "black"   -- [K] for blacK (avoids [B]=back conflict)
-        elseif k == keys.o then betType = "odd"
-        elseif k == keys.e then betType = "even"
-        elseif k == keys.h then betType = "high"
-        elseif k == keys.l then betType = "low"
-        elseif k == keys.one   then betType = "dozen1"
-        elseif k == keys.two   then betType = "dozen2"
-        elseif k == keys.three then betType = "dozen3"
-        elseif k == keys.c then
-            ui.line(15, "  Column 1/2/3? ", colors.yellow)
-            term.setCursorPos(1, 16); io.write("> ")
-            local cv = tonumber(read())
-            if cv == 1 then betType = "col1"
-            elseif cv == 2 then betType = "col2"
-            elseif cv == 3 then betType = "col3"
+            drawBoard(nil)
+        elseif ev == "mouse_click" then
+            local key = clickKey(b, c)
+            if key ~= nil then
+                local cur = placed[key] or 0
+                if a == 1 then  -- left click: add one chip
+                    if totalPlaced() + chipSize <= balance then
+                        placed[key] = cur + chipSize
+                        ui.sfx("click")
+                    end
+                elseif a == 2 then  -- right click: remove one chip
+                    local nxt = cur - chipSize
+                    placed[key] = nxt > 0 and nxt or nil
+                    ui.sfx("click")
+                end
+                drawBoard(nil)
             end
         end
     end
 
-    -- Spin animation
+    -- ── Spin animation ────────────────────────────────────────────────────────
     ui.banner("Roulette")
     ui.center(5, "Spinning...", colors.yellow)
     for i = 1, 16 do
-        local n = math.random(0, 36)
-        local spinCol = n == 0 and colors.green or (redSet[n] and colors.red or colors.gray)
+        local n  = math.random(0, 36)
+        local sc = n==0 and colors.green or (redSet[n] and colors.red or colors.gray)
         ui.sfx("bell", 0.5, 0.8 + i * 0.02)
-        ui.center(6, " " .. tostring(n) .. " ", spinCol)
+        ui.center(6, " "..tostring(n).." ", sc)
         os.sleep(0.06 + i * 0.012)
     end
 
-    local result = math.random(0, 36)
+    local result  = math.random(0, 36)
     local isRed   = redSet[result]
-    local colName = result == 0 and "green" or (isRed and "red" or "black")
-    local colCode = result == 0 and colors.green or (isRed and colors.red or colors.gray)
+    local colName = result==0 and "green" or (isRed and "red" or "black")
+    local colCode = result==0 and colors.green or (isRed and colors.red or colors.gray)
     ui.sfx("bell", 1.0, 0.6)
     ui.center(6, string.format(" %d (%s) ", result, colName), colCode)
+    os.sleep(0.8)
 
-    -- Evaluate bet
-    local win = false
-    local payout = 1
-    if betType == "number" then
-        win = (result == betNum); payout = 35
-    elseif betType == "red"    then win = (isRed and result ~= 0)
-    elseif betType == "black"  then win = (not isRed and result ~= 0)
-    elseif betType == "odd"    then win = (result ~= 0 and result % 2 == 1)
-    elseif betType == "even"   then win = (result ~= 0 and result % 2 == 0)
-    elseif betType == "high"   then win = (result >= 19)
-    elseif betType == "low"    then win = (result >= 1 and result <= 18)
-    elseif betType == "dozen1" then win = (result >= 1  and result <= 12); payout = 2
-    elseif betType == "dozen2" then win = (result >= 13 and result <= 24); payout = 2
-    elseif betType == "dozen3" then win = (result >= 25 and result <= 36); payout = 2
-    elseif betType == "col1"   then win = (result ~= 0 and result % 3 == 1); payout = 2
-    elseif betType == "col2"   then win = (result ~= 0 and result % 3 == 2); payout = 2
-    elseif betType == "col3"   then win = (result ~= 0 and result % 3 == 0); payout = 2
+    -- Show winning number highlighted on the full board
+    drawBoard(result)
+    os.sleep(1.5)
+
+    -- ── Evaluate all placed bets ──────────────────────────────────────────────
+    local isOdd     = result ~= 0 and result % 2 == 1
+    local resultCol = result ~= 0 and (result%3==1 and 1 or result%3==2 and 2 or 3) or nil
+
+    local function evalBet(key, amt)
+        local win, pay = false, 1
+        if     type(key)=="number" then win = (result==key);                    pay=35
+        elseif key=="red"    then win = isRed and result~=0
+        elseif key=="black"  then win = not isRed and result~=0
+        elseif key=="odd"    then win = isOdd
+        elseif key=="even"   then win = result~=0 and not isOdd
+        elseif key=="high"   then win = result>=19
+        elseif key=="low"    then win = result>=1 and result<=18
+        elseif key=="dozen1" then win = result>=1  and result<=12;             pay=2
+        elseif key=="dozen2" then win = result>=13 and result<=24;             pay=2
+        elseif key=="dozen3" then win = result>=25 and result<=36;             pay=2
+        elseif key=="col1"   then win = resultCol==1;                          pay=2
+        elseif key=="col2"   then win = resultCol==2;                          pay=2
+        elseif key=="col3"   then win = resultCol==3;                          pay=2
+        end
+        return win and amt*pay or -amt
     end
 
-    local net, desc
-    if win then
-        net  = bet * payout
-        desc = string.format("WIN! %d (%s) %s pays %d:1 +%d uAMI",
-            result, colName, betType, payout, net)
-        ui.winBanner(string.format("WIN! %d pays %d:1", result, payout),
-            "+" .. net .. " uAMI")
-    else
-        net  = -bet
-        desc = string.format("LOSE. Ball: %d (%s). Lost %d uAMI.", result, colName, bet)
+    local totalNet = 0
+    for key, amt in pairs(placed) do totalNet = totalNet + evalBet(key, amt) end
+
+    if totalNet > 0 then
+        ui.sfx("win")
+        ui.winBanner(string.format("Ball: %d (%s)", result, colName),
+            string.format("+%d uAMI", totalNet))
+    elseif totalNet < 0 then
+        ui.sfx("loss")
         ui.loseBanner(string.format("Ball: %d (%s)", result, colName),
-            "Lost " .. bet .. " uAMI")
+            string.format("%d uAMI", totalNet))
+    else
+        ui.sfx("tick")
+        ui.center(12, "Push — net 0 uAMI", colors.yellow)
     end
-    os.sleep(1)
-    return net, desc
+    os.sleep(1.5)
+
+    return totalNet, string.format("Ball: %d (%s)  net: %+d uAMI", result, colName, totalNet)
 end
 
 -- ── 6. Higher / Lower ────────────────────────────────────────────────────────
@@ -739,22 +909,46 @@ function games.pachinko(ui, balance)
     local bet = ui.readBet(7, balance)
     if not bet then return 0, "Cancelled" end
 
-    -- Simulate ball path
-    local pos  = 0
-    local path = {}
-    for _ = 1, ROWS do
-        local dir = math.random() < 0.5 and -1 or 1
-        pos = pos + dir
-        path[#path+1] = pos
+    -- Ask how many balls to drop simultaneously
+    local numBalls = 1
+    while true do
+        ui.line(9,  "  Balls to drop [1-10]  (Enter = 1):", colors.yellow)
+        ui.line(10, string.format("  Total bet: %d uAMI  |  Balance: %d uAMI",
+            bet * numBalls, balance), colors.lightGray)
+        term.setCursorPos(1, 11); term.setTextColor(colors.white); io.write("> ")
+        local raw = (read() or ""):gsub("%s", "")
+        if raw:lower() == "b" then return 0, "Cancelled" end
+        if raw == "" then break end  -- default 1
+        local nb = tonumber(raw)
+        if nb and nb >= 1 and nb <= 10 then
+            numBalls = math.floor(nb)
+            break
+        end
     end
-    local bucketIdx = math.floor((pos + ROWS) / (ROWS * 2) * (BUCKETS - 1)) + 1
-    bucketIdx = math.max(1, math.min(BUCKETS, bucketIdx))
-    local mult = PAYS[bucketIdx]
 
-    -- Animated ball drop (no banner reset inside loop)
-    local w = ui.W()
-    for step = 1, ROWS do
-        ui.beginFrame()
+    local totalBet = bet * numBalls
+    if totalBet > balance then
+        ui.line(12, "  Not enough balance for that many balls.", colors.red)
+        os.sleep(1.5)
+        return 0, "Insufficient balance"
+    end
+
+    -- Helper: simulate one ball, return path table and bucket index
+    local function dropBall()
+        local pos  = 0
+        local path = {}
+        for _ = 1, ROWS do
+            local dir = math.random() < 0.5 and -1 or 1
+            pos = pos + dir
+            path[#path+1] = pos
+        end
+        local bi = math.floor((pos + ROWS) / (ROWS * 2) * (BUCKETS - 1)) + 1
+        bi = math.max(1, math.min(BUCKETS, bi))
+        return path, bi
+    end
+
+    -- Helper: draw peg board at a given step with ball position, plus a status line
+    local function drawBoard(path, step, ballLabel, statusLine)
         ui.banner("Pachinko")
         for row = 1, ROWS do
             local pegLine = ""
@@ -773,39 +967,80 @@ function games.pachinko(ui, balance)
             local col  = (row == step) and colors.yellow or colors.gray
             ui.center(rowY, pegLine, col)
         end
-        ui.sfx("tick", 0.4, 0.9 + step * 0.05)
+        if ballLabel then
+            ui.line(3, "  " .. ballLabel, colors.orange)
+        end
+        if statusLine then
+            ui.center(3 + ROWS + 2, statusLine:sub(1, ui.W()), colors.lightGray)
+        end
+    end
+
+    local totalNet      = 0
+    local bucketHits    = {}  -- bucket index -> count, for summary
+    for i = 1, BUCKETS do bucketHits[i] = 0 end
+
+    for ballNum = 1, numBalls do
+        local path, bucketIdx = dropBall()
+        local mult = PAYS[bucketIdx]
+        local ballNet = math.floor(bet * mult) - bet
+        totalNet = totalNet + ballNet
+        bucketHits[bucketIdx] = bucketHits[bucketIdx] + 1
+
+        local ballLabel = string.format("Ball %d/%d", ballNum, numBalls)
+        local statusLine = string.format("Running total: %+d uAMI", totalNet)
+
+        -- Animate ball drop
+        for step = 1, ROWS do
+            ui.beginFrame()
+            drawBoard(path, step, ballLabel, statusLine)
+            ui.sfx("tick", 0.4, 0.9 + step * 0.05)
+            ui.endFrame()
+            os.sleep(0.18)
+        end
+
+        -- Show final board + bucket for this ball
+        local w = ui.W()
+        ui.beginFrame()
+        ui.banner("Pachinko")
+        for row = 1, ROWS do
+            local pegLine = ""
+            for col = -row, row do
+                pegLine = pegLine .. (col % 2 == 0 and "." or " ")
+            end
+            ui.center(3 + row, pegLine, colors.gray)
+        end
+        local bucketLine = ""
+        for i = 1, BUCKETS do
+            local lbl = string.format("%.1f", PAYS[i])
+            if i == bucketIdx then
+                bucketLine = bucketLine .. "[" .. lbl .. "]"
+            else
+                bucketLine = bucketLine .. " " .. lbl .. " "
+            end
+        end
+        ui.center(3 + ROWS + 1, bucketLine:sub(1, w), colors.white)
+        local ballRes = string.format("%s  Bucket %d (x%.1f)  %+d uAMI",
+            ballLabel, bucketIdx, mult, ballNet)
+        ui.center(3 + ROWS + 2, ballRes:sub(1, w), ballNet >= 0 and colors.lime or colors.red)
+        ui.center(3 + ROWS + 3, string.format("Total: %+d uAMI", totalNet):sub(1, w),
+            totalNet >= 0 and colors.lime or colors.red)
         ui.endFrame()
-        os.sleep(0.18)
+        if ballNet >= 0 then ui.sfx("win") else ui.sfx("loss") end
+        -- Brief pause between balls; last ball pauses longer
+        os.sleep(ballNum == numBalls and 2.5 or 0.8)
     end
 
-    -- Bucket display
-    ui.beginFrame()
-    ui.banner("Pachinko")
-    for row = 1, ROWS do
-        local pegLine = ""
-        for col = -row, row do
-            pegLine = pegLine .. (col % 2 == 0 and "." or " ")
-        end
-        ui.center(3 + row, pegLine, colors.gray)
+    local res
+    if numBalls == 1 then
+        res = string.format("Bucket %d (x%.1f)  %+d uAMI",
+            -- recover single-ball bucket from bucketHits
+            (function() for i,c in ipairs(bucketHits) do if c>0 then return i end end end)(),
+            PAYS[(function() for i,c in ipairs(bucketHits) do if c>0 then return i end end end)()],
+            totalNet)
+    else
+        res = string.format("%d balls  Total: %+d uAMI", numBalls, totalNet)
     end
-    local bucketLine = ""
-    for i = 1, BUCKETS do
-        local lbl = string.format("%.1f", PAYS[i])
-        if i == bucketIdx then
-            bucketLine = bucketLine .. "[" .. lbl .. "]"
-        else
-            bucketLine = bucketLine .. " " .. lbl .. " "
-        end
-    end
-    ui.center(3 + ROWS + 1, bucketLine:sub(1, w), colors.white)
-    local net = math.floor(bet * mult) - bet
-    local res = string.format("Bucket %d (x%.1f)  %+d uAMI", bucketIdx, mult, net)
-    ui.center(3 + ROWS + 2, res:sub(1, w), net >= 0 and colors.lime or colors.red)
-    ui.endFrame()
-
-    if net >= 0 then ui.sfx("win") else ui.sfx("loss") end
-    os.sleep(2.5)
-    return net, res
+    return totalNet, res
 end
 
 -- ── 8. Craps ─────────────────────────────────────────────────────────────────

@@ -867,6 +867,29 @@ local function waitForPayment(modem, playerAddr, casinoAddr, casinoKey, playerNo
     return true, nil
 end
 
+-- ── Sparkline helper ─────────────────────────────────────────────────────────
+-- Reads the last 10 WIN/LOSS log lines for playerName and returns a 10-char
+-- string of '+'/'-'/' ' for display in the session banner.
+local function readSparkline(playerName)
+    if not fs.exists(LOG_FILE) then return string.rep(" ", 10) end
+    local f = fs.open(LOG_FILE, "r")
+    local outcomes = {}
+    local line = f.readLine()
+    while line do
+        if (line:find(" WIN ") or line:find(" LOSS "))
+        and line:find("player=" .. playerName .. " ") then
+            outcomes[#outcomes + 1] = line:find(" WIN ") and "+" or "-"
+        end
+        line = f.readLine()
+    end
+    f.close()
+    local n = #outcomes
+    local chars = {}
+    for i = math.max(1, n - 9), n do chars[#chars + 1] = outcomes[i] end
+    while #chars < 10 do table.insert(chars, 1, " ") end
+    return table.concat(chars)
+end
+
 -- ── Game menu ─────────────────────────────────────────────────────────────────
 -- Per-game base house edge (integer %). Used to accumulate theoretical loss for
 -- the VIP loss rebate. Each value is AT OR BELOW the game's true base edge

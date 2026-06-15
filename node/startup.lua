@@ -409,7 +409,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
             fingerprint    = nodeFingerprint,
-            priority_ping  = upgrades.hasPriorityPing(),
+            priority_ping  = upgrades.hasPriorityPing(),\n            theme          = upgrades.getMatrixTheme(),   -- nil or theme name string
         }
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))

@@ -74,6 +74,13 @@ local _presets = {nil, nil, nil}
 function ui.setPresets(p) _presets = p or {nil,nil,nil} end
 
 -- ── Basic drawing ─────────────────────────────────────────────────────────────
+function ui.cls()
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+end
+
 -- ── Theme (mirrors node matrix_ui upgrade colour) ───────────────────────────────────────
 local _bannerBg  = colors.yellow   -- background of the header row
 local _bannerFg  = colors.black    -- foreground text of the header row

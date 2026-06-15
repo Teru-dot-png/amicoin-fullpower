@@ -1135,11 +1135,11 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             term.setTextColor(colors.lightGray)
             local line
             if narrow then
-                -- "Net 7  25/tk  +3000/hr" fits w=26
-                line = string.format("Net %d  %d/tk  +%d/hr",
+                -- "Net 7  25/30s  +3000/hr" fits w=26
+                line = string.format("Net %d  %d/30s  +%d/hr",
                     netStats.active_wallets or 0, totalRate, earn_hr)
             else
-                line = string.format("Net %d  %d uAMI/tk (%d nodes)  +%d/hr",
+                line = string.format("Net %d  %d uAMI/30s (%d nodes)  +%d/hr",
                     netStats.active_wallets or 0, totalRate,
                     math.max(nodeCount, #nodes), earn_hr)
             end

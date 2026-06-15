@@ -72,7 +72,7 @@ local _HELP = {
     pach   = {"Ball drops through 7 rows of pegs,","bouncing left or right at each one.","Final position determines payout:","","  Bucket:  1    2   3   4   5   6    7    8","  Payout: 12x  3x  1x 0.2x 0.2x 1x  3x  12x","","  Choose 1-10 balls. Bet is per ball.","  Each ball is animated separately.","  Outer edge = jackpot; centre = low pay.","  House edge: ~4.7% per ball (all ball counts identical)"},
     craps  = {"Pass Line Craps.","","  Come-out roll:","    7 or 11 → WIN   2, 3, or 12 → LOSE","    Any other → sets the POINT","","  Point phase: roll until...","    Point again → WIN   7 → LOSE","","  House edge: ~1.4%"},
     coinflip={"Heads or Tails. 50/50 chance.","","  Win pays 1.92x total (0.92x net profit).","  House edge: 4%","","  After a WIN you may Let It Ride:","  bet the winnings again for 1.92x (parlay).","  You keep going until you stop or lose."},
-    vp     ={"Jacks or Better \u2014 8/5 Pay Table","","  Royal Flush    800x  A-K-Q-J-10 same suit","  Straight Flush  50x  5 in seq, same suit","  Four of a Kind  25x","  Full House        8x  set + pair","  Flush              5x  5 same suit","  Straight           4x  5 in sequence","  Three of a Kind    3x","  Two Pair           2x","  Jacks or Better    1x  pair of J, Q, K, or A","","  [1-5] toggle HOLD on a card.","  [Enter] draw replacements for unheld cards.","  House edge: ~2.7% at optimal play.","  Sub-optimal holding raises edge further."},
+    vp     ={"Jacks or Better - 8/5 Pay Table","","  Royal Flush    800x  A-K-Q-J-10 same suit","  Straight Flush  50x  5 in seq, same suit","  Four of a Kind  25x","  Full House        8x  set + pair","  Flush              5x  5 same suit","  Straight           4x  5 in sequence","  Three of a Kind    3x","  Two Pair           2x","  Jacks or Better    1x  pair of J, Q, K, or A","","  [1-5] toggle HOLD on a card.","  [Enter] draw replacements for unheld cards.","  House edge: ~2.7% at optimal play.","  Sub-optimal holding raises edge further."},
     keno   ={"Pick 1-10 numbers from the 10\xd78 grid (1-80).","20 numbers are drawn at random.","Matches between your picks and the drawn","numbers determine your payout.","","  LClick = pick a number   RClick = remove","  [Enter] = draw   [C] = clear all   [B] = back","","Pay table varies by how many numbers you pick.","See bottom of screen for your current pays.","","House edge: ~10% across all spot counts.","(1-spot is break-even by integer constraint.)"},
     scratch={"3x3 grid of 9 hidden tiles.","Scratch any 3 by clicking or pressing [1-9].","Two or three matching symbols = win.","","  Symbol pool: 3x'7'  2x'$'  2x'A'  2x'K'","","  Pay table (multiplies your bet):","    7 + 7 + 7 = 19x  (only triple possible)","    7 + 7     =  2x","    $ + $     =  2x","    A + A     =  1x  (push, bet returned)","    K + K     =  0   (common pair, no payout)","    No match  =  0","","  House edge: ~9.5%"},
     wheel  ={"Press [Enter] to spin the wheel.","The needle lands on one of four outcomes.","","  Segment pool (out of 100 weighted slots):","    MISS  65/100  (65.0%)  → lose bet","    x2    30/100  (30.0%)  → net +1x bet","    x5     4/100   (4.0%)  → net +4x bet","    x10    1/100   (1.0%)  → net +9x bet","","  EV = 0.90x bet  →  house edge = 10.0%","  (net = floor(bet * mult) - bet)"},
@@ -1403,7 +1403,7 @@ function games.videoPoker(ui, balance)
         local ev, a = os.pullEvent()
         if ev == "char" then
             if a == "?" then
-                ui.helpOverlay("Video Poker \u2014 Help", _HELP.vp)
+                ui.helpOverlay("Video Poker - Help", _HELP.vp)
                 drawScreen("hold", nil)
             elseif a == "b" or a == "B" then
                 return 0, "Cancelled"
@@ -1544,7 +1544,7 @@ function games.keno(ui, balance)
         local ev, a, b, c = os.pullEvent()
         if ev == "char" then
             if a == "?" then
-                ui.helpOverlay("Keno \u2014 Help", _HELP.keno)
+                ui.helpOverlay("Keno - Help", _HELP.keno)
                 drawGrid("pick", string.format("  Picked: %d/%d   [Enter]=DRAW  [C]=clear  [?]=help",
                     nPicked, MAX_PICK))
             elseif (a == "c" or a == "C") and nPicked > 0 then
@@ -1732,7 +1732,7 @@ function games.scratchcard(ui, balance)
         local ev, a, b, c = os.pullEvent()
         if ev == "char" then
             if a == "?" then
-                ui.helpOverlay("Scratch Card \u2014 Help", _HELP.scratch)
+                ui.helpOverlay("Scratch Card - Help", _HELP.scratch)
                 drawGrid(nil)
             elseif a == "b" or a == "B" then
                 return 0, "Cancelled"
@@ -1762,7 +1762,7 @@ function games.scratchcard(ui, balance)
     if mult == 0 then
         resultLine = string.format("  No match.  Lost %d uAMI.", bet)
     elseif mult == 1 then
-        resultLine = string.format("  PUSH! %s+%s  x1  net \u00b10 uAMI", matchSym, matchSym)
+        resultLine = string.format("  PUSH! %s+%s  x1  net +-0 uAMI", matchSym, matchSym)
     elseif matchCt >= 3 then
         resultLine = string.format("  WIN! %s+%s+%s  x%d  net +%d uAMI",
             matchSym, matchSym, matchSym, mult, net)
@@ -1789,7 +1789,7 @@ function games.scratchcard(ui, balance)
         or (wev == "timer" and wa == tId) then
             waiting = false
         elseif wev == "char" and wa == "?" then
-            ui.helpOverlay("Scratch Card \u2014 Help", _HELP.scratch)
+            ui.helpOverlay("Scratch Card - Help", _HELP.scratch)
             drawGrid(resultLine)  -- restore result after overlay
         end
     end
@@ -1843,7 +1843,7 @@ function games.wheel(ui, balance)
     while true do
         local ev, a = os.pullEvent()
         if ev == "char" and a == "?" then
-            ui.helpOverlay("Wheel of Fortune \u2014 Help", _HELP.wheel)
+            ui.helpOverlay("Wheel of Fortune - Help", _HELP.wheel)
             drawWaitScreen()
         elseif ev == "key" then
             if a == keys.b then return 0, "Cancelled" end
@@ -1869,12 +1869,12 @@ function games.wheel(ui, balance)
             local nxt  = locking and winSeg           or POOL[math.random(#POOL)]
             ui.banner("Wheel of Fortune")
             ui.center(4, string.format("  %-6s",  prev.sym), colors.gray)
-            ui.center(5, string.format("\u25ba %-4s \u25c4", cur.sym), cur.col)
+            ui.center(5, string.format("> %-4s <", cur.sym), cur.col)
             ui.center(6, string.format("  %-6s",  nxt.sym),  colors.gray)
             ui.rule(7)
             -- Speed bar: full at start, shrinks to nothing
             local barW = math.max(0, math.floor((FRAMES - frame) / FRAMES * 20))
-            ui.center(8, string.rep("\u2588", barW) .. string.rep("\u2591", 20 - barW), colors.gray)
+            ui.center(8, string.rep("|", barW) .. string.rep("-", 20 - barW), colors.gray)
             ui.center(9, string.format("Bet: %d uAMI", bet), colors.yellow)
             -- Pitch rises from 1.4 down to 0.8 as wheel decelerates
             local pitch = 1.4 - (frame / FRAMES) * 0.6
@@ -1887,7 +1887,7 @@ function games.wheel(ui, balance)
     -- \u2500\u2500 Result \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     local net = math.floor(bet * winSeg.mult) - bet
     ui.banner("Wheel of Fortune")
-    ui.center(5, string.format("\u25ba %-4s \u25c4", winSeg.sym), winSeg.col)
+    ui.center(5, string.format("> %-4s <", winSeg.sym), winSeg.col)
     ui.rule(6)
     ui.pfReveal(7, pfSeed)
     os.sleep(0.3)

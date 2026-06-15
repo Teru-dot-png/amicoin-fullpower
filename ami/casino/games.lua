@@ -69,12 +69,12 @@ local _HELP = {
     bj     = {"Get as close to 21 as possible.","Dealer draws until 17+ (stands on soft 17).","Blackjack (A+10-card) pays 3:2.","","  [H]it   - draw another card","  [S]tand - end your turn","  [D]ouble-down - double bet, draw 1 card","","  House edge: ~2.2% with optimal play","  (Double-down ENABLED — reduces edge ~0.3pp)"},
     roul   = {"European single-zero roulette (37 pockets).","","  1. Enter chip size (bet placed per click).","  2. Left-click any spot to place a chip.","     Right-click to remove one chip from a spot.","     Click multiple different spots to multi-bet.","  3. Press [Enter] to spin.  [C] clears all bets.","","  Spots: numbers 0-36 (35:1)","         [D1]/[D2]/[D3] dozen (2:1)","         [C1]/[C2]/[C3] column (2:1)","         Red/Black/Odd/Even/Low/High (1:1)","","  House edge: 1/37 ≈ 2.7% on ALL bets"},
     hl     = {"Guess if the next card is Higher or Lower.","Equal card = free round (no loss).","","  5 rounds. Multiply streak up to 3.2x.","  [Q] or [B] at any time = cash out current win.","","  Multiplier ladder:","  1 correct: 1.2x   3 correct: 1.9x","  2 correct: 1.5x   4 correct: 2.5x   5: 3.2x"},
-    pach   = {"Ball drops through 7 rows of pegs,","bouncing left or right at each one.","Final position determines payout:","","  Bucket:  1   2   3   4   5   6   7   8","  Payout: 12x  5x  2x .5x .5x  2x  5x 12x","","  Choose 1-10 balls. Bet is per ball.","  Each ball is animated separately.","  Outer edge = jackpot; centre = low pay.","  House edge: ~4%"},
+    pach   = {"Ball drops through 7 rows of pegs,","bouncing left or right at each one.","Final position determines payout:","","  Bucket:  1    2   3   4   5   6    7    8","  Payout: 12x  3x  1x 0.2x 0.2x 1x  3x  12x","","  Choose 1-10 balls. Bet is per ball.","  Each ball is animated separately.","  Outer edge = jackpot; centre = low pay.","  House edge: ~4.7% per ball (all ball counts identical)"},
     craps  = {"Pass Line Craps.","","  Come-out roll:","    7 or 11 → WIN   2, 3, or 12 → LOSE","    Any other → sets the POINT","","  Point phase: roll until...","    Point again → WIN   7 → LOSE","","  House edge: ~1.4%"},
     coinflip={"Heads or Tails. 50/50 chance.","","  Win pays 1.92x total (0.92x net profit).","  House edge: 4%","","  After a WIN you may Let It Ride:","  bet the winnings again for 1.92x (parlay).","  You keep going until you stop or lose."},
     vp     ={"Jacks or Better \u2014 8/5 Pay Table","","  Royal Flush    800x  A-K-Q-J-10 same suit","  Straight Flush  50x  5 in seq, same suit","  Four of a Kind  25x","  Full House        8x  set + pair","  Flush              5x  5 same suit","  Straight           4x  5 in sequence","  Three of a Kind    3x","  Two Pair           2x","  Jacks or Better    1x  pair of J, Q, K, or A","","  [1-5] toggle HOLD on a card.","  [Enter] draw replacements for unheld cards.","  House edge: ~2.7% at optimal play.","  Sub-optimal holding raises edge further."},
-    keno   ={"Pick 1-10 numbers from the 10\xd78 grid (1-80).","20 numbers are drawn at random.","Matches between your picks and the drawn","numbers determine your payout.","","  LClick = pick a number   RClick = remove","  [Enter] = draw   [C] = clear all   [B] = back","","Pay table varies by how many numbers you pick.","See bottom of screen for your current pays.","","House edge: 25-31% depending on spot count.","(Standard range for casino Keno.)"},
-    scratch={"3x3 grid of 9 hidden tiles.","Scratch any 3 by clicking or pressing [1-9].","Two or three matching symbols = win.","","  Symbol pool: 2x'7'  2x'$'  2x'A'  3x'K'","","  Pay table (multiplies your bet):","    K + K + K = 12x  (only triple possible)","    7 + 7     =  4x  (rarest pair)","    $ + $     =  2x","    A + A     =  1x  (push, bet returned)","    K + K     =  0   (common pair, no payout)","    No match  =  0","","  House edge: ~27.4%"},
+    keno   ={"Pick 1-10 numbers from the 10\xd78 grid (1-80).","20 numbers are drawn at random.","Matches between your picks and the drawn","numbers determine your payout.","","  LClick = pick a number   RClick = remove","  [Enter] = draw   [C] = clear all   [B] = back","","Pay table varies by how many numbers you pick.","See bottom of screen for your current pays.","","House edge: ~10% across all spot counts.","(1-spot is break-even by integer constraint.)"},
+    scratch={"3x3 grid of 9 hidden tiles.","Scratch any 3 by clicking or pressing [1-9].","Two or three matching symbols = win.","","  Symbol pool: 3x'7'  2x'$'  2x'A'  2x'K'","","  Pay table (multiplies your bet):","    7 + 7 + 7 = 19x  (only triple possible)","    7 + 7     =  2x","    $ + $     =  2x","    A + A     =  1x  (push, bet returned)","    K + K     =  0   (common pair, no payout)","    No match  =  0","","  House edge: ~9.5%"},
     wheel  ={"Press [Enter] to spin the wheel.","The needle lands on one of four outcomes.","","  Segment pool (out of 100 weighted slots):","    MISS  65/100  (65.0%)  → lose bet","    x2    30/100  (30.0%)  → net +1x bet","    x5     4/100   (4.0%)  → net +4x bet","    x10    1/100   (1.0%)  → net +9x bet","","  EV = 0.90x bet  →  house edge = 10.0%","  (net = floor(bet * mult) - bet)"},
 }
 
@@ -928,14 +928,16 @@ end
 
 -- ── 7. Pachinko ──────────────────────────────────────────────────────────────
 -- Fixed animation flicker: draw once per step, never reset with ui.banner().
+-- Pay table retuned: old {12,5,2,0.5,0.5,2,5,12} gave EV=213/128=1.664 (PLAYER
+-- edge of 66%). New table {12,3,1,0.2,0.2,1,3,12} gives EV=122/128=0.953 (HE 4.7%).
 function games.pachinko(ui, balance)
     local ROWS    = 7
     local BUCKETS = ROWS + 1
-    local PAYS    = {12, 5, 2, 0.5, 0.5, 2, 5, 12}
+    local PAYS    = {12, 3, 1, 0.2, 0.2, 1, 3, 12}
 
     ui.banner("Pachinko")
     ui.line(4, "  7-row peg board. Ball bounces L/R each row.", colors.yellow)
-    ui.line(5, "  Outer = 12x  Inner-mid = 5x/2x  Centre = 0.5x", colors.lightGray)
+    ui.line(5, "  Outer = 12x  Inner-mid = 3x/1x  Centre = 0.2x", colors.lightGray)
     ui.line(6, "  [?] help  [B] back", colors.gray)
 
     local bet = ui.readBet(7, balance)
@@ -954,7 +956,7 @@ function games.pachinko(ui, balance)
             ui.helpOverlay("Pachinko — Help", _HELP.pach)
             ui.banner("Pachinko")
             ui.line(4, "  7-row peg board. Ball bounces L/R each row.", colors.yellow)
-            ui.line(5, "  Outer = 12x  Inner-mid = 5x/2x  Centre = 0.5x", colors.lightGray)
+            ui.line(5, "  Outer = 12x  Inner-mid = 3x/1x  Centre = 0.2x", colors.lightGray)
             ui.line(6, "  [?] help  [B] back", colors.gray)
         elseif raw == "" then
             break  -- default 1
@@ -1445,7 +1447,7 @@ end
 
 -- \u2500\u2500 11. Keno \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 -- Pick 1-10 numbers from a 10\xd78 grid (1-80). Casino draws 20 at random.
--- Payout per spot-count pay table; house edge 25-31% (standard Keno range).
+-- Retuned pay table: house edge ~10% across all spot counts.
 function games.keno(ui, balance)
     local N_DRAW     = 20
     local GRID_ROWS  = 8
@@ -1456,18 +1458,20 @@ function games.keno(ui, balance)
     local GRID_ROW   = 4    -- topmost terminal row of grid
 
     -- Pay table: PAY[k][m] = multiplier for picking k spots and matching m.
-    -- Absent or 0 = no payout.  Verified EV per spot in phase diff.
+    -- Absent or 0 = no payout.  Retuned to ~10% house edge per spot count.
+    -- k=1: mult=4 gives EV=1.00 (0% HE); mult=3 would give 25% HE.
+    --       Integer constraint makes exact 10% impossible for k=1; 0% is kinder.
     local PAY = {
-        [1]  = {[1]=3},
-        [2]  = {[2]=12},
-        [3]  = {[3]=42,[2]=1},
-        [4]  = {[4]=100,[3]=4,[2]=1},
-        [5]  = {[5]=610,[4]=15,[3]=2},
-        [6]  = {[6]=1500,[5]=55,[4]=7,[3]=1},
-        [7]  = {[7]=4500,[6]=250,[5]=15,[4]=3,[3]=1},
-        [8]  = {[8]=10000,[7]=900,[6]=85,[5]=10,[4]=2},
-        [9]  = {[9]=10000,[8]=3300,[7]=250,[6]=35,[5]=5,[4]=1},
-        [10] = {[10]=10000,[9]=3500,[8]=800,[7]=100,[6]=22,[5]=3},
+        [1]  = {[1]=4},
+        [2]  = {[2]=15},
+        [3]  = {[3]=45,[2]=2},
+        [4]  = {[4]=125,[3]=7,[2]=1},
+        [5]  = {[5]=766,[4]=20,[3]=2},
+        [6]  = {[6]=1200,[5]=75,[4]=9,[3]=2},
+        [7]  = {[7]=4500,[6]=300,[5]=22,[4]=4,[3]=1},
+        [8]  = {[8]=10000,[7]=900,[6]=98,[5]=13,[4]=3},
+        [9]  = {[9]=10000,[8]=3900,[7]=345,[6]=44,[5]=6,[4]=1},
+        [10] = {[10]=10000,[9]=3900,[8]=860,[7]=112,[6]=28,[5]=5},
     }
 
     local picked  = {}   -- [n]=true when player has picked number n
@@ -1617,7 +1621,7 @@ end
 -- Pool: 2\xd7"7", 2\xd7"$", 2\xd7"A", 3\xd7"K".
 -- EV = (12+0+28+14+7)/84 = 61/84 \u2248 0.726  \u2192  HE \u2248 27.4%
 function games.scratchcard(ui, balance)
-    local POOL   = {"7","7","$","$","A","A","K","K","K"}
+    local POOL   = {"7","7","7","$","$","A","A","K","K"}
     local ROWS, COLS = 3, 3
     local GY     = 5      -- topmost grid row on terminal
     local CELL_W = 5      -- each cell is "[ X ]" = 5 chars
@@ -1625,10 +1629,10 @@ function games.scratchcard(ui, balance)
     local RULE_Y = GY + ROWS
     local MAX_PICK = 3
 
-    -- Payout multipliers (applied to bet).
     -- PAYS_3[sym]=mult for 3-of-a-kind; PAYS_2[sym]=mult for pair.
-    local PAYS_3 = {K=12}
-    local PAYS_2 = {["7"]=4, ["$"]=2, A=1}
+    -- New pool has 3x'7' so triple-7 is now the jackpot (was triple-K).
+    local PAYS_3 = {["7"]=19}
+    local PAYS_2 = {["7"]=2, ["$"]=2, A=1}
     local SYM_COL = {
         ["7"]=colors.yellow, ["$"]=colors.lime,
         A=colors.cyan,        K=colors.orange,
@@ -1704,7 +1708,7 @@ function games.scratchcard(ui, balance)
             end
         end
         ui.rule(RULE_Y)
-        ui.line(RULE_Y+1, "  KKK=12x  7+7=4x  $$=2x  AA=1x(push)  KK=loss", colors.gray)
+        ui.line(RULE_Y+1, "  7+7+7=19x  7+7=2x  $$=2x  AA=1x(push)  KK=loss", colors.gray)
         if resultLine then
             local rCol = resultLine:find("WIN") and colors.lime or
                          resultLine:find("PUSH") and colors.yellow or colors.red

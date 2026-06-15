@@ -344,7 +344,7 @@ The casino looks up your name on the configured nodes. Once found, the **game me
 | 1 | 4 | **Blackjack** | ~3% |
 | 1 | 5 | **Roulette** | ~2.7% |
 | 2 | 1 | **Higher / Lower** | ~4% |
-| 2 | 2 | **Pachinko** | ~4% |
+| 2 | 2 | **Pachinko** | ~4.7% |
 | 2 | 3 | **Craps** | ~1.4% |
 | 2 | 4 | **Coin Flip** | 4% |
 
@@ -358,7 +358,7 @@ Navigate pages with **`[N]`** / **`[P]`**. Select a game with **`[1–5]`**. Pre
 - **Blackjack** — Standard rules. Dealer stands on soft 17. Natural blackjack pays 3:2. Hit `[H]`, stand `[S]`.
 - **Roulette** — European single-zero. Bet on a number (35:1), red/black, odd/even, or high/low (1:1).
 - **Higher / Lower** — Guess whether the next of 5 cards is higher or lower. Correct streak builds a multiplier up to 3.2×. Equal card = free round.
-- **Pachinko** — Animated 7-row peg board. The ball bounces left or right at each row. Outer buckets pay 12×; centre buckets pay 0.5×.
+- **Pachinko** — Animated 7-row peg board. The ball bounces left or right at each row. Outer buckets pay 12×; centre buckets pay 0.2×.
 - **Craps** — Pass-line craps. 7 or 11 on the come-out wins; 2, 3, or 12 loses; any other number sets the point. Roll the point before a 7 to win.
 - **Coin Flip** — Pick heads or tails. Win pays 1.92× (net +0.92× your bet).
 

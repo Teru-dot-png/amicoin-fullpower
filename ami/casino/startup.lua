@@ -51,7 +51,7 @@ local GAME_MAX_MULT = {
     ["Coin Flip"]  = 1.92,
     ["Video Poker"]= 800,
     ["Keno"]       = 10000,
-    ["Scratch Card"]    = 12,
+    ["Scratch Card"]    = 19,
     ["Wheel of Fortune"]= 10,
 }
 
@@ -157,10 +157,10 @@ end
 
 -- ── VIP tiers ────────────────────────────────────────────────────────────────
 local VIP_TIERS = {
-    { name="Platinum", threshold=25000000, bonus=0.10, col=colors.cyan    },
-    { name="Gold",     threshold= 5000000, bonus=0.05, col=colors.yellow  },
-    { name="Silver",   threshold= 1000000, bonus=0.00, col=colors.orange  },
-    { name="Bronze",   threshold=       0, bonus=0.00, col=colors.white   },
+    { name="Platinum", threshold=25000000, rebate_pct=25, col=colors.cyan    },
+    { name="Gold",     threshold= 5000000, rebate_pct=10, col=colors.yellow  },
+    { name="Silver",   threshold= 1000000, rebate_pct= 0, col=colors.orange  },
+    { name="Bronze",   threshold=       0, rebate_pct= 0, col=colors.white   },
 }
 
 local function getVipTier(totalWagered)
@@ -868,6 +868,43 @@ local function waitForPayment(modem, playerAddr, casinoAddr, casinoKey, playerNo
 end
 
 -- ── Game menu ─────────────────────────────────────────────────────────────────
+-- Per-game base house edge (integer %). Used to accumulate theoretical loss for
+-- the VIP loss rebate. Each value is AT OR BELOW the game's true base edge
+-- (floor applied to all non-integer edges) so theoLoss is never overstated.
+-- Variable games use the LOWEST edge in their strategy range.
+local GAME_EDGE_PCT = {
+    Mines                = 3,   -- 3% per reveal (1-0.97); lowest 1-reveal cashout
+    Crash                = 4,   -- 4% exact; baked into draw distribution
+    Slots                = 5,   -- 5% exact from pay table
+    Blackjack            = 2,   -- floor of 2.2% optimal
+    Roulette             = 2,   -- floor of 2.703% (all European bets equal)
+    ["Higher / Lower"]   = 0,   -- 0%: most generous; rebate self-zeroes
+    Pachinko             = 4,   -- floor of 4.69% exact (6/128)
+    Craps                = 1,   -- floor of 1.41% pass line
+    ["Coin Flip"]        = 4,   -- 4.00% exact
+    ["Video Poker"]      = 2,   -- floor of 2.71% optimal
+    Keno_1               = 0,   -- 0% (break-even; rebate self-zeroes)
+    Keno_2               = 9,   -- floor of 9.81%
+    Keno_3               = 9,   -- floor of 9.81%
+    Keno_4               = 10,  -- floor of 10.17%
+    Keno_5               = 9,   -- floor of 9.63%
+    Keno_6               = 9,   -- floor of 9.66%
+    Keno_7               = 9,   -- floor of 9.68%
+    Keno_8               = 9,   -- floor of 9.78%
+    Keno_9               = 10,  -- floor of 10.01%
+    Keno_10              = 9,   -- floor of 9.95%
+    ["Scratch Card"]     = 9,   -- floor of 9.52% (8/84 = 9.524%)
+    ["Wheel of Fortune"] = 10,  -- 10.00% exact
+}
+-- Keno edge varies by pick-count. The game returns desc "Keno k=N hits=...".
+local function resolveGameEdgePct(gameName, desc)
+    if gameName == "Keno" then
+        local k = type(desc) == "string" and desc:match("k=(%d+)") or nil
+        return k and (GAME_EDGE_PCT["Keno_" .. k] or 9) or 9
+    end
+    return GAME_EDGE_PCT[gameName] or 0
+end
+
 local GAME_PAGES = {
     {
         { name="Mines",         fn=games.mines,       edge="varies", desc="Click tiles, cash out any time"    },
@@ -878,14 +915,14 @@ local GAME_PAGES = {
     },
     {
         { name="Higher / Lower", fn=games.higherLower, edge="varies", desc="5-round streak, cash out any time" },
-        { name="Pachinko",       fn=games.pachinko,    edge="~4%",    desc="Drop balls, outer = jackpot (12x)" },
+        { name="Pachinko",       fn=games.pachinko,    edge="~4.7%",  desc="Drop balls, outer = jackpot (12x)" },
         { name="Craps",          fn=games.craps,       edge="~1.4%",  desc="Pass line: natural or point"       },
         { name="Coin Flip",      fn=games.coinflip,    edge="4%",     desc="50/50, parlay after win"           },
         { name="Video Poker",    fn=games.videoPoker,  edge="~2.7%",  desc="Hold cards, draw replacements"     },
     },
     {
-        { name="Keno",             fn=games.keno,        edge="25-31%", desc="Pick 1-10 numbers, draw 20"         },
-        { name="Scratch Card",     fn=games.scratchcard, edge="~27%",   desc="Pick 3 tiles, match symbols to win" },
+        { name="Keno",             fn=games.keno,        edge="~10%",   desc="Pick 1-10 numbers, draw 20"         },
+        { name="Scratch Card",     fn=games.scratchcard, edge="~10%",   desc="Pick 3 tiles, match symbols to win" },
         { name="Wheel of Fortune", fn=games.wheel,       edge="10%",    desc="Spin the wheel: x2/x5/x10"         },
     },
 }
@@ -990,8 +1027,9 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     local vipData        = loadVip(playerName)
     local vipTier        = getVipTier(vipData.total_wagered)
     local gamesPlayed    = 0
-    local lossLimitWarned = false   -- true once per crossing to avoid nag loop
-    local breakToCashout  = false   -- set by loss-limit [B] to exit game loop immediately
+    local lossLimitWarned = false
+    local breakToCashout  = false
+    local theoLoss        = 0   -- running sum of floor(bet * edge_pct/100) per bet
 
     while sessionBalance > 0 and not breakToCashout do
         -- Update session header so all game banners show current balance
@@ -1091,6 +1129,13 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
                             net = net or 0
                             gamesPlayed = gamesPlayed + 1
 
+                            -- ── Theoretical-loss accumulation for VIP rebate ──
+                            -- Accrues expected loss per bet using the conservative
+                            -- per-game edge table, regardless of actual outcome.
+                            -- Keno pick-count resolved from the game's desc string.
+                            local edgePct = resolveGameEdgePct(gameName, desc)
+                            theoLoss = theoLoss + math.floor(effectiveBal * edgePct / 100)
+
                             -- ── VIP wagering accumulation ─────────────────────
                             -- Track the bet (effectiveBal is the max available,
                             -- which may be > the actual bet placed; we use |net|+bet
@@ -1104,8 +1149,8 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
                                 vipTier = newTier
                                 ui.banner("VIP Upgrade!")
                                 ui.center(6, string.format("You're now %s!", vipTier.name), vipTier.col)
-                                ui.center(7, vipTier.threshold >= 5000000
-                                    and string.format("+%.0f%% win bonus active!", vipTier.bonus*100)
+                                ui.center(7, vipTier.rebate_pct > 0
+                                    and string.format("%d%% loss rebate active at cashout!", vipTier.rebate_pct)
                                     or  "Keep playing to reach Gold tier!", colors.white)
                                 os.sleep(2)
                             end
@@ -1142,21 +1187,6 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
                                         string.format("  Jackpot %d deferred: top up casino wallet!", pot),
                                         colors.red)
                                     os.sleep(2)
-                                end
-                            end
-
-                            -- ── VIP win bonus ─────────────────────────────────
-                            -- Applied after jackpot so multiplier doesn't inflate pot.
-                            if net > 0 and vipTier.bonus > 0 then
-                                local bonus = math.floor(net * vipTier.bonus)
-                                if bonus > 0 then
-                                    -- Solvency: only grant if casino can cover extra.
-                                    local casinoNow2 = getBalance(modem, casinoKey, playerNode, casinoAddr) or 0
-                                    if casinoNow2 >= bonus then
-                                        net = net + bonus
-                                        log(string.format("VIP_BONUS player=%s tier=%s bonus=%d",
-                                            playerName, vipTier.name, bonus))
-                                    end
                                 end
                             end
 
@@ -1212,9 +1242,32 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     ui.banner("Cashout")
     ui.rule(4)
     local pnl = sessionBalance - deposit
+
+    -- ── VIP loss rebate ───────────────────────────────────────────────────────
+    -- Applied once on net-loss sessions only. Basis is THEORETICAL loss
+    -- (accumulated per-bet as floor(bet * edge_pct/100)), not realized loss,
+    -- so the rebate cannot be gamed by high-variance short sessions.
+    -- Capped at the actual net loss so the player never gets back more than
+    -- they truly lost. Passes the same solvency/shortfall path as the main pay.
+    local rebateAmt = 0
+    if pnl < 0 and vipTier.rebate_pct > 0 then
+        local netLoss = -pnl   -- positive integer
+        local rawRebate = math.floor(theoLoss * vipTier.rebate_pct / 100)
+        rebateAmt = math.min(rawRebate, netLoss)   -- cap: never exceed actual loss
+        if rebateAmt > 0 then
+            sessionBalance = sessionBalance + rebateAmt
+            pnl = sessionBalance - deposit
+            log(string.format("VIP_REBATE player=%s tier=%s net_loss=%d theo_loss=%d rebate_pct=%d rebate=%d",
+                playerName, vipTier.name, netLoss, theoLoss, vipTier.rebate_pct, rebateAmt))
+        end
+    end
     ui.line(5, string.format("  Player     : %s", playerName), colors.orange)
     ui.line(6, string.format("  Deposited  : %d uAMI", deposit), colors.lightGray)
-    ui.line(7, string.format("  Returning  : %d uAMI", sessionBalance), colors.white)
+    if rebateAmt > 0 then
+        ui.line(7, string.format("  Returning  : %d uAMI  (incl. %d rebate)", sessionBalance, rebateAmt), colors.white)
+    else
+        ui.line(7, string.format("  Returning  : %d uAMI", sessionBalance), colors.white)
+    end
     ui.line(8, string.format("  P&L        : %+d uAMI", pnl),
         pnl >= 0 and colors.lime or colors.red)
     ui.rule(9)
@@ -1275,6 +1328,7 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
                 pnl        = sessionBalance - deposit,
                 games      = gamesPlayed,
                 vip        = vipTier.name,
+                rebate     = rebateAmt,
                 started_at = sessionData.startedAt or 0,
                 ended_at   = os.epoch("utc"),
             })

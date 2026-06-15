@@ -415,6 +415,7 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
 
+
     elseif cmd == "CONSOLIDATE_OUT" then
         -- Drain alice's balance from this node.  The wallet carries the returned
         -- receipt to the target node for CONSOLIDATE_IN.
@@ -521,6 +522,10 @@ local function computeNodeFingerprint()
     return fnv1a(table.concat(parts, ":"))
 end
 
+-- note that selfUpdate might not always be pulling from the latest repo state,
+-- if the update just happened to be triggered before the latest files were pushed to GitHub.
+-- github needs a minute or two to reflect new commits in the raw URLs, and if the node reboots before
+-- that happens it might pull the old files again and fail the update (since the old files are already there and won't be replaced).
 local function selfUpdate()
     print("")
     print("[Update] Fetching latest files from GitHub...")

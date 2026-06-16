@@ -260,6 +260,12 @@ Upgrades use per-upgrade cost curves. Earners use a flat curve; cosmetics use a 
 | `fee_snatcher` | Fee & Vault Yield | 0.2 AMI | 10 | 100 µAMI/level per CONSOLIDATE_IN + 5 µAMI/tick per active vault per level | Redistributive |
 | `transfer_toll` | Transfer Toll | 0.2 AMI | 10 | 50 µAMI per level skimmed from every TRANSFER routed through this node (from sender) | Redistributive |
 | `wallet_bonus` | Wallet Bonus | 0.1 AMI | 10 | +1 µAMI/tick per active wallet per level credited to treasury | Small inflationary |
+| `mint_echo` | Mint Echo | 0.5 AMI | 10 | Treasury earns `floor(rate × 0.05 × lv)` µAMI extra per mint tick (max 12 µAMI/tick at Lv10) | Inflationary |
+| `casino_rake` | Casino Rake | 0.3 AMI | 10 | Skim `floor(bet × 0.001 × lv)` from each AmiCasino bet via this node; settled in batches of 50 bets | Redistributive |
+| `compound_interest` | Compound Interest | 2 AMI | 10 | Every 10 ticks: treasury += `floor(min(treasury_bal, 1B µAMI) × 0.0001 × lv)` (max 1,000,000 µAMI/trigger) | Inflationary |
+| `mega_burn` | Mega Burn | **BURN** 5 AMI | 10 | Burns 5 AMI per level permanently. Base mint becomes `floor(rate × 1.05^lv)` applied before Overclock | BURN + Inflationary |
+| `sovereign_node` | Sovereign Node | 1 AMI | 10 | +`floor(rate × 0.1 × lv)` µAMI/tick per loyal wallet (active + DNS-registered here) to treasury (max 25 µAMI/tick/wallet) | Inflationary |
+| `prestige_crown` | Prestige Crown | **BURN** 0.2 AMI | 10 | Burns 0.2 AMI per level permanently. Node name gains ✦ crown; unlocks `crown_gold` theme at Lv5+ | BURN (cosmetic) |
 | `matrix_ui` | Advanced Matrix UI | 0.05 AMI | 10 | Unlocks premium monitor colour themes per level | Cosmetic |
 | `genesis` | Genesis Protocol | 0.05 AMI | 10 | Broadcasts a prestige signature across the mesh at every boot | Cosmetic |
 

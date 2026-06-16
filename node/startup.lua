@@ -425,8 +425,11 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
             fingerprint    = nodeFingerprint,
-            priority_ping  = upgrades.hasPriorityPing(),
-            theme          = upgrades.getMatrixTheme(),   -- nil or theme name string
+            priority_ping     = upgrades.hasPriorityPing(),
+            theme             = upgrades.getActiveTheme(),       -- crown overrides matrix_ui
+            casino_rake_level = upgrades.getCasinoRakeLevel(),
+            crown_level       = upgrades.getCrownLevel(),
+            treasury_address  = (upgrades.getState() or {}).treasury,
         }
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))

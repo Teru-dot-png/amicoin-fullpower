@@ -34,6 +34,7 @@ local JACKPOT_FILE  = DATA_DIR .. "/jackpot.json"
 local HISTORY_FILE  = DATA_DIR .. "/history.json"
 local VIP_FILE      = DATA_DIR .. "/vip.json"
 local HISTORY_MAX   = 100   -- cap so file never grows unbounded
+local RAKE_SETTLE_EVERY = 50  -- settle accrued casino rake to node treasury every N bets
 local REPO_BASE     = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 -- P3: maximum payout multiplier per game (used for solvency cap).
@@ -1054,6 +1055,42 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
     local breakToCashout  = false
     local theoLoss        = 0   -- running sum of floor(bet * edge_pct/100) per bet
 
+    -- ── Casino Rake: node casino_rake upgrade levy ─────────────────────────────
+    -- Read the node's casino_rake level from STATS. Accrue floor(bet*0.001*lv)
+    -- per bet into rakeAccrued; settle as a TRANSFER to the node treasury every
+    -- RAKE_SETTLE_EVERY bets so we never spam one transfer per bet.
+    local nodeRakeLevel   = 0
+    local nodeTreasury    = nil   -- 128-hex node treasury address from STATS
+    local rakeAccrued     = 0    -- uAMI accumulated this session
+    local rakeBetCount    = 0    -- bets since last settlement
+    do
+        local statsResp = meshSend(modem, casinoKey, playerNode.key, {
+            cmd  = "STATS", from = casinoAddr,
+        })
+        if statsResp then
+            nodeRakeLevel = math.max(0, math.min(10,
+                math.floor(tonumber(statsResp.casino_rake_level) or 0)))
+            nodeTreasury  = statsResp.treasury_address  -- may be nil if not set
+        end
+    end
+    local function settleRake()
+        if rakeAccrued > 0 and type(nodeTreasury) == "string" and #nodeTreasury == 128 then
+            -- Transfer rake from casino wallet to node treasury.
+            -- Floor is already guaranteed; rakeAccrued is always an integer sum.
+            local resp = meshSend(modem, casinoKey, playerNode.key, {
+                cmd    = "TRANSFER",
+                from   = casinoAddr,
+                to     = nodeTreasury,
+                amount = rakeAccrued,
+            })
+            if resp and resp.ok then
+                log(string.format("CASINO_RAKE player=%s rake_lv=%d settled=%d",
+                    playerName, nodeRakeLevel, rakeAccrued))
+            end
+            rakeAccrued = 0
+        end
+    end
+
     while sessionBalance > 0 and not breakToCashout do
         -- Update session header so all game banners show current balance
         ui.setSession(playerName, sessionBalance, deposit, sparkline)
@@ -1151,6 +1188,22 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
                         else
                             net = net or 0
                             gamesPlayed = gamesPlayed + 1
+
+                            -- ── Casino Rake accrual ─────────────────────────────────
+                            -- floor(bet * 0.001 * lv), capped at effectiveBal (never >source).
+                            if nodeRakeLevel > 0 then
+                                local rake = math.min(
+                                    math.floor(effectiveBal * 0.001 * nodeRakeLevel),
+                                    effectiveBal)
+                                if rake > 0 then
+                                    rakeAccrued = rakeAccrued + rake
+                                    rakeBetCount = rakeBetCount + 1
+                                    if rakeBetCount >= RAKE_SETTLE_EVERY then
+                                        settleRake()
+                                        rakeBetCount = 0
+                                    end
+                                end
+                            end
 
                             -- ── Theoretical-loss accumulation for VIP rebate ──
                             -- Accrues expected loss per bet using the conservative
@@ -1256,6 +1309,9 @@ local function gameMenu(modem, casinoKey, casinoAddr, cfg, playerName, playerAdd
             end
         end
     end   -- while sessionBalance > 0
+
+    -- Settle any remaining accrued rake before ending the session.
+    settleRake()
 
     -- Clear session header before cashout screen
     ui.setSession(nil, nil, nil)

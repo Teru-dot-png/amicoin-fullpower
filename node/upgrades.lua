@@ -31,7 +31,20 @@ local DATA_FILE    = "/data/upgrades.json"
 local SHOP_CHANNEL = 1338   -- plaintext invoice / ACK channel
 local ACK_TIMEOUT  = 120    -- seconds to wait for PAYMENT_ACK
 local PAGE_SIZE    = 5      -- upgrades shown per menu page
-local MAX_LEVEL    = 10     -- hard cap on every upgrade
+local MAX_LEVEL    = 10     -- default hard cap; individual upgrades may override
+
+-- Per-upgrade max levels. Defaults to MAX_LEVEL when absent.
+local UPGRADE_MAX = {
+    -- all current upgrades use 10; amidecode (Stage 2) will use 4
+}
+local function upgradeMax(id)
+    return UPGRADE_MAX[id] or MAX_LEVEL
+end
+
+-- Compound-interest ceiling: interest is computed on at most this many uAMI.
+local CI_BALANCE_CAP = 1000000000   -- 1,000 AMI cap
+-- Compound-interest trigger: fires every N ticks.
+local CI_TICK_INTERVAL = 10
 
 -- ── Upgrade definitions ───────────────────────────────────────────────────────
 -- short: max 12 chars (fits the menu column)
@@ -76,6 +89,46 @@ local DEFS = {
         short = "WalletBonus",
         desc  = "+1uAMI/tick per active wallet per level credited to treasury.",
     },
+    -- Stage 1 new upgrades
+    {
+        id    = "mint_echo",
+        name  = "Mint Echo",
+        short = "MintEcho",
+        desc  = "Treasury earns floor(rate*0.05*lv) uAMI extra per mint tick.",
+    },
+    {
+        id    = "casino_rake",
+        name  = "Casino Rake",
+        short = "CasinoRake",
+        desc  = "Skim floor(bet*0.001*lv) uAMI from AmiCasino bets via this node.",
+    },
+    {
+        id    = "compound_interest",
+        name  = "Compound Interest",
+        short = "CompoundInt",
+        desc  = "Every 10 ticks: treasury += floor(min(bal,1BAMT)*0.0001*lv).",
+    },
+    {
+        id    = "mega_burn",
+        name  = "Mega Burn",
+        short = "MegaBurn",
+        desc  = "BURN 5AMI/lv. Base mint becomes floor(rate*1.05^lv) pre-OC.",
+        burn  = true,   -- purchase burns to unspendable address, no treasury
+    },
+    {
+        id    = "sovereign_node",
+        name  = "Sovereign Node",
+        short = "SovereNode",
+        desc  = "+floor(rate*0.1*lv)/tick per loyal wallet (active+registered).",
+    },
+    {
+        id    = "prestige_crown",
+        name  = "Prestige Crown",
+        short = "PrestigeCrn",
+        desc  = "BURN 0.2AMI/lv. Crown suffix on node name + crown_gold theme@Lv5.",
+        burn  = true,
+    },
+    -- Cosmetics
     {
         id    = "matrix_ui",
         name  = "Advanced Matrix UI",
@@ -97,13 +150,19 @@ local DEFS = {
 --   wallet_bonus               : flat 100,000 uAMI per level (0.1 AMI, max 1 AMI)
 --   matrix_ui, genesis         : flat  50,000 uAMI per level (0.05 AMI, max 0.5 AMI)
 local COST_TABLE = {
-    miner_boost    = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
-    mint_surge     = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
-    fee_snatcher   = function(lv) return 200000 * lv end,
-    transfer_toll  = function(lv) return 200000 * lv end,
-    wallet_bonus   = function(lv) return 100000 * lv end,
-    matrix_ui      = function(lv) return  50000 * lv end,
-    genesis        = function(lv) return  50000 * lv end,
+    miner_boost         = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
+    mint_surge          = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
+    fee_snatcher        = function(lv) return 200000 * lv end,
+    transfer_toll       = function(lv) return 200000 * lv end,
+    wallet_bonus        = function(lv) return 100000 * lv end,
+    mint_echo           = function(lv) return 500000 * lv end,   -- 0.5 AMI/lv
+    casino_rake         = function(lv) return 300000 * lv end,   -- 0.3 AMI/lv
+    compound_interest   = function(lv) return 2000000 * lv end,  -- 2 AMI/lv
+    mega_burn           = function(lv) return 5000000 * lv end,  -- BURN 5 AMI/lv
+    sovereign_node      = function(lv) return 1000000 * lv end,  -- 1 AMI/lv
+    prestige_crown      = function(lv) return 200000 * lv end,   -- BURN 0.2 AMI/lv
+    matrix_ui           = function(lv) return  50000 * lv end,
+    genesis             = function(lv) return  50000 * lv end,
 }
 
 local function calcCost(id, level)
@@ -202,9 +261,8 @@ end
 
 local function getLevel(id)
     local lv = loadState().levels[id] or 0
-    -- Clamp to valid range; guards against a tampered upgrades file where
-    -- someone manually sets a level above MAX_LEVEL or below 0.
-    return math.max(0, math.min(MAX_LEVEL, math.floor(lv)))
+    -- Clamp to per-upgrade maximum (most are 10; amidecode is 4).
+    return math.max(0, math.min(upgradeMax(id), math.floor(lv)))
 end
 
 -- ── Effect API ────────────────────────────────────────────────────────────────
@@ -277,9 +335,76 @@ function upgrades.getWalletBonusPerTick()
     return getLevel("wallet_bonus") * 1
 end
 
--- Grandfathered summary: list of retired upgrades this node owns (level > 0).
--- Called on boot from startup.lua to log/display preserved effects.
-function upgrades.getGrandfatheredSummary()
+-- NEW Stage 1 effects
+
+-- Mint Echo: treasury earns extra per mint tick.
+-- floor(rate * 0.05 * lv) uAMI/tick. MAX: floor(25 * 0.05 * 10) = 12 uAMI/tick.
+function upgrades.getMintEchoPerTick(rate)
+    local lv = getLevel("mint_echo")
+    if lv == 0 then return 0 end
+    return math.floor(rate * 0.05 * lv)
+end
+
+-- Casino Rake: level used by casino; exposed here for STATS advertisement.
+-- floor(bet * 0.001 * lv) per bet, settled in batch at casino.
+function upgrades.getCasinoRakeLevel()
+    return getLevel("casino_rake")
+end
+
+-- Compound Interest: per-tick interest trigger info.
+function upgrades.getCompoundInterestLevel() return getLevel("compound_interest") end
+function upgrades.getCITickInterval()         return CI_TICK_INTERVAL end
+function upgrades.getCIBalanceCap()           return CI_BALANCE_CAP end
+
+-- Compound interest yield for one trigger event.
+-- treasury earns floor(min(treasury_bal, CAP) * 0.0001 * lv)
+-- MAX: floor(1,000,000,000 * 0.0001 * 10) = 1,000,000 uAMI per trigger
+function upgrades.calcCompoundInterest(treasuryBal)
+    local lv = getLevel("compound_interest")
+    if lv == 0 then return 0 end
+    local base = math.min(treasuryBal, CI_BALANCE_CAP)
+    return math.floor(base * 0.0001 * lv)
+end
+
+-- Mega Burn: base mint multiplier BEFORE Overclock.
+-- floor(rate * 1.05^lv). Lv0 = rate unchanged; Lv10 = rate * 1.6289.
+function upgrades.getMegaBurnMultiplier()
+    local lv = getLevel("mega_burn")
+    if lv == 0 then return 1.0 end
+    return 1.05 ^ lv
+end
+
+-- Sovereign Node: extra per-tick yield per loyal wallet (active + DNS-registered here).
+-- floor(rate * 0.1 * lv) uAMI/tick per loyal wallet. MAX: floor(25*0.1*10)=25 uAMI/tick/wallet.
+function upgrades.getSovereignBonusPerTick(rate)
+    local lv = getLevel("sovereign_node")
+    if lv == 0 then return 0 end
+    return math.floor(rate * 0.1 * lv)
+end
+
+-- Prestige Crown: crown level; node name suffix and theme.
+function upgrades.getCrownLevel() return getLevel("prestige_crown") end
+
+local CROWN_THEMES = { [5]="crown_gold", [6]="crown_gold", [7]="crown_gold",
+                       [8]="crown_gold", [9]="crown_gold", [10]="crown_gold" }
+function upgrades.getCrownTheme()
+    return CROWN_THEMES[getLevel("prestige_crown")]   -- nil below Lv5
+end
+
+-- Returns the display node name with crown suffix appended if Prestige Crown >= 1.
+function upgrades.getCrownedName(baseName)
+    if getLevel("prestige_crown") >= 1 then
+        return baseName .. " \u2736"
+    end
+    return baseName
+end
+
+-- Combined theme: prestige crown overrides matrix_ui if active.
+function upgrades.getActiveTheme()
+    local crown = upgrades.getCrownTheme()
+    if crown then return crown end
+    return upgrades.getMatrixTheme()
+end
     local st = loadState()
     local owned = {}
     for _, id in ipairs(RETIRED_IDS) do
@@ -554,25 +679,32 @@ local function doPurchase(router, state, defIdx, buyerAddr, buyerName)
     local d  = DEFS[defIdx]
     local lv = state.levels[d.id] or 0
 
-    if lv >= MAX_LEVEL then
+    if lv >= upgradeMax(d.id) then
         ugBanner("Already Maxed!")
         ugLine(5, "  " .. d.name,                      colors.lime)
-        ugLine(6, "  Level 10 / 10 -- maximum reached.", colors.gray)
+        ugLine(6, string.format("  Level %d / %d -- maximum reached.",
+            upgradeMax(d.id), upgradeMax(d.id)), colors.gray)
         os.sleep(2); return
     end
 
-    local nextLv = lv + 1
-    local cost   = calcCost(d.id, nextLv)
+    local nextLv  = lv + 1
+    local cost    = calcCost(d.id, nextLv)
+    local isBurn  = d.burn == true
 
     -- Confirm screen
     ugBanner("Confirm Upgrade")
     ugRule(4)
     ugLine(5, ("  Upgrade : " .. d.name):sub(1, w),                 colors.orange)
-    ugLine(6,  string.format("  Level   : %d  ->  %d  / %d", lv, nextLv, MAX_LEVEL), colors.white)
+    ugLine(6,  string.format("  Level   : %d  ->  %d  / %d", lv, nextLv, upgradeMax(d.id)), colors.white)
     ugLine(7, ("  Effect  : " .. d.desc):sub(1, w),                  colors.lightGray)
     ugRule(8)
-    ugLine(9,   string.format("  Cost    : %.4f AMI", cost / 1000000), colors.yellow)
-    ugLine(10, ("  = " .. cost .. " uAMI"):sub(1, w),                 colors.gray)
+    if isBurn then
+        ugLine(9, string.format("  BURN    : %.4f AMI (coins destroyed)", cost / 1000000), colors.red)
+        ugLine(10, ("  = " .. cost .. " uAMI"):sub(1, w), colors.gray)
+    else
+        ugLine(9,   string.format("  Cost    : %.4f AMI", cost / 1000000), colors.yellow)
+        ugLine(10, ("  = " .. cost .. " uAMI"):sub(1, w),                 colors.gray)
+    end
     ugRule(11)
     ugLine(12, "  [Y] Confirm    [N] Cancel",                         colors.orange)
 
@@ -581,11 +713,19 @@ local function doPurchase(router, state, defIdx, buyerAddr, buyerName)
         if key == keys.n then return end
         if key == keys.y then
             local txId = newUID()
-            -- Ensure shop channel is open (no-op if already open)
             pcall(function() router.open(SHOP_CHANNEL) end)
 
-            local ok, err = broadcastAndWait(
-                router, state.treasury, buyerAddr, buyerName, d, cost, txId)
+            local ok, err
+            if isBurn then
+                -- Burn upgrades: coins go to the unspendable zero address,
+                -- not to any treasury. We route the invoice payment to BURN_ADDRESS.
+                -- Nobody holds that key; coins are permanently destroyed.
+                ok, err = broadcastAndWait(
+                    router, BURN_ADDRESS, buyerAddr, buyerName, d, cost, txId)
+            else
+                ok, err = broadcastAndWait(
+                    router, state.treasury, buyerAddr, buyerName, d, cost, txId)
+            end
 
             if ok then
                 -- Level up and persist immediately

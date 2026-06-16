@@ -131,10 +131,19 @@ function daemon.run()
         end
 
         local surgeBonus = surging and 2 or 1
+
+        -- \u2500\u2500 Compute pre-Overclock rate incorporating Mega Burn \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        -- Stage 3 will prepend mega_burn before Overclock. Applied here already so Stage 3
+        -- only needs to add thermal factor without rewriting the pipeline.
+        local megaMult  = upgrades.getMegaBurnMultiplier()   -- 1.0 if Lv0
+        local baseRate  = math.floor(rate * megaMult)        -- post-mega_burn base
+
         for address, lastSeen in pairs(activeWallets) do
             if (now - lastSeen) <= ttl then
-                -- Apply Overclocked Miner multiplier + optional Mint Surge bonus
-                ledger.credit(address, math.floor(rate * mult * surgeBonus))
+                -- Pipeline: mega_burn -> overclock -> surge
+                -- Thermal factor (Stage 3) will be inserted here.
+                -- MAX EFFECT COMMENT: overclock lv10 + mega_burn lv10 = floor(25*1.63)*3.0 = 122 uAMI/tick/wallet
+                ledger.credit(address, math.floor(baseRate * mult * surgeBonus))
                 rewarded = rewarded + 1
             else
                 activeWallets[address] = nil  -- evict stale wallet
@@ -142,7 +151,7 @@ function daemon.run()
         end
 
         -- Wallet Bonus: treasury earns extra uAMI per active wallet per tick.
-        -- Inflationary but bounded; new coins minted to treasury.
+        -- MAX EFFECT: 10 uAMI/tick at Lv10 (wallet_bonus). Inflationary.
         local walletBonusPerWallet = upgrades.getWalletBonusPerTick()
         if walletBonusPerWallet > 0 and rewarded > 0 then
             local st = upgrades.getState()
@@ -153,7 +162,7 @@ function daemon.run()
         end
 
         -- Vault Yield: treasury earns extra uAMI per active vault per tick.
-        -- Fee Snatcher upgrade (reworked) funds this effect.
+        -- MAX EFFECT: 50 uAMI/tick at fee_snatcher Lv10 with 1 vault. Redistributive.
         local vaultYield = upgrades.getVaultYieldPerTick()
         if vaultYield > 0 then
             local activeVaults = ledger.countActiveVaults()
@@ -162,6 +171,53 @@ function daemon.run()
                 if type(st.treasury) == "string" and #st.treasury == 128 then
                     local yieldTotal = math.floor(vaultYield * activeVaults)
                     if yieldTotal > 0 then ledger.credit(st.treasury, yieldTotal) end
+                end
+            end
+        end
+
+        -- Mint Echo: treasury earns extra per tick proportional to current rate.
+        -- MAX EFFECT: floor(25 * 0.05 * 10) = 12 uAMI/tick. Inflationary.
+        local echoYield = upgrades.getMintEchoPerTick(rate)
+        if echoYield > 0 then
+            local st = upgrades.getState()
+            if type(st.treasury) == "string" and #st.treasury == 128 then
+                ledger.credit(st.treasury, echoYield)
+            end
+        end
+
+        -- Sovereign Node: extra yield per loyal wallet (active + DNS-registered here).
+        -- MAX EFFECT: floor(25 * 0.1 * 10) = 25 uAMI/tick per loyal wallet. Inflationary.
+        local sovereignBonus = upgrades.getSovereignBonusPerTick(rate)
+        if sovereignBonus > 0 then
+            local st = upgrades.getState()
+            if type(st.treasury) == "string" and #st.treasury == 128 then
+                local loyalCount = 0
+                for address, lastSeen in pairs(activeWallets) do
+                    if (now - lastSeen) <= ttl then
+                        -- Loyal proxy: active heartbeat AND Ami-DNS registered on this node.
+                        if ledger.getNameByAddress(address) then
+                            loyalCount = loyalCount + 1
+                        end
+                    end
+                end
+                if loyalCount > 0 then
+                    ledger.credit(st.treasury, math.floor(sovereignBonus * loyalCount))
+                end
+            end
+        end
+
+        -- Compound Interest: fire every CI_TICK_INTERVAL ticks.
+        -- MAX EFFECT: floor(min(1B, treasury_bal) * 0.0001 * 10) = up to 1,000,000 uAMI per trigger. Inflationary.
+        if totalTicks % upgrades.getCITickInterval() == 0 then
+            local ciLv = upgrades.getCompoundInterestLevel()
+            if ciLv > 0 then
+                local st = upgrades.getState()
+                if type(st.treasury) == "string" and #st.treasury == 128 then
+                    local bal      = ledger.getBalance(st.treasury)
+                    local interest = upgrades.calcCompoundInterest(bal)
+                    if interest > 0 then
+                        ledger.credit(st.treasury, interest)
+                    end
                 end
             end
         end

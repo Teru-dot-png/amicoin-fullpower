@@ -840,7 +840,9 @@ local function main()
             while true do
                 local _, key = os.pullEvent("key")
                 if key == keys.u then selfUpdate()
-                elseif key == keys.p then upgrades.runUpgradeFlow(router) end
+                elseif key == keys.p then upgrades.runUpgradeFlow(router)
+                elseif key == keys.t then upgrades.runAmdMinigame()
+                end
             end
         end
     )

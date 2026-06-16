@@ -35,7 +35,7 @@ local MAX_LEVEL    = 10     -- default hard cap; individual upgrades may overrid
 
 -- Per-upgrade max levels. Defaults to MAX_LEVEL when absent.
 local UPGRADE_MAX = {
-    -- all current upgrades use 10; amidecode (Stage 2) will use 4
+    amidecode = 4,   -- AMIdecode: Fallout-style hacking, max level 4
 }
 local function upgradeMax(id)
     return UPGRADE_MAX[id] or MAX_LEVEL
@@ -128,6 +128,13 @@ local DEFS = {
         desc  = "BURN 0.2AMI/lv. Crown suffix on node name + crown_gold theme@Lv5.",
         burn  = true,
     },
+    -- Stage 2: AMIdecode hacking minigame
+    {
+        id    = "amidecode",
+        name  = "AMIdecode",
+        short = "AMIdecode",
+        desc  = "Press [T]: hack for a temp mining boost. Lv*30min. Max Lv4.",
+    },
     -- Cosmetics
     {
         id    = "matrix_ui",
@@ -161,6 +168,7 @@ local COST_TABLE = {
     mega_burn           = function(lv) return 5000000 * lv end,  -- BURN 5 AMI/lv
     sovereign_node      = function(lv) return 1000000 * lv end,  -- 1 AMI/lv
     prestige_crown      = function(lv) return 200000 * lv end,   -- BURN 0.2 AMI/lv
+    amidecode           = function(lv) return 5000000 * lv end,  -- 5 AMI/lv, max 20 AMI at lv4
     matrix_ui           = function(lv) return  50000 * lv end,
     genesis             = function(lv) return  50000 * lv end,
 }
@@ -855,7 +863,236 @@ function upgrades.getActiveSummary()
             lines[#lines + 1] = string.format("%-12s Lv%d", d.short, lv)
         end
     end
+    -- Append AMIdecode boost status if active
+    local br, cd = upgrades.getAmdStatus()
+    if br > 0 then
+        lines[#lines + 1] = string.format("AMIdecode  BOOST x%.2f %dm", loadAmdState().boost_mult, math.floor(br/60))
+    elseif cd > 0 then
+        lines[#lines + 1] = string.format("AMIdecode  CD %dm", math.floor(cd/60))
+    end
     return lines
+end
+
+-- ── AMIdecode Stage 2 ─────────────────────────────────────────────────────────
+-- Persistent boost/cooldown state lives at /data/amidecode.json so it
+-- survives reboots (written with temp-file-then-rename).
+-- Schema: { boost_mult=2.5, boost_end=<epoch_s>, cooldown_end=<epoch_s> }
+local AMIDECODE_FILE = "/data/amidecode.json"
+local AMIDECODE_TMP  = "/data/amidecode.json.tmp"
+
+-- AMIdecode tunable constants
+local AMD_WORDS      = 8    -- candidate count shown per game
+local AMD_WORDLEN    = 6    -- chars per candidate (uppercase letters)
+local AMD_GUESSES    = 3    -- max guesses per game
+local AMD_MULT_BASE  = 2.0  -- base multiplier on solve
+local AMD_MULT_MAX   = 3.0  -- cap
+local AMD_BONUS_1ST  = 0.5  -- extra if solved on first guess
+local AMD_BONUS_FAST = 0.25 -- extra if solved within AMD_FAST_SEC seconds
+local AMD_FAST_SEC   = 8    -- seconds threshold for fast-solve bonus
+local AMD_COOLDOWN_EXTRA = 30 * 60  -- extra cooldown seconds appended after boost
+
+local function loadAmdState()
+    -- Recover from a crashed mid-write by checking for .tmp first.
+    if fs.exists(AMIDECODE_TMP) and not fs.exists(AMIDECODE_FILE) then
+        fs.move(AMIDECODE_TMP, AMIDECODE_FILE)
+    end
+    if not fs.exists(AMIDECODE_FILE) then
+        return { boost_mult=1.0, boost_end=0, cooldown_end=0 }
+    end
+    local f = fs.open(AMIDECODE_FILE, "r")
+    local t = textutils.unserialiseJSON(f.readAll())
+    f.close()
+    if type(t) ~= "table" then
+        return { boost_mult=1.0, boost_end=0, cooldown_end=0 }
+    end
+    return {
+        boost_mult   = tonumber(t.boost_mult)   or 1.0,
+        boost_end    = tonumber(t.boost_end)    or 0,
+        cooldown_end = tonumber(t.cooldown_end) or 0,
+    }
+end
+
+local function saveAmdState(st)
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(AMIDECODE_TMP, "w")
+    f.write(textutils.serialiseJSON(st)); f.close()
+    if fs.exists(AMIDECODE_FILE) then fs.delete(AMIDECODE_FILE) end
+    fs.move(AMIDECODE_TMP, AMIDECODE_FILE)
+end
+
+-- Returns the current active boost multiplier (1.0 if no active boost).
+function upgrades.getAmdBoostMultiplier()
+    if getLevel("amidecode") == 0 then return 1.0 end
+    local st  = loadAmdState()
+    local now = os.epoch("utc") / 1000
+    if now < st.boost_end and st.boost_mult > 1.0 then
+        return st.boost_mult
+    end
+    return 1.0
+end
+
+-- Returns remaining boost seconds (0 if none), remaining cooldown seconds (0 if none).
+function upgrades.getAmdStatus()
+    local st  = loadAmdState()
+    local now = os.epoch("utc") / 1000
+    local boost_rem    = math.max(0, math.floor(st.boost_end    - now))
+    local cooldown_rem = math.max(0, math.floor(st.cooldown_end - now))
+    -- If boost has expired but cooldown hasn't, boost_rem = 0 correctly.
+    if boost_rem > 0 then
+        return boost_rem, 0   -- boost is active; cooldown not started yet
+    end
+    return 0, cooldown_rem
+end
+
+-- ── AMIdecode minigame ────────────────────────────────────────────────────────
+local function mkWord()
+    local s = ""
+    for _ = 1, AMD_WORDLEN do
+        -- uppercase letters A-Z only (CC char range 65-90)
+        s = s .. string.char(math.random(65, 90))
+    end
+    return s
+end
+
+local function likeness(guess, secret)
+    local count = 0
+    for i = 1, #secret do
+        if guess:sub(i,i) == secret:sub(i,i) then count = count + 1 end
+    end
+    return count
+end
+
+-- Called by the [T] key handler in startup.lua.
+-- Blocks while the minigame runs. Result stored in persisted AMD state.
+function upgrades.runAmdMinigame()
+    local lv = getLevel("amidecode")
+    if lv == 0 then
+        term.setTextColor(colors.red)
+        print("[AMIdecode] Upgrade not purchased. Press [P] to buy.")
+        term.setTextColor(colors.white)
+        return
+    end
+
+    local now  = os.epoch("utc") / 1000
+    local br, cd = upgrades.getAmdStatus()
+    if cd > 0 then
+        term.setTextColor(colors.orange)
+        print(string.format("[AMIdecode] Cooling down. %dm%02ds remaining.",
+            math.floor(cd/60), cd % 60))
+        term.setTextColor(colors.white)
+        return
+    end
+    if br > 0 then
+        local st = loadAmdState()
+        term.setTextColor(colors.lime)
+        print(string.format("[AMIdecode] Boost active! x%.2f, %dm%02ds remaining.",
+            st.boost_mult, math.floor(br/60), br % 60))
+        term.setTextColor(colors.white)
+        return
+    end
+
+    -- Generate candidates
+    math.randomseed(os.epoch("utc") + os.getComputerID() * 1337)
+    local secret = mkWord()
+    local words  = { secret }
+    while #words < AMD_WORDS do
+        local w = mkWord()
+        local dup = false
+        for _, x in ipairs(words) do if x == w then dup = true; break end end
+        if not dup then words[#words + 1] = w end
+    end
+    -- Fisher-Yates shuffle
+    for i = #words, 2, -1 do
+        local j = math.random(i)
+        words[i], words[j] = words[j], words[i]
+    end
+
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.lime)
+    term.clear(); term.setCursorPos(1, 1)
+    print("===================================")
+    print("  AMIdecode v" .. lv .. "  //  ACCESS TERMINAL  ")
+    print("===================================")
+    print("ATTEMPTS REMAINING: " .. AMD_GUESSES)
+    print("SELECT PASSWORD:")
+    print("")
+    for i, w in ipairs(words) do
+        term.setTextColor(colors.lime)
+        print(string.format("  [%d] %s", i, w))
+    end
+    print("")
+    term.setTextColor(colors.gray)
+    print("Press number key (1-8) to guess.")
+    term.setTextColor(colors.white)
+
+    local guessesLeft = AMD_GUESSES
+    local startTime   = now
+    local firstGuess  = true
+
+    while guessesLeft > 0 do
+        local pick = nil
+        while not pick do
+            local _, key = os.pullEvent("key")
+            local n = nil
+            if     key == keys.one   then n=1
+            elseif key == keys.two   then n=2
+            elseif key == keys.three then n=3
+            elseif key == keys.four  then n=4
+            elseif key == keys.five  then n=5
+            elseif key == keys.six   then n=6
+            elseif key == keys.seven then n=7
+            elseif key == keys.eight then n=8
+            end
+            if n and n >= 1 and n <= AMD_WORDS then pick = n end
+        end
+
+        local guess   = words[pick]
+        local lk      = likeness(guess, secret)
+        guessesLeft   = guessesLeft - 1
+
+        if guess == secret then
+            -- SOLVE: compute multiplier with bonuses
+            local elapsed = os.epoch("utc") / 1000 - startTime
+            local mult    = AMD_MULT_BASE
+            if firstGuess              then mult = mult + AMD_BONUS_1ST  end
+            if elapsed <= AMD_FAST_SEC then mult = mult + AMD_BONUS_FAST end
+            mult = math.min(mult, AMD_MULT_MAX)
+
+            local boostSecs = lv * 30 * 60
+            local coolSecs  = boostSecs + AMD_COOLDOWN_EXTRA
+            saveAmdState({
+                boost_mult   = mult,
+                boost_end    = now + boostSecs,
+                cooldown_end = now + coolSecs,
+            })
+            term.setTextColor(colors.lime)
+            print("")
+            print(">>> ACCESS GRANTED <<<")
+            print(string.format("  Password: %s   Likeness: %d/%d",
+                guess, lk, AMD_WORDLEN))
+            print(string.format("  Boost: x%.2f for %dm  (Cooldown %dm after)",
+                mult, math.floor(boostSecs/60), math.floor(coolSecs/60)))
+            term.setTextColor(colors.white)
+            return
+        else
+            firstGuess = false
+            term.setTextColor(colors.red)
+            print(string.format("  '%s'  LIKENESS: %d/%d  Attempts left: %d",
+                guess, lk, AMD_WORDLEN, guessesLeft))
+            term.setTextColor(colors.white)
+        end
+    end
+
+    -- FAIL: set cooldown, no boost
+    local boostSecs = lv * 30 * 60
+    local coolSecs  = boostSecs + AMD_COOLDOWN_EXTRA
+    saveAmdState({ boost_mult=1.0, boost_end=0, cooldown_end=now+coolSecs })
+    term.setTextColor(colors.red)
+    print("")
+    print(">>> ACCESS DENIED <<<")
+    print("  Password was: " .. secret)
+    print(string.format("  Cooldown: %dm", math.floor(coolSecs/60)))
+    term.setTextColor(colors.white)
 end
 
 return upgrades

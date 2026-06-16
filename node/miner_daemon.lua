@@ -115,6 +115,10 @@ function daemon.run()
         local ttl  = upgrades.getHeartbeatTTL()  -- 90s baseline + Heartbeat Extender
         local mult = upgrades.getMinerMultiplier() -- 1.0 baseline + Overclocked Miner
 
+        -- AMIdecode: multiply effective rate by active boost (1.0 if none).
+        -- Boost is applied after Overclock in the pipeline.
+        local amdBoost = upgrades.getAmdBoostMultiplier()  -- 1.0 baseline; max 3.0x
+
         -- Mint Surge: fire a bonus 2x tick when the cooldown has elapsed
         local surgeCooldown = upgrades.getMintSurgeCooldown()  -- 0 = disabled
         local surging = false

@@ -141,6 +141,31 @@ function daemon.run()
             end
         end
 
+        -- Wallet Bonus: treasury earns extra uAMI per active wallet per tick.
+        -- Inflationary but bounded; new coins minted to treasury.
+        local walletBonusPerWallet = upgrades.getWalletBonusPerTick()
+        if walletBonusPerWallet > 0 and rewarded > 0 then
+            local st = upgrades.getState()
+            if type(st.treasury) == "string" and #st.treasury == 128 then
+                local bonusTotal = math.floor(walletBonusPerWallet * rewarded)
+                if bonusTotal > 0 then ledger.credit(st.treasury, bonusTotal) end
+            end
+        end
+
+        -- Vault Yield: treasury earns extra uAMI per active vault per tick.
+        -- Fee Snatcher upgrade (reworked) funds this effect.
+        local vaultYield = upgrades.getVaultYieldPerTick()
+        if vaultYield > 0 then
+            local activeVaults = ledger.countActiveVaults()
+            if activeVaults > 0 then
+                local st = upgrades.getState()
+                if type(st.treasury) == "string" and #st.treasury == 128 then
+                    local yieldTotal = math.floor(vaultYield * activeVaults)
+                    if yieldTotal > 0 then ledger.credit(st.treasury, yieldTotal) end
+                end
+            end
+        end
+
         if rewarded > 0 then
             local surgeTag = surging and "  [SURGE x2!]" or ""
             print(string.format("[Miner] Tick #%d | Rate: %d uAMI | %d wallet(s) | lag=%.2f%s",

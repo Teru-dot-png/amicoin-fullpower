@@ -255,4 +255,16 @@ function ledger.listVaults(address)
     return result
 end
 
+-- Count all currently locked (non-expired) vaults across all addresses.
+-- Used by the Vault Yield upgrade to determine the per-tick treasury bonus.
+function ledger.countActiveVaults()
+    local vaults = loadVaults()
+    local now    = math.floor(os.epoch("utc") / 1000)
+    local count  = 0
+    for _, v in pairs(vaults) do
+        if now < v.unlock_at then count = count + 1 end
+    end
+    return count
+end
+
 return ledger

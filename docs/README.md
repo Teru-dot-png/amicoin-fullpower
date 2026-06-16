@@ -242,33 +242,37 @@ Node operators can purchase permanent performance upgrades for their node direct
 
 ### Upgrade Pricing
 
-Upgrades use an exponential curve: Level 1 costs **1 AMI** (1,000,000 µAMI), Level 10 costs **100 AMI**.
+Upgrades use per-upgrade cost curves. Earners use a flat curve; cosmetics use a cheaper flat curve.
 
-`cost(level) = floor(1,000,000 × 100 ^ ((level − 1) / 9))`
-
-| Level | Cost (AMI) |
-|-------|-----------|
-| 1 | 1.0000 |
-| 2 | 1.6681 |
-| 3 | 2.7826 |
-| 5 | 7.7426 |
-| 8 | 35.9381 |
-| 10 | 100.0000 |
+| Upgrade group | Cost per level | Max total |
+|---|---|---|
+| Overclocked Miner, Mint Surge | Exponential 1 → 100 AMI | 100 AMI each |
+| Fee & Vault Yield, Transfer Toll | Flat 0.2 AMI/level | 2 AMI |
+| Wallet Bonus | Flat 0.1 AMI/level | 1 AMI |
+| Matrix UI, Genesis Protocol (cosmetic) | Flat 0.05 AMI/level | 0.5 AMI |
 
 ### Available Upgrades
 
-| ID | Name | Max Level | Effect |
-|----|------|-----------|--------|
-| `miner_boost` | Overclocked Miner | 10 | +20% mining payout multiplier per level (1.0× → 3.0×) |
-| `priority_ping` | Priority Ping Response | 10 | Removes error-path reply delay; advertises `priority_ping=true` in STATS |
-| `mint_surge` | Mint Surge | 10 | Fires a bonus 2× reward tick on a cooldown: Lv1 = every 80 min → Lv10 = every 8 min |
-| `smart_cache` | Smart Cache Aggregator | 10 | Batches ledger disk writes; +3 s flush interval per level (0 → 30 s) |
-| `collision_fix` | Collision Handler | 10 | Reduces error-path backoff by 0.05 s per level (0.5 s → 0.0 s) |
-| `fee_snatcher` | Routing Fee Snatcher | 10 | Skims 100 µAMI per level from every CONSOLIDATE_IN operation |
-| `hb_extender` | Heartbeat Extender | 10 | Extends active-wallet TTL +9 s per level (90 s base → 180 s max) |
-| `dns_longevity` | DNS Cache Longevity | 10 | Multiplies local DNS record TTL by level |
-| `matrix_ui` | Advanced Matrix UI | 10 | Unlocks premium monitor colour themes per level |
-| `genesis` | Genesis Protocol | 10 | Broadcasts a prestige signature across the mesh at every boot |
+| ID | Name | Cost/level | Max Level | Effect | Type |
+|----|------|-----------|-----------|--------|------|
+| `miner_boost` | Overclocked Miner | 1→100 AMI | 10 | +20% mining payout multiplier per level (1.0× → 3.0×) | Inflationary |
+| `mint_surge` | Mint Surge | 1→100 AMI | 10 | Fires a bonus 2× reward tick on a cooldown: Lv1 = every 80 min → Lv10 = every 8 min | Inflationary |
+| `fee_snatcher` | Fee & Vault Yield | 0.2 AMI | 10 | 100 µAMI/level per CONSOLIDATE_IN + 5 µAMI/tick per active vault per level | Redistributive |
+| `transfer_toll` | Transfer Toll | 0.2 AMI | 10 | 50 µAMI per level skimmed from every TRANSFER routed through this node (from sender) | Redistributive |
+| `wallet_bonus` | Wallet Bonus | 0.1 AMI | 10 | +1 µAMI/tick per active wallet per level credited to treasury | Small inflationary |
+| `matrix_ui` | Advanced Matrix UI | 0.05 AMI | 10 | Unlocks premium monitor colour themes per level | Cosmetic |
+| `genesis` | Genesis Protocol | 0.05 AMI | 10 | Broadcasts a prestige signature across the mesh at every boot | Cosmetic |
+
+#### Retired upgrades (grandfathered)
+The following upgrades are no longer sold but **remain active** on nodes that already own them. Their effects are preserved across reboots and self-updates. They do not appear in the shop menu.
+
+| ID | Effect preserved |
+|----|----------------|
+| `priority_ping` | Advertises `priority_ping=true` in STATS |
+| `smart_cache` | Batches ledger disk writes (+3 s flush/level) |
+| `collision_fix` | Reduces error-path backoff (−0.05 s/level) |
+| `dns_longevity` | Multiplies local DNS record TTL by level |
+| `hb_extender` | Extends active-wallet TTL (+9 s/level, 90 s base) |
 
 ### Upgrade State
 

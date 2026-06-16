@@ -36,6 +36,15 @@ local MAX_LEVEL    = 10     -- hard cap on every upgrade
 -- ── Upgrade definitions ───────────────────────────────────────────────────────
 -- short: max 12 chars (fits the menu column)
 -- desc:  one-line effect summary
+--
+-- RETIRED upgrades are hidden from the shop but grandfathered: their levels and
+-- effects persist forever on nodes that already own them.
+local RETIRED_IDS = {
+    "priority_ping", "smart_cache", "collision_fix", "dns_longevity", "hb_extender",
+}
+local RETIRED_SET = {}
+for _, id in ipairs(RETIRED_IDS) do RETIRED_SET[id] = true end
+
 local DEFS = {
     {
         id    = "miner_boost",
@@ -44,46 +53,28 @@ local DEFS = {
         desc  = "+20% mining payout multiplier per level (max 3.0x).",
     },
     {
-        id    = "priority_ping",
-        name  = "Priority Ping Response",
-        short = "PriorityPing",
-        desc  = "Removes reply delay. Wallets sort this node first.",
-    },
-    {
         id    = "mint_surge",
         name  = "Mint Surge",
         short = "MintSurge",
         desc  = "Bonus 2x reward tick every 80-8*(lv-1) min (Lv1=80m, Lv10=8m).",
     },
     {
-        id    = "smart_cache",
-        name  = "Smart Cache Aggregator",
-        short = "SmartCache",
-        desc  = "Batches ledger writes: +3s flush interval per level.",
-    },
-    {
-        id    = "collision_fix",
-        name  = "Collision Handler",
-        short = "CollisionFix",
-        desc  = "Reduces error-path backoff by 0.05s per level.",
-    },
-    {
         id    = "fee_snatcher",
-        name  = "Routing Fee Snatcher",
-        short = "FeeSnatcher",
-        desc  = "Skims 100 uAMI per level from CONSOLIDATE_IN ops.",
+        name  = "Routing Fee & Vault Yield",
+        short = "FeeVaultYld",
+        desc  = "100uAMI/lv per CONSOLIDATE + 5uAMI/tick/vault per level.",
     },
     {
-        id    = "hb_extender",
-        name  = "Heartbeat Extender",
-        short = "HBExtender",
-        desc  = "Extends uptime window +9s/level (90s base, max 180s).",
+        id    = "transfer_toll",
+        name  = "Transfer Toll",
+        short = "XferToll",
+        desc  = "50uAMI per level skimmed from every TRANSFER this node routes.",
     },
     {
-        id    = "dns_longevity",
-        name  = "DNS Cache Longevity",
-        short = "DnsLongevity",
-        desc  = "Multiplies local DNS TTL by level. Fewer lookups.",
+        id    = "wallet_bonus",
+        name  = "Wallet Bonus",
+        short = "WalletBonus",
+        desc  = "+1uAMI/tick per active wallet per level credited to treasury.",
     },
     {
         id    = "matrix_ui",
@@ -99,18 +90,27 @@ local DEFS = {
     },
 }
 
--- ── Pricing formula ───────────────────────────────────────────────────────────
--- cost(level) = floor(1_000_000 * 100 ^ ((level - 1) / 9))
---
--- Level  1 =   1,000,000 uAMI  (  1.0000 AMI)
--- Level  2 =   1,668,101 uAMI  (  1.6681 AMI)
--- Level  3 =   2,782,559 uAMI  (  2.7826 AMI)
--- Level  5 =   7,742,637 uAMI  (  7.7426 AMI)
--- Level  8 =  35,938,137 uAMI  ( 35.9381 AMI)
--- Level 10 = 100,000,000 uAMI  (100.0000 AMI)
-local function calcCost(level)
+-- ── Pricing ─────────────────────────────────────────────────────────────────────────────────
+-- Per-upgrade cost curves:
+--   miner_boost, mint_surge : exponential 1->100 AMI (1M * 100^((lv-1)/9))
+--   fee_snatcher, transfer_toll : flat 200,000 uAMI per level (0.2 AMI, max 2 AMI)
+--   wallet_bonus               : flat 100,000 uAMI per level (0.1 AMI, max 1 AMI)
+--   matrix_ui, genesis         : flat  50,000 uAMI per level (0.05 AMI, max 0.5 AMI)
+local COST_TABLE = {
+    miner_boost    = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
+    mint_surge     = function(lv) return math.floor(1000000 * (100 ^ ((lv-1)/9))) end,
+    fee_snatcher   = function(lv) return 200000 * lv end,
+    transfer_toll  = function(lv) return 200000 * lv end,
+    wallet_bonus   = function(lv) return 100000 * lv end,
+    matrix_ui      = function(lv) return  50000 * lv end,
+    genesis        = function(lv) return  50000 * lv end,
+}
+
+local function calcCost(id, level)
     if level < 1 or level > MAX_LEVEL then return nil end
-    return math.floor(1000000 * (100 ^ ((level - 1) / 9)))
+    local fn = COST_TABLE[id]
+    if fn then return fn(level) end
+    return nil  -- retired upgrades are not for sale
 end
 
 -- Exposed so startup.lua / UI can display the curve without reimplementing it.
@@ -241,22 +241,54 @@ function upgrades.getCollisionDelay()
     return math.max(0.0, 0.5 - 0.05 * getLevel("collision_fix"))
 end
 
--- 6. Routing Fee Snatcher: µAMI skimmed per CONSOLIDATE_IN operation.
--- 100 µAMI per level → max 1 000 µAMI (0.001 AMI) at lv10.
+-- 6. Routing Fee Snatcher (reworked): per-CONSOLIDATE_IN fee + vault yield per tick.
+-- Consolidate fee: 100 uAMI per level (unchanged).
+-- Vault yield: +5 uAMI per level per active vault lock on this node, per tick.
 function upgrades.getFeeSnatchAmount()
     return getLevel("fee_snatcher") * 100
 end
+function upgrades.getVaultYieldPerTick()
+    return getLevel("fee_snatcher") * 5
+end
 
--- 7. Heartbeat Extender: active-wallet TTL in seconds.
+-- 7. Heartbeat Extender (GRANDFATHERED): active-wallet TTL in seconds.
+-- Kept for nodes that already own it; hidden from shop.
 -- Base 90s + 9s per level → max 180s at lv10.
 function upgrades.getHeartbeatTTL()
     return 90 + 9 * getLevel("hb_extender")
 end
 
--- 8. DNS Cache Longevity: integer multiplier on local DNS record TTL.
--- Level 0 = 1 (unchanged), level 10 = 10 (records last 10× longer).
+-- 8. DNS Cache Longevity (GRANDFATHERED): integer multiplier on local DNS record TTL.
+-- Kept for nodes that already own it; hidden from shop.
 function upgrades.getDnsLongevityMult()
     return math.max(1, getLevel("dns_longevity"))
+end
+
+-- NEW: Transfer Toll -- 50 uAMI per level per TRANSFER routed through this node.
+-- Comes from the sender as an extra routing charge after the transfer completes.
+-- Level 0 = 0 (disabled). Level 10 = 500 uAMI per transfer.
+function upgrades.getTransferTollAmount()
+    return getLevel("transfer_toll") * 50
+end
+
+-- NEW: Wallet Bonus -- +1 uAMI per tick per active wallet per level credited to treasury.
+-- Level 0 = 0 (disabled). Level 10 = 10 uAMI/tick/wallet.
+function upgrades.getWalletBonusPerTick()
+    return getLevel("wallet_bonus") * 1
+end
+
+-- Grandfathered summary: list of retired upgrades this node owns (level > 0).
+-- Called on boot from startup.lua to log/display preserved effects.
+function upgrades.getGrandfatheredSummary()
+    local st = loadState()
+    local owned = {}
+    for _, id in ipairs(RETIRED_IDS) do
+        local lv = math.max(0, math.min(MAX_LEVEL, math.floor(st.levels[id] or 0)))
+        if lv > 0 then
+            owned[#owned + 1] = id .. " Lv" .. lv
+        end
+    end
+    return owned
 end
 
 -- 9. Advanced Matrix UI: theme key string for monitor rendering, or nil for default.
@@ -367,7 +399,7 @@ local function drawMenu(page, state)
                 costStr = "  *** MAX ***"
                 col     = colors.lime
             else
-                local c = calcCost(lv + 1)
+                local c = calcCost(d.id, lv + 1)
                 costStr = string.format("%8.4f AMI", c / 1000000)
                 col     = (lv == 0) and colors.white or colors.yellow
             end
@@ -530,7 +562,7 @@ local function doPurchase(router, state, defIdx, buyerAddr, buyerName)
     end
 
     local nextLv = lv + 1
-    local cost   = calcCost(nextLv)
+    local cost   = calcCost(d.id, nextLv)
 
     -- Confirm screen
     ugBanner("Confirm Upgrade")

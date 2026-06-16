@@ -247,7 +247,23 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         end
         local success, errMsg = ledger.transfer(from, to, amount)
         if success then
-            print(string.format("[Net] TRANSFER %s... -> %s... %d uAMI OK", who, to:sub(1,10), amount))
+            -- Transfer Toll: skim extra routing fee from sender to treasury.
+            -- Comes from sender's balance AFTER the transfer (sender pays toll
+            -- on top of the amount; recipient receives the full amount).
+            -- If sender has no remaining balance, toll is silently skipped.
+            -- floor applied; toll must be >= 1 to apply.
+            local toll = upgrades.getTransferTollAmount()
+            if toll > 0 then
+                local upgSt = upgrades.getState()
+                if type(upgSt.treasury) == "string" and #upgSt.treasury == 128 then
+                    local drained, _ = ledger.drain(from, toll)
+                    if drained > 0 then
+                        ledger.credit(upgSt.treasury, drained)
+                    end
+                end
+            end
+            print(string.format("[Net] TRANSFER %s... -> %s... %d uAMI OK%s",
+                who, to:sub(1,10), amount, toll > 0 and (" toll=" .. toll) or ""))
         else
             print(string.format("[Net] TRANSFER %s... FAILED: %s", who, errMsg or "?"))
         end
@@ -747,6 +763,13 @@ local function main()
         router.transmit(MESH_CHANNEL, MESH_CHANNEL,
             textutils.serialiseJSON({type="GENESIS", msg=genSig}))
         print("[Genesis] Broadcast: " .. genSig)
+    end
+
+    -- Grandfathered upgrades: log retired upgrades the node still owns.
+    local grandfathered = upgrades.getGrandfatheredSummary()
+    if #grandfathered > 0 then
+        print("[Upgrades] Grandfathered (retired from shop, effects still active): "
+            .. table.concat(grandfathered, ", "))
     end
 
     -- Smart Cache Aggregator: configure ledger flush interval from upgrade level

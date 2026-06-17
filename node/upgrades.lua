@@ -46,6 +46,12 @@ local CI_BALANCE_CAP = 1000000000   -- 1,000 AMI cap
 -- Compound-interest trigger: fires every N ticks.
 local CI_TICK_INTERVAL = 10
 
+-- ── Thermal constants (Stage 3) ─────────────────────────────────────────────────────
+local THERMAL_AMBIENT   = 30    -- base ambient temp in degC
+local THERMAL_HEAT_PER_OC  = 28 -- degC added per overclock level
+local THERMAL_COOL_PER_LV  = 28 -- degC removed per air_cooler level
+local THERMAL_JITTER_MAX   = 3  -- cosmetic fluctuation range +/- degC
+
 -- ── Upgrade definitions ───────────────────────────────────────────────────────
 -- short: max 12 chars (fits the menu column)
 -- desc:  one-line effect summary
@@ -135,6 +141,19 @@ local DEFS = {
         short = "AMIdecode",
         desc  = "Press [T]: hack for a temp mining boost. Lv*30min. Max Lv4.",
     },
+    -- Stage 3: thermal cooling upgrades
+    {
+        id    = "air_cooler",
+        name  = "Air Cooler",
+        short = "AirCooler",
+        desc  = "Reduces node temp by 28C/level. Keeps mining under 300C.",
+    },
+    {
+        id    = "liquid_cooling",
+        name  = "Liquid Cooling",
+        short = "LiquidCool",
+        desc  = "Reduces yield penalty at 100-300C by 10%/level. Lv10 removes penalty.",
+    },
     -- Cosmetics
     {
         id    = "matrix_ui",
@@ -169,6 +188,8 @@ local COST_TABLE = {
     sovereign_node      = function(lv) return 1000000 * lv end,  -- 1 AMI/lv
     prestige_crown      = function(lv) return 200000 * lv end,   -- BURN 0.2 AMI/lv
     amidecode           = function(lv) return 5000000 * lv end,  -- 5 AMI/lv, max 20 AMI at lv4
+    air_cooler          = function(lv) return 500000 * lv end,   -- 0.5 AMI/lv
+    liquid_cooling      = function(lv) return 500000 * lv end,   -- 0.5 AMI/lv
     matrix_ui           = function(lv) return  50000 * lv end,
     genesis             = function(lv) return  50000 * lv end,
 }
@@ -413,6 +434,44 @@ function upgrades.getActiveTheme()
     if crown then return crown end
     return upgrades.getMatrixTheme()
 end
+
+-- ── Thermal system (Stage 3) effect API ───────────────────────────────────────────────
+-- Compute current node temperature in degC with optional jitter.
+-- net_temp = AMBIENT + overclock_lv*HEAT_PER_OC - air_cooler_lv*COOL_PER_LV + jitter
+-- jitter is a small cosmetic fluctuation recomputed on each call.
+function upgrades.computeNetTemp(withJitter)
+    local oc_lv  = getLevel("miner_boost")
+    local ac_lv  = getLevel("air_cooler")
+    local base   = THERMAL_AMBIENT + oc_lv * THERMAL_HEAT_PER_OC - ac_lv * THERMAL_COOL_PER_LV
+    local jitter = withJitter and math.random(-THERMAL_JITTER_MAX, THERMAL_JITTER_MAX) or 0
+    return base + jitter
+end
+
+-- Compute thermal yield factor and the flag indicating a hard shutoff.
+-- Returns: factor (0.0-1.0), shutoff (bool), penalty_pct (0, 0.25, or 0.50 before mitigation)
+function upgrades.computeThermalFactor()
+    local lc_lv    = getLevel("liquid_cooling")
+    local mitigation = math.min(1.0, lc_lv * 0.10)  -- Lv10 = 1.0 (full removal)
+    local temp     = upgrades.computeNetTemp(false)   -- no jitter in miner pipeline (deterministic)
+
+    if temp >= 300 then
+        -- Hard shutoff: liquid cooling cannot lift this cap.
+        return 0.0, true, 0.50
+    elseif temp >= 200 then
+        local penalty = 0.50 * (1.0 - mitigation)
+        return 1.0 - penalty, false, 0.50
+    elseif temp >= 100 then
+        local penalty = 0.25 * (1.0 - mitigation)
+        return 1.0 - penalty, false, 0.25
+    else
+        return 1.0, false, 0.0
+    end
+end
+
+-- Air Cooler level (exposed for display).
+function upgrades.getAirCoolerLevel()    return getLevel("air_cooler") end
+-- Liquid Cooling level (exposed for display).
+function upgrades.getLiquidCoolingLevel() return getLevel("liquid_cooling") end
     local st = loadState()
     local owned = {}
     for _, id in ipairs(RETIRED_IDS) do

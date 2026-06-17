@@ -268,6 +268,20 @@ Upgrades use per-upgrade cost curves. Earners use a flat curve; cosmetics use a 
 | `prestige_crown` | Prestige Crown | **BURN** 0.2 AMI | 10 | Burns 0.2 AMI per level permanently. Node name gains ✦ crown; unlocks `crown_gold` theme at Lv5+ | BURN (cosmetic) |
 | `matrix_ui` | Advanced Matrix UI | 0.05 AMI | 10 | Unlocks premium monitor colour themes per level | Cosmetic |
 | `genesis` | Genesis Protocol | 0.05 AMI | 10 | Broadcasts a prestige signature across the mesh at every boot | Cosmetic |
+| `air_cooler` | Air Cooler | 0.5 AMI | 10 | Reduces node temperature by 28°C per level; keeps mining running at high Overclock levels | Utility |
+| `liquid_cooling` | Liquid Cooling | 0.5 AMI | 10 | Reduces the 25%/50% yield penalty at 100–299°C by 10%/level (Lv10 removes penalty entirely; cannot lift the ≥300°C hard shutoff) | Utility |
+
+#### Thermal system
+Node temperature = `30 + overclock_lv × 28 − air_cooler_lv × 28` °C (±3°C cosmetic jitter on monitor display).
+
+| Temperature | Mining effect | Mitigated by Liquid Cooling? |
+|---|---|---|
+| < 100°C | Full yield | n/a |
+| 100–199°C | Yield × (1 − 0.25 × (1 − lc_lv × 0.10)) | Yes — Lv10 removes fully |
+| 200–299°C | Yield × (1 − 0.50 × (1 − lc_lv × 0.10)) | Yes — Lv10 removes fully |
+| ≥ 300°C | **MINING HALTED** (no coins minted this tick) | No — only Air Cooler can prevent this |
+
+The monitor shows temperature in colour (green/yellow/orange/red) with an animated 3-blade fan that spins when any cooling upgrade is owned.
 
 #### Retired upgrades (grandfathered)
 The following upgrades are no longer sold but **remain active** on nodes that already own them. Their effects are preserved across reboots and self-updates. They do not appear in the shop menu.

@@ -616,8 +616,8 @@ local function monitorLoop(nodeKey)
                 pcall(function() mon.setTextScale(0.5) end)
                 local mw = mon.getSize()
 
-                -- Matrix UI theme (Advanced Matrix UI upgrade)
-                local theme = upgrades.getMatrixTheme()
+                -- Matrix UI / Crown theme
+                local theme = upgrades.getActiveTheme()
                 local THEME_COLORS = {
                     green_phosphor = {fg=colors.lime,       hdr=colors.green},
                     amber          = {fg=colors.orange,     hdr=colors.brown},
@@ -629,6 +629,7 @@ local function monitorLoop(nodeKey)
                     spectrum       = {fg=colors.white,      hdr=colors.blue},
                     void_red       = {fg=colors.red,        hdr=colors.red},
                     genesis_gold   = {fg=colors.yellow,     hdr=colors.yellow},
+                    crown_gold     = {fg=colors.yellow,     hdr=colors.yellow},
                 }
                 local tc = (theme and THEME_COLORS[theme]) or {fg=colors.white, hdr=colors.red}
 
@@ -705,17 +706,59 @@ local function monitorLoop(nodeKey)
                     mon.write("TPS:    OK")
                 end
 
+                -- ── Thermal display (Stage 3) ───────────────────────────────────────────────
+                local netTemp   = upgrades.computeNetTemp(true)   -- with cosmetic jitter
+                local _, shutoff, _ = upgrades.computeThermalFactor()
+                local acLv  = upgrades.getAirCoolerLevel()
+                local lcLv  = upgrades.getLiquidCoolingLevel()
+                local hasCooling = (acLv + lcLv) > 0
+
+                -- Animated 3-blade fan: rotates each refresh if any cooling upgrade owned.
+                -- Fan frame cycles through 4 states; we derive frame from os.clock().
+                local fanFrames = {"|--", "/-/", "---", "\\-\\"}  -- 4-frame rotation
+                local fanFrame  = math.floor(os.clock() * 2) % 4 + 1
+                local fanStr
+                if hasCooling then
+                    fanStr = fanFrames[fanFrame]   -- spinning
+                else
+                    fanStr = "( )"   -- static/off
+                end
+
+                local tempCol
+                local tempLabel
+                if shutoff then
+                    tempCol   = colors.red
+                    tempLabel = string.format("%dC THROTTLED", netTemp)
+                elseif netTemp >= 200 then
+                    tempCol   = colors.orange
+                    tempLabel = string.format("%dC HOT", netTemp)
+                elseif netTemp >= 100 then
+                    tempCol   = colors.yellow
+                    tempLabel = string.format("%dC WARM", netTemp)
+                else
+                    tempCol   = colors.green
+                    tempLabel = string.format("%dC OK", netTemp)
+                end
+
+                mon.setCursorPos(1, 12)
+                mon.setTextColor(colors.gray)
+                mon.write(string.rep("-", mw))
+
+                mon.setCursorPos(1, 13)
+                mon.setTextColor(tempCol)
+                mon.write(string.format("Temp:   %s  %s", tempLabel, fanStr):sub(1, mw))
+
                 -- Active upgrades panel (only shown if any upgrades are purchased)
                 local upLines = upgrades.getActiveSummary()
                 if #upLines > 0 then
                     local _, mh = mon.getSize()
-                    mon.setCursorPos(1, 12)
+                    mon.setCursorPos(1, 14)
                     mon.setTextColor(colors.gray)
                     mon.write(string.rep("-", mw))
-                    mon.setCursorPos(1, 13)
+                    mon.setCursorPos(1, 15)
                     mon.setTextColor(colors.yellow)
                     mon.write("Upgrades active:")
-                    local ur = 14
+                    local ur = 16
                     for _, line in ipairs(upLines) do
                         if ur > mh then break end
                         mon.setCursorPos(1, ur)

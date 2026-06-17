@@ -472,6 +472,10 @@ end
 function upgrades.getAirCoolerLevel()    return getLevel("air_cooler") end
 -- Liquid Cooling level (exposed for display).
 function upgrades.getLiquidCoolingLevel() return getLevel("liquid_cooling") end
+
+-- Grandfathered summary: list of retired upgrades this node owns (level > 0).
+-- Called on boot from startup.lua to log/display preserved effects.
+function upgrades.getGrandfatheredSummary()
     local st = loadState()
     local owned = {}
     for _, id in ipairs(RETIRED_IDS) do

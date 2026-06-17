@@ -423,7 +423,7 @@ end
 -- Returns the display node name with crown suffix appended if Prestige Crown >= 1.
 function upgrades.getCrownedName(baseName)
     if getLevel("prestige_crown") >= 1 then
-        return baseName .. " \u2736"
+        return baseName .. " [*]"
     end
     return baseName
 end

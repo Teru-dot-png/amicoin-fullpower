@@ -830,11 +830,10 @@ local function adminMenu(setupPassword)
         print("===========================================")
         term.setTextColor(colors.white)
         print("  [1] Balance inquiry     (name or address)")
-        print("  [2] Force credit        (mint coins to address)")
-        print("  [3] Force transfer      (address -> address)")
-        print("  [4] Re-register wallet  (create zero-balance entry)")
-        print("  [5] Flush ledger        (force write cached ledger)")
-        print("  [6] List all balances   (snapshot dump)")
+        print("  [2] Force transfer      (address -> address)")
+        print("  [3] Re-register wallet  (create zero-balance entry)")
+        print("  [4] Flush ledger        (force write cached ledger)")
+        print("  [5] List all balances   (snapshot dump)")
         print("  [B] Exit admin menu")
         term.setTextColor(colors.gray)
         print("")
@@ -862,36 +861,6 @@ local function adminMenu(setupPassword)
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
 
         elseif choice == "2" then
-            -- Force credit (manual mint)
-            local inp = adminRead("  Name or address > ")
-            local addr, err = adminResolve(inp)
-            if not addr then
-                term.setTextColor(colors.red); print("  " .. err)
-                os.sleep(1)
-            else
-                local amtStr = adminRead("  Amount (AMI) > ")
-                local n = tonumber(amtStr)
-                if not n or n <= 0 then
-                    term.setTextColor(colors.red); print("  Invalid amount.")
-                    os.sleep(1)
-                else
-                    local uami = math.floor(n * 1e6)
-                    if uami <= 0 then
-                        term.setTextColor(colors.red); print("  Amount rounds to zero.")
-                        os.sleep(1)
-                    else
-                        ledger.register(addr)  -- ensure entry exists
-                        ledger.credit(addr, uami)
-                        local name = ledger.getNameByAddress(addr) or "(unregistered)"
-                        term.setTextColor(colors.lime)
-                        print(string.format("  Credited %d uAMI to %s", uami, name))
-                        adminLog(string.format("FORCE_CREDIT addr=%s amount=%d operator=admin", addr:sub(1,16), uami))
-                        term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-                    end
-                end
-            end
-
-        elseif choice == "3" then
             -- Force transfer (no signature required — operator action)
             local fromInp = adminRead("  FROM name/address > ")
             local from, e1 = adminResolve(fromInp)
@@ -928,7 +897,7 @@ local function adminMenu(setupPassword)
                 end
             end
 
-        elseif choice == "4" then
+        elseif choice == "3" then
             -- Re-register (creates zero-balance entry if missing)
             local inp = adminRead("  Address (128 hex) > ")
             local addr, err = adminResolve(inp)
@@ -942,14 +911,14 @@ local function adminMenu(setupPassword)
                 term.setTextColor(colors.gray); print("  [Enter] continue"); read()
             end
 
-        elseif choice == "5" then
+        elseif choice == "4" then
             -- Flush ledger cache to disk immediately
             ledger.flush()
             term.setTextColor(colors.lime); print("  Ledger flushed to disk.")
             adminLog("LEDGER_FLUSH operator=admin")
             os.sleep(0.8)
 
-        elseif choice == "6" then
+        elseif choice == "5" then
             -- Snapshot dump: list all addresses with non-zero balance
             local snap = ledger.snapshot()
             local entries = {}

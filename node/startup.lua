@@ -715,13 +715,17 @@ local function monitorLoop(nodeKey)
 
                 -- Animated 3-blade fan: rotates each refresh if any cooling upgrade owned.
                 -- Fan frame cycles through 4 states; we derive frame from os.clock().
-                local fanFrames = {"|--", "/-/", "---", "\\-\\"}  -- 4-frame rotation
-                local fanFrame  = math.floor(os.clock() * 2) % 4 + 1
+                local fanFrames = {
+                    string.char(218) .. string.char(196) .. string.char(191),
+                    string.char(179) .. " " .. string.char(179),
+                    string.char(192) .. string.char(196) .. string.char(217)
+                }
+                local fanFrame  = math.floor(os.clock() * 5) % #fanFrames + 1
                 local fanStr
                 if hasCooling then
                     fanStr = fanFrames[fanFrame]   -- spinning
                 else
-                    fanStr = "( )"   -- static/off
+                    fanStr = " O "   -- static/off
                 end
 
                 local tempCol

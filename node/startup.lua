@@ -616,7 +616,7 @@ local function monitorLoop(nodeKey)
                 pcall(function() mon.setTextScale(0.5) end)
                 local mw = mon.getSize()
 
-                -- Matrix UI / Crown theme
+                -- Matrix UI / Crown theme (its not working cause ascii art characters are ignored by CC:tweaked)
                 local theme = upgrades.getActiveTheme()
                 local THEME_COLORS = {
                     green_phosphor = {fg=colors.lime,       hdr=colors.green},
@@ -773,9 +773,217 @@ local function monitorLoop(nodeKey)
     end
 end
 
+-- ── Admin recovery menu ([A] key) ───────────────────────────────────────────
+-- Provides operator tools for wallet recovery: balance inquiry, force-credit,
+-- force-transfer, re-register, and ledger flush.  All actions are logged.
+-- Password-protected using the same setup password file.
+local ADMIN_LOG = "/data/admin.log"
+local function adminLog(msg)
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(ADMIN_LOG, "a")
+    f.write("[" .. tostring(os.epoch("utc")) .. "] " .. msg .. "\n")
+    f.close()
+end
+
+local function adminResolve(input)
+    -- Accepts a 128-hex address directly OR an Ami-DNS name.
+    -- Returns address (string) or nil, errMsg (string).
+    local trimmed = input:gsub("^%s*(.-)%s*$", "%1")
+    if #trimmed == 128 and trimmed:match("^%x+$") then
+        return trimmed, nil
+    elseif #trimmed > 0 then
+        local addr = ledger.lookupName(trimmed)
+        if addr then return addr, nil end
+        return nil, "Name '" .. trimmed .. "' not found in registry."
+    end
+    return nil, "Empty input."
+end
+
+local function adminRead(prompt)
+    term.setTextColor(colors.white)
+    io.write(prompt)
+    return (read() or ""):gsub("^%s*(.-)%s*$", "%1")
+end
+
+local function adminMenu(setupPassword)
+    -- Password gate: require the setup password if one is set.
+    if type(setupPassword) == "string" and #setupPassword > 0 then
+        term.setTextColor(colors.yellow)
+        print("\n[Admin] Enter setup password to continue:")
+        io.write("  > ")
+        local pw = read("*")
+        if pw ~= setupPassword then
+            term.setTextColor(colors.red)
+            print("[Admin] Wrong password.")
+            term.setTextColor(colors.white)
+            os.sleep(1)
+            return
+        end
+    end
+
+    while true do
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.yellow)
+        term.clear(); term.setCursorPos(1,1)
+        print("===========================================")
+        print("  AmiCoin Node -- Admin Recovery Menu")
+        print("===========================================")
+        term.setTextColor(colors.white)
+        print("  [1] Balance inquiry     (name or address)")
+        print("  [2] Force credit        (mint coins to address)")
+        print("  [3] Force transfer      (address -> address)")
+        print("  [4] Re-register wallet  (create zero-balance entry)")
+        print("  [5] Flush ledger        (force write cached ledger)")
+        print("  [6] List all balances   (snapshot dump)")
+        print("  [B] Exit admin menu")
+        term.setTextColor(colors.gray)
+        print("")
+        io.write("  Choice > ")
+        local choice = (read() or ""):gsub("%s","")
+
+        if choice == "b" or choice == "B" then
+            break
+
+        elseif choice == "1" then
+            -- Balance inquiry
+            local inp = adminRead("  Name or address > ")
+            local addr, err = adminResolve(inp)
+            if not addr then
+                term.setTextColor(colors.red); print("  " .. err)
+            else
+                local bal = ledger.getBalance(addr)
+                local name = ledger.getNameByAddress(addr) or "(unregistered)"
+                term.setTextColor(colors.lime)
+                print(string.format("  Name:    %s", name))
+                print(string.format("  Address: %s...", addr:sub(1,24)))
+                print(string.format("  Balance: %d uAMI  (%.6f AMI)", bal, bal/1e6))
+                adminLog(string.format("INQUIRY addr=%s name=%s bal=%d", addr:sub(1,16), name, bal))
+            end
+            term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+
+        elseif choice == "2" then
+            -- Force credit (manual mint)
+            local inp = adminRead("  Name or address > ")
+            local addr, err = adminResolve(inp)
+            if not addr then
+                term.setTextColor(colors.red); print("  " .. err)
+                os.sleep(1)
+            else
+                local amtStr = adminRead("  Amount (AMI) > ")
+                local n = tonumber(amtStr)
+                if not n or n <= 0 then
+                    term.setTextColor(colors.red); print("  Invalid amount.")
+                    os.sleep(1)
+                else
+                    local uami = math.floor(n * 1e6)
+                    if uami <= 0 then
+                        term.setTextColor(colors.red); print("  Amount rounds to zero.")
+                        os.sleep(1)
+                    else
+                        ledger.register(addr)  -- ensure entry exists
+                        ledger.credit(addr, uami)
+                        local name = ledger.getNameByAddress(addr) or "(unregistered)"
+                        term.setTextColor(colors.lime)
+                        print(string.format("  Credited %d uAMI to %s", uami, name))
+                        adminLog(string.format("FORCE_CREDIT addr=%s amount=%d operator=admin", addr:sub(1,16), uami))
+                        term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+                    end
+                end
+            end
+
+        elseif choice == "3" then
+            -- Force transfer (no signature required — operator action)
+            local fromInp = adminRead("  FROM name/address > ")
+            local from, e1 = adminResolve(fromInp)
+            if not from then
+                term.setTextColor(colors.red); print("  " .. e1); os.sleep(1)
+            else
+                local toInp = adminRead("  TO name/address   > ")
+                local to, e2 = adminResolve(toInp)
+                if not to then
+                    term.setTextColor(colors.red); print("  " .. e2); os.sleep(1)
+                else
+                    local amtStr = adminRead("  Amount (AMI, M=all) > ")
+                    local uami
+                    if amtStr:lower() == "m" then
+                        uami = ledger.getBalance(from)
+                    else
+                        local n = tonumber(amtStr)
+                        uami = n and math.floor(n * 1e6) or 0
+                    end
+                    if uami <= 0 then
+                        term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
+                    else
+                        local ok, errMsg = ledger.transfer(from, to, uami)
+                        if ok then
+                            term.setTextColor(colors.lime)
+                            print(string.format("  Transferred %d uAMI OK.", uami))
+                            adminLog(string.format("FORCE_XFER from=%s to=%s amount=%d", from:sub(1,16), to:sub(1,16), uami))
+                        else
+                            term.setTextColor(colors.red)
+                            print("  Failed: " .. (errMsg or "?"))
+                        end
+                        term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+                    end
+                end
+            end
+
+        elseif choice == "4" then
+            -- Re-register (creates zero-balance entry if missing)
+            local inp = adminRead("  Address (128 hex) > ")
+            local addr, err = adminResolve(inp)
+            if not addr then
+                term.setTextColor(colors.red); print("  " .. err); os.sleep(1)
+            else
+                local isNew = ledger.register(addr)
+                term.setTextColor(isNew and colors.lime or colors.yellow)
+                print(isNew and "  Registered new entry." or "  Already exists (no change).")
+                adminLog(string.format("REREGISTER addr=%s new=%s", addr:sub(1,16), tostring(isNew)))
+                term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+            end
+
+        elseif choice == "5" then
+            -- Flush ledger cache to disk immediately
+            ledger.flush()
+            term.setTextColor(colors.lime); print("  Ledger flushed to disk.")
+            adminLog("LEDGER_FLUSH operator=admin")
+            os.sleep(0.8)
+
+        elseif choice == "6" then
+            -- Snapshot dump: list all addresses with non-zero balance
+            local snap = ledger.snapshot()
+            local entries = {}
+            for addr, bal in pairs(snap) do
+                if bal > 0 then entries[#entries+1] = {addr=addr, bal=bal} end
+            end
+            table.sort(entries, function(a,b) return a.bal > b.bal end)
+            term.setTextColor(colors.white)
+            print(string.format("  %d entries with balance:", #entries))
+            for i, e in ipairs(entries) do
+                local name = ledger.getNameByAddress(e.addr) or ""
+                local nameStr = #name > 0 and (" (" .. name .. ")") or ""
+                term.setTextColor(colors.lightGray)
+                print(string.format("  %s...%s  %d uAMI",
+                    e.addr:sub(1,12), nameStr, e.bal))
+                if i >= 20 then
+                    term.setTextColor(colors.gray)
+                    print(string.format("  ... %d more (truncated)", #entries - 20))
+                    break
+                end
+            end
+            term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+        end
+    end
+
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear(); term.setCursorPos(1,1)
+    print("[Admin] Returned to node shell.")
+    print("[Tip] Press U to update  |  P for Upgrade Shop  |  A for Admin")
+end
+
 -- ── Main ─────────────────────────────────────────────────────────────────────
 local function main()
-    term.clear()
     term.setCursorPos(1, 1)
     print("===========================================")
     print("  AmiCoin Node v" .. NODE_VERSION)
@@ -821,8 +1029,7 @@ local function main()
     -- Smart Cache Aggregator: configure ledger flush interval from upgrade level
     ledger.setFlushDelay(upgrades.getSmartCacheDelay())
 
-    print("[Tip] Press U at any time to update from GitHub.")
-    print("[Tip] Press P to open the Node Upgrade Shop.")
+    print("[Tip] Press U to update  |  P for Upgrade Shop  |  T for AMIdecode  |  A for Admin")
     do
         local ok, res = pcall(http.get,
             "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt")
@@ -885,6 +1092,7 @@ local function main()
                 if key == keys.u then selfUpdate()
                 elseif key == keys.p then upgrades.runUpgradeFlow(router)
                 elseif key == keys.t then upgrades.runAmdMinigame()
+                elseif key == keys.a then adminMenu(setupPassword)
                 end
             end
         end

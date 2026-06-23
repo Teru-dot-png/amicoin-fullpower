@@ -655,7 +655,7 @@ end
 function UI.Window:write(x, y, text, bg, tc)
 	-- Global yield counter to prevent timeout during heavy rendering
 	UI.Window._writeCount = (UI.Window._writeCount or 0) + 1
-	if UI.Window._writeCount % 50 == 0 then
+	if UI.Window._writeCount % 25 == 0 then
 		os.sleep(0)
 	end
 	

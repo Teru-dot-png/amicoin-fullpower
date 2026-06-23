@@ -36,14 +36,14 @@ UI.Fan.defaults = {
     width = 21,          -- Calculated: radius * 2 * ASPECT + 1 (for level 1: 5*2*2+1=21)
     height = 11,         -- Calculated: radius * 2 + 1 (for level 1: 5*2+1=11)
     spinning = false,
-    fps = 30,            -- Higher FPS for smooth rotation
+    fps = 5,             -- Render rate (low: a full repaint is ~150 cell-writes)
     level = 1,           -- Air cooler upgrade level (1-10)
     color = colors.lightGray,
     backgroundColor = colors.black,
     
     -- Internal state (set by preset)
     blades = 2,
-    radius = 5,
+    radius = 4,
     twist = 0.0,
     speed = 1.0,
     rotation = 0,

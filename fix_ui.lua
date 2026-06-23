@@ -6,13 +6,15 @@
 local REPO = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local MISSING_FILES = {
-    { src = "/ami/lib/ui/transition.lua", dst = "/ami/lib/ui/transition.lua" },
-    { src = "/ami/lib/ui/tween.lua",      dst = "/ami/lib/ui/tween.lua"      },
-    { src = "/ami/lib/ui/sound.lua",      dst = "/ami/lib/ui/sound.lua"      },
+    { src = "/ami/lib/ui/transition.lua",    dst = "/ami/lib/ui/transition.lua"    },
+    { src = "/ami/lib/ui/tween.lua",         dst = "/ami/lib/ui/tween.lua"         },
+    { src = "/ami/lib/ui/sound.lua",         dst = "/ami/lib/ui/sound.lua"         },
+    { src = "/ami/lib/ui/widgets/fan.lua",   dst = "/ami/lib/ui/widgets/fan.lua"   },
+    { src = "/ami/lib/ui/widgets/gauge.lua", dst = "/ami/lib/ui/widgets/gauge.lua" },
 }
 
 print("========================================")
-print("  AmiCoin UI Framework Hotfix v1.0")
+print("  AmiCoin UI Framework Hotfix v1.1")
 print("========================================")
 print("")
 print("Downloading missing dependencies...")

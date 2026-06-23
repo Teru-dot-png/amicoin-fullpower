@@ -14,12 +14,31 @@ local VERSION   = "3.1"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
+    -- === Node Service Files ===
     { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"   },
     { src = "/node/startup.lua",      dst = "/startup.lua"       },
     { src = "/node/ledger.lua",       dst = "/ledger.lua"        },
     { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
     { src = "/node/xtea.lua",         dst = "/xtea.lua"          },
     { src = "/node/upgrades.lua",     dst = "/upgrades.lua"      },
+    
+    -- === Opus UI Framework - Core (Minimal for Fan Widget) ===
+    { src = "/ami/lib/ui/class.lua",    dst = "/ami/lib/ui/class.lua"    },
+    { src = "/ami/lib/ui/ui.lua",       dst = "/ami/lib/ui/ui.lua"       },
+    { src = "/ami/lib/ui/canvas.lua",   dst = "/ami/lib/ui/canvas.lua"   },
+    { src = "/ami/lib/ui/event.lua",    dst = "/ami/lib/ui/event.lua"    },
+    { src = "/ami/lib/ui/terminal.lua", dst = "/ami/lib/ui/terminal.lua" },
+    { src = "/ami/lib/ui/region.lua",   dst = "/ami/lib/ui/region.lua"   },
+    { src = "/ami/lib/ui/input.lua",    dst = "/ami/lib/ui/input.lua"    },
+    { src = "/ami/lib/ui/util.lua",     dst = "/ami/lib/ui/util.lua"     },
+    { src = "/ami/lib/ui/entry.lua",    dst = "/ami/lib/ui/entry.lua"    },
+    
+    -- === Opus UI Framework - Theme & Glyphs ===
+    { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },
+    { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
+    
+    -- === Opus UI Framework - Widgets ===
+    { src = "/ami/lib/ui/widgets/fan.lua", dst = "/ami/lib/ui/widgets/fan.lua" },
 }
 
 -- Files/dirs wiped on Clean Install.
@@ -27,7 +46,7 @@ local CLEAN_LUAS = {
     "/startup.lua", "/ledger.lua", "/miner_daemon.lua", "/xtea.lua",
     "/shared/xtea.lua", "/upgrades.lua",
 }
-local CLEAN_DIRS = { "/data" }
+local CLEAN_DIRS = { "/data", "/ami/lib/ui" }
 
 -- ── Smart Update Engine ──────────────────────────────────────────────────────
 

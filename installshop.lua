@@ -16,10 +16,72 @@ local VERSION   = "3.1"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
+    -- === Shop Service Files ===
     { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"       },
     { src = "/ami/shop/shop_api.lua", dst = "/ami/shop/shop_api.lua" },
     { src = "/ami/shop/shop_ui.lua",  dst = "/ami/shop/shop_ui.lua"  },
     { src = "/ami/shop/startup.lua",  dst = "/ami/shop/startup.lua"  },
+    
+    -- === Opus UI Framework - Core ===
+    { src = "/ami/lib/ui/class.lua",      dst = "/ami/lib/ui/class.lua"      },
+    { src = "/ami/lib/ui/ui.lua",         dst = "/ami/lib/ui/ui.lua"         },
+    { src = "/ami/lib/ui/canvas.lua",     dst = "/ami/lib/ui/canvas.lua"     },
+    { src = "/ami/lib/ui/event.lua",      dst = "/ami/lib/ui/event.lua"      },
+    { src = "/ami/lib/ui/input.lua",      dst = "/ami/lib/ui/input.lua"      },
+    { src = "/ami/lib/ui/region.lua",     dst = "/ami/lib/ui/region.lua"     },
+    { src = "/ami/lib/ui/terminal.lua",   dst = "/ami/lib/ui/terminal.lua"   },
+    { src = "/ami/lib/ui/transition.lua", dst = "/ami/lib/ui/transition.lua" },
+    { src = "/ami/lib/ui/tween.lua",      dst = "/ami/lib/ui/tween.lua"      },
+    { src = "/ami/lib/ui/util.lua",       dst = "/ami/lib/ui/util.lua"       },
+    { src = "/ami/lib/ui/sound.lua",      dst = "/ami/lib/ui/sound.lua"      },
+    { src = "/ami/lib/ui/entry.lua",      dst = "/ami/lib/ui/entry.lua"      },
+    { src = "/ami/lib/ui/init.lua",       dst = "/ami/lib/ui/init.lua"       },
+    
+    -- === Opus UI Framework - Theme & Glyphs ===
+    { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },
+    { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
+    
+    -- === Opus UI Framework - Components ===
+    { src = "/ami/lib/ui/components/ActiveLayer.lua",    dst = "/ami/lib/ui/components/ActiveLayer.lua"    },
+    { src = "/ami/lib/ui/components/Button.lua",         dst = "/ami/lib/ui/components/Button.lua"         },
+    { src = "/ami/lib/ui/components/Checkbox.lua",       dst = "/ami/lib/ui/components/Checkbox.lua"       },
+    { src = "/ami/lib/ui/components/Chooser.lua",        dst = "/ami/lib/ui/components/Chooser.lua"        },
+    { src = "/ami/lib/ui/components/Dialog.lua",         dst = "/ami/lib/ui/components/Dialog.lua"         },
+    { src = "/ami/lib/ui/components/DropMenu.lua",       dst = "/ami/lib/ui/components/DropMenu.lua"       },
+    { src = "/ami/lib/ui/components/DropMenuItem.lua",   dst = "/ami/lib/ui/components/DropMenuItem.lua"   },
+    { src = "/ami/lib/ui/components/Embedded.lua",       dst = "/ami/lib/ui/components/Embedded.lua"       },
+    { src = "/ami/lib/ui/components/Form.lua",           dst = "/ami/lib/ui/components/Form.lua"           },
+    { src = "/ami/lib/ui/components/Grid.lua",           dst = "/ami/lib/ui/components/Grid.lua"           },
+    { src = "/ami/lib/ui/components/Image.lua",          dst = "/ami/lib/ui/components/Image.lua"          },
+    { src = "/ami/lib/ui/components/Menu.lua",           dst = "/ami/lib/ui/components/Menu.lua"           },
+    { src = "/ami/lib/ui/components/MenuBar.lua",        dst = "/ami/lib/ui/components/MenuBar.lua"        },
+    { src = "/ami/lib/ui/components/MenuItem.lua",       dst = "/ami/lib/ui/components/MenuItem.lua"       },
+    { src = "/ami/lib/ui/components/NftImage.lua",       dst = "/ami/lib/ui/components/NftImage.lua"       },
+    { src = "/ami/lib/ui/components/Notification.lua",   dst = "/ami/lib/ui/components/Notification.lua"   },
+    { src = "/ami/lib/ui/components/ProgressBar.lua",    dst = "/ami/lib/ui/components/ProgressBar.lua"    },
+    { src = "/ami/lib/ui/components/ScrollBar.lua",      dst = "/ami/lib/ui/components/ScrollBar.lua"      },
+    { src = "/ami/lib/ui/components/ScrollingGrid.lua",  dst = "/ami/lib/ui/components/ScrollingGrid.lua"  },
+    { src = "/ami/lib/ui/components/SlideOut.lua",       dst = "/ami/lib/ui/components/SlideOut.lua"       },
+    { src = "/ami/lib/ui/components/Slider.lua",         dst = "/ami/lib/ui/components/Slider.lua"         },
+    { src = "/ami/lib/ui/components/StatusBar.lua",      dst = "/ami/lib/ui/components/StatusBar.lua"      },
+    { src = "/ami/lib/ui/components/Tab.lua",            dst = "/ami/lib/ui/components/Tab.lua"            },
+    { src = "/ami/lib/ui/components/TabBar.lua",         dst = "/ami/lib/ui/components/TabBar.lua"         },
+    { src = "/ami/lib/ui/components/TabBarMenuItem.lua", dst = "/ami/lib/ui/components/TabBarMenuItem.lua" },
+    { src = "/ami/lib/ui/components/Tabs.lua",           dst = "/ami/lib/ui/components/Tabs.lua"           },
+    { src = "/ami/lib/ui/components/Text.lua",           dst = "/ami/lib/ui/components/Text.lua"           },
+    { src = "/ami/lib/ui/components/TextArea.lua",       dst = "/ami/lib/ui/components/TextArea.lua"       },
+    { src = "/ami/lib/ui/components/TextEntry.lua",      dst = "/ami/lib/ui/components/TextEntry.lua"      },
+    { src = "/ami/lib/ui/components/Throttle.lua",       dst = "/ami/lib/ui/components/Throttle.lua"       },
+    { src = "/ami/lib/ui/components/TitleBar.lua",       dst = "/ami/lib/ui/components/TitleBar.lua"       },
+    { src = "/ami/lib/ui/components/VerticalMeter.lua",  dst = "/ami/lib/ui/components/VerticalMeter.lua"  },
+    { src = "/ami/lib/ui/components/Viewport.lua",       dst = "/ami/lib/ui/components/Viewport.lua"       },
+    { src = "/ami/lib/ui/components/Wizard.lua",         dst = "/ami/lib/ui/components/Wizard.lua"         },
+    { src = "/ami/lib/ui/components/WizardPage.lua",     dst = "/ami/lib/ui/components/WizardPage.lua"     },
+    
+    -- === Opus UI Framework - Widgets ===
+    { src = "/ami/lib/ui/widgets/fan.lua",   dst = "/ami/lib/ui/widgets/fan.lua"   },
+    { src = "/ami/lib/ui/widgets/gauge.lua", dst = "/ami/lib/ui/widgets/gauge.lua" },
+    { src = "/ami/lib/ui/widgets/card.lua",  dst = "/ami/lib/ui/widgets/card.lua"  },
 }
 
 local TEMPLATE_LISTINGS = { listings = {} }
@@ -38,7 +100,7 @@ local DATA_PATHS = {
 
 -- Paths wiped on Clean Install (lua + data dirs, NOT /shared/xtea.lua which
 -- is shared across services and will be overwritten by the download loop).
-local CLEAN_DIRS  = { "/ami/shop" }
+local CLEAN_DIRS  = { "/ami/shop", "/ami/lib/ui" }
 local CLEAN_FILES = { "/shared/xtea.lua" }
 
 -- ── Smart Update Engine ──────────────────────────────────────────────────────

@@ -69,7 +69,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "6.7"
+local NODE_VERSION    = "6.8"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -951,7 +951,10 @@ local function monitorLoop(nodeKey)
                 end
             end)
         end
-        os.sleep((lag < 0.7) and 0.25 or 1.0)
+        -- Fan playback fps. Frames are baked SMOOTH (7.5 deg each), so speed comes
+        -- from fps here: 0.1s = 10fps = 75 deg/s ~ 0.8 visual rotations/sec.
+        -- Back off hard when the server lags to spare ticks.
+        os.sleep((lag < 0.7) and 0.1 or 1.0)
     end
 end
 

@@ -27,19 +27,18 @@ SX, SY = 2, 3                   # sub-pixels per char cell
 GW, GH = COLS * SX, ROWS * SY   # 34 x 27 sub-pixel grid
 
 BLADES = 4
-FRAMES = 5                      # baked frames in the loop (halved: snappier + cheaper)
-# A B-blade fan repeats every 360/B degrees (the "symmetry period"). Sweeping
-# only ONE period across N frames makes each frame a tiny step (11.25 deg @ 8
-# frames) -> the fan crawls. Instead advance ROTATIONS whole periods across the
-# loop: each frame jumps ROTATIONS/FRAMES of a period. With gcd(ROTATIONS,FRAMES)
-# == 1 the frames stay distinct AND the loop still closes seamlessly, so the fan
-# appears to spin ROTATIONS-times faster for free.
-#   step = ROTATIONS/FRAMES * (360/BLADES) = 2/5 * 90 = 36 deg/frame.
-# Halving the frame count (10 -> 5) drops every other in-between frame: bigger
-# jumps = faster feel, and half the baked data + half the monitor draws.
-# Keep step < 45 deg (half the 4-blade spacing) so it reads as forward motion and
-# not the backward "wagon-wheel" strobe.
-ROTATIONS = 2
+FRAMES = 12                     # frames per loop. More frames = smoother + seamless.
+# A B-blade fan looks IDENTICAL every 360/B degrees (the "symmetry period" = 90
+# deg for 4 blades). So sampling frames evenly across exactly ONE period makes a
+# perfectly seamless loop: the last frame is one step short of 90 deg, which wraps
+# straight back to frame 0.
+#   step = (360/BLADES) / FRAMES = 90/12 = 7.5 deg/frame  -> very smooth.
+# IMPORTANT: smoothness (deg/frame) and SPEED are independent knobs:
+#   apparent speed = deg_per_frame * playback_fps.
+# So we bake SMOOTH (small step, many frames) and make it FAST by playing at a
+# higher fps on the monitor (see monitorLoop). Do NOT crank deg/frame for speed -
+# big steps just look steppy/wagon-wheel. ROTATIONS stays 1 for the cleanest loop.
+ROTATIONS = 1
 assert math.gcd(ROTATIONS, FRAMES) == 1, "ROTATIONS and FRAMES must be coprime"
 
 CXp = (GW - 1) / 2.0

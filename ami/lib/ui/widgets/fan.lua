@@ -15,16 +15,16 @@ local math   = _G.math
 -------------------------------------------
 -- Each level defines blade count, radius, twist (spiral), and speed
 local PRESETS = {
-    [1]  = { blades = 2, radius = 5,  twist = 0.0,  speed = 1.0 },  -- Slow 2-blade
-    [2]  = { blades = 3, radius = 6,  twist = 0.1,  speed = 1.2 },
-    [3]  = { blades = 3, radius = 7,  twist = 0.15, speed = 1.4 },
-    [4]  = { blades = 4, radius = 8,  twist = 0.2,  speed = 1.6 },
-    [5]  = { blades = 4, radius = 9,  twist = 0.25, speed = 1.8 },  -- Mid-tier
-    [6]  = { blades = 5, radius = 10, twist = 0.3,  speed = 2.0 },
-    [7]  = { blades = 5, radius = 11, twist = 0.35, speed = 2.2 },
-    [8]  = { blades = 6, radius = 12, twist = 0.4,  speed = 2.5 },
-    [9]  = { blades = 6, radius = 13, twist = 0.45, speed = 2.8 },
-    [10] = { blades = 7, radius = 14, twist = 0.5,  speed = 3.0 }, -- Max cooling
+    [1]  = { blades = 2, radius = 4,  twist = 0.0,  speed = 1.0 },  -- Slow 2-blade
+    [2]  = { blades = 3, radius = 4,  twist = 0.1,  speed = 1.2 },
+    [3]  = { blades = 3, radius = 4,  twist = 0.15, speed = 1.4 },
+    [4]  = { blades = 4, radius = 4,  twist = 0.2,  speed = 1.6 },
+    [5]  = { blades = 4, radius = 4,  twist = 0.25, speed = 1.8 },  -- Mid-tier
+    [6]  = { blades = 5, radius = 4, twist = 0.3,  speed = 2.0 },
+    [7]  = { blades = 5, radius = 4, twist = 0.35, speed = 2.2 },
+    [8]  = { blades = 6, radius = 4, twist = 0.4,  speed = 2.5 },
+    [9]  = { blades = 6, radius = 4, twist = 0.45, speed = 2.8 },
+    [10] = { blades = 7, radius = 4, twist = 0.5,  speed = 3.0 }, -- Max cooling
 }
 
 -------------------------------------------

@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "3.4"
+local VERSION   = "3.5"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
@@ -46,9 +46,9 @@ local FILES = {
 }
 
 -- Files/dirs wiped on Clean Install.
-local CLEAN_LUAS = {node_ui.lua", "/
+local CLEAN_LUAS = {
     "/startup.lua", "/ledger.lua", "/miner_daemon.lua", "/xtea.lua",
-    "/shared/xtea.lua", "/upgrades.lua",
+    "/shared/xtea.lua", "/upgrades.lua", "/node_ui.lua",
 }
 local CLEAN_DIRS = { "/data", "/ami/lib/ui" }
 

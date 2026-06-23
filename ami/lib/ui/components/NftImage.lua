@@ -23,6 +23,7 @@ function UI.NftImage:draw()
 			for x = 1, #self.image.text[y] do
 				self:write(x, y, self.image.text[y][x], self.image.bg[y][x], self.image.fg[y][x] or bg)
 			end
+			if y % 3 == 0 then os.sleep(0) end
 		end
 	else
 		self:clear()

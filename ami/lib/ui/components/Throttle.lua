@@ -55,6 +55,7 @@ function UI.Throttle:update()
 		for i = 0, #self.image do
 			self:write(2, i + 1, image:sub(width * i + 1, width * i + width),
 				self.backgroundColor, self.textColor)
+			if i % 5 == 0 then os.sleep(0) end
 		end
 
 		self.ctr = (self.ctr + 1) % #self.image

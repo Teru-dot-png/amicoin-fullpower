@@ -31,11 +31,13 @@ function UI.ScrollBar:draw()
 
 		for i = 1, view.height - 2 do
 			self:write(x, row + i, self.lineChar, nil, self.scrollbarColor)
+			if i % 5 == 0 then os.sleep(0) end
 		end
 
 		local y = Util.round((view.height - 2 - sliderSize) * percent)
 		for i = 1, sliderSize do
 			self:write(x, row + y + i, self.sliderChar, nil, self.scrollbarColor)
+			if i % 5 == 0 then os.sleep(0) end
 		end
 
 		local color = self.scrollbarColor

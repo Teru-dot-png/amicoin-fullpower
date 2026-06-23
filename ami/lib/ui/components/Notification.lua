@@ -67,6 +67,7 @@ function UI.Notification:display(value, timeout)
 	self:clear()
 	for k,v in pairs(lines) do
 		self:write(2, k, v)
+		if k % 5 == 0 then os.sleep(0) end
 	end
 
 	timeout = timeout or self.timeout

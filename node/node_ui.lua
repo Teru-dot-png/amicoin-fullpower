@@ -88,27 +88,32 @@ local function createDashboard(nodeKey, nodeVersion)
             }),
         }),
 
-        -- ── Right column: thermal + fan ──
-        thermalPanel = UI.Window({
-            x = 28, y = 2, width = 24, height = 17,
-            backgroundColor = colors.gray,
+        -- ── Right column: live node log (fan now lives on the monitor) ──
+        logPanel = (function()
+            local p = {
+                x = 28, y = 2, width = 24, height = 17,
+                backgroundColor = colors.black,
 
-            tempLabel = UI.Text({
-                x = 2, y = 1, value = 'Temperature', textColor = colors.white,
-            }),
-            tempValue = UI.Text({
-                x = 2, y = 2, value = '0C OK', textColor = colors.lime,
-            }),
-
-            -- Pre-rendered fan (17x9); centered in the 24-wide column.
-            fan = UI.Fan({
-                x = 4, y = 5, level = 1,
-            }),
-
-            coolingLabel = UI.Text({
-                x = 2, y = 15, value = 'Cooling: None', textColor = colors.gray,
-            }),
-        }),
+                logHeader = UI.Text({
+                    x = 1, y = 1, width = 24, align = 'center',
+                    value = ' Node Log ',
+                    backgroundColor = colors.red, textColor = colors.white,
+                }),
+                -- Compact thermal/cooling status line at the bottom.
+                tempValue = UI.Text({
+                    x = 2, y = 16, width = 22,
+                    value = '0C OK', textColor = colors.lime,
+                }),
+            }
+            -- 14 scrolling log lines (rows 2..15).
+            for i = 1, 14 do
+                p['logLine' .. i] = UI.Text({
+                    x = 2, y = 1 + i, width = 22,
+                    value = '', textColor = colors.lightGray,
+                })
+            end
+            return UI.Window(p)
+        end)(),
 
         statusBar = UI.StatusBar({
             backgroundColor = colors.red,

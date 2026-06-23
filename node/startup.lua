@@ -39,23 +39,37 @@ Theme.setTheme('demon')
 
 -- ── Terminal output gate ─────────────────────────────────────────────────────
 -- While the Opus dashboard owns the screen, stray print()/io.write() from the
--- background threads (miner ticks, net packets, watchdog) must NOT reach the
--- terminal: every print() scrolls the device and shoves the Opus canvas upward.
--- Opus renders via device.blit (not print), so gating these is invisible to it.
--- Sub-flows ([P]/[A]/[T]/[U]) call setUIActive(false) to get a normal text term.
+-- background threads (miner ticks, net packets, watchdog) must NOT scroll the
+-- terminal (that shoves the Opus canvas upward). Instead, when the dashboard is
+-- active we ROUTE every print() into the on-screen "Node Log" panel via logSink.
+-- During boot and the text sub-flows ([U]/[P]/[T]/[A]) print goes to the real
+-- terminal as normal. Opus itself renders via device.blit, never print().
 local uiActive = false
+local logSink  = nil   -- set to nodeLog() once the dashboard exists
 do
     local realPrint   = _G.print
     local realIoWrite = io.write
-    _G.print = function(...) if not uiActive then return realPrint(...) end end
-    io.write = function(...) if not uiActive then return realIoWrite(...) end end
+    _G.print = function(...)
+        if uiActive then
+            if logSink then
+                local parts = {}
+                for i = 1, select('#', ...) do parts[i] = tostring((select(i, ...))) end
+                logSink(table.concat(parts, ' '))
+            end
+        else
+            return realPrint(...)
+        end
+    end
+    io.write = function(...)
+        if not uiActive then return realIoWrite(...) end
+    end
 end
 local function setUIActive(on) uiActive = on end
 
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "6.0"
+local NODE_VERSION    = "6.1"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -616,6 +630,25 @@ end
 local dashboardPage = nil  -- Will be created in main()
 local nodeUI = nil         -- Main UI page
 
+-- Live "Node Log" ring buffer shown in the dashboard's right panel. Every
+-- print() made while the dashboard is active is routed here (see logSink).
+local LOG_LINES = 14
+local logBuf    = {}
+local function nodeLog(line)
+    line = tostring(line)
+    logBuf[#logBuf + 1] = line
+    while #logBuf > LOG_LINES do table.remove(logBuf, 1) end
+    if dashboardPage and uiActive and dashboardPage.logPanel then
+        for i = 1, LOG_LINES do
+            local w = dashboardPage.logPanel['logLine' .. i]
+            if w then w.value = logBuf[i] or '' end
+        end
+        dashboardPage.logPanel:draw()
+        dashboardPage.logPanel:sync()
+    end
+end
+logSink = nodeLog   -- the print() gate now feeds the on-screen log
+
 local function updateDashboard()
     if not dashboardPage then return end
     if not uiActive then return end  -- a sub-flow owns the terminal; don't overdraw
@@ -657,26 +690,12 @@ local function updateDashboard()
         tempLabel = "WARM"
     end
     
-    dashboardPage.thermalPanel.tempValue.value = string.format("%dC %s", netTemp, tempLabel)
-    dashboardPage.thermalPanel.tempValue.textColor = tempColor
-    
-    -- Update fan widget
+    -- Compact thermal + cooling status line in the log panel.
     local coolingLevel = upgrades.getAirCoolerLevel()
-    if coolingLevel > 0 then
-        dashboardPage.thermalPanel.fan:setLevel(coolingLevel)
-        if not dashboardPage.thermalPanel.fan.spinning then
-            dashboardPage.thermalPanel.fan:start()
-        end
-        dashboardPage.thermalPanel.coolingLabel.value = "Cooling: Level " .. coolingLevel
-        dashboardPage.thermalPanel.coolingLabel.textColor = colors.lime
-    else
-        if dashboardPage.thermalPanel.fan.spinning then
-            dashboardPage.thermalPanel.fan:stop()
-        end
-        dashboardPage.thermalPanel.coolingLabel.value = "Cooling: None"
-        dashboardPage.thermalPanel.coolingLabel.textColor = colors.gray
-    end
-    
+    local coolStr = coolingLevel > 0 and (" | Cool Lv" .. coolingLevel) or ""
+    dashboardPage.logPanel.tempValue.value = string.format("%dC %s%s", netTemp, tempLabel, coolStr)
+    dashboardPage.logPanel.tempValue.textColor = tempColor
+
     -- Lag indicator
     local lag = miner.getLagFactor()
     if lag < 0.7 then
@@ -753,178 +772,169 @@ local function statusLoop(textModeOnly, nodeKeyHint)
 end
 
 -- ── Monitor display ──────────────────────────────────────────────────────────
--- Draws live stats on an attached monitor every 10 s.
+-- Draws live stats on an attached monitor PLUS the big pre-rendered cooling fan.
+-- The (expensive) full stats redraw is throttled; the fan animates a few fps.
 -- If no monitor is connected the loop simply sleeps and checks again later.
 local function monitorLoop(nodeKey)
-    while true do
-        -- Throttle monitor refresh when server is lagging to reduce tick pressure.
-        local lag      = miner.getLagFactor()
-        local sleepSec = (lag < 0.7) and 30 or 10
+    local fanFrames = nil
+    pcall(function() fanFrames = require('ami.lib.ui.widgets.fan_frames') end)
+    local fanIdx    = 1
+    local lastStats = -1e9
 
+    while true do
+        local lag = miner.getLagFactor()
         local mon = peripheral.find("monitor")
         if mon then
             pcall(function()
                 pcall(function() mon.setTextScale(0.5) end)
-                local mw = mon.getSize()
+                local mw, mh = mon.getSize()
 
-                -- Matrix UI / Crown theme (its not working cause ascii art characters are ignored by CC:tweaked)
-                local theme = upgrades.getActiveTheme()
-                local THEME_COLORS = {
-                    green_phosphor = {fg=colors.lime,       hdr=colors.green},
-                    amber          = {fg=colors.orange,     hdr=colors.brown},
-                    ice_blue       = {fg=colors.cyan,       hdr=colors.lightBlue},
-                    deep_violet    = {fg=colors.purple,     hdr=colors.purple},
-                    neon_pink      = {fg=colors.pink,       hdr=colors.pink},
-                    solar_orange   = {fg=colors.orange,     hdr=colors.red},
-                    arctic_white   = {fg=colors.white,      hdr=colors.lightGray},
-                    spectrum       = {fg=colors.white,      hdr=colors.blue},
-                    void_red       = {fg=colors.red,        hdr=colors.red},
-                    genesis_gold   = {fg=colors.yellow,     hdr=colors.yellow},
-                    crown_gold     = {fg=colors.yellow,     hdr=colors.yellow},
-                }
-                local tc = (theme and THEME_COLORS[theme]) or {fg=colors.white, hdr=colors.red}
+                -- Throttle the full stats redraw; the fan animates much faster.
+                local statsInterval = (lag < 0.7) and 5 or 15
+                local doStats = (os.clock() - lastStats) >= statsInterval
 
-                mon.setBackgroundColor(colors.black)
-                mon.clear()
+                if doStats then
+                    lastStats = os.clock()
 
-                -- Header bar
-                mon.setBackgroundColor(tc.hdr)
-                mon.setTextColor(colors.white)
-                mon.setCursorPos(1, 1)
-                mon.clearLine()
-                local title = " AmiCoin Node v" .. NODE_VERSION
-                mon.setCursorPos(math.floor((mw - #title) / 2) + 1, 1)
-                mon.write(title)
-                mon.setBackgroundColor(colors.black)
+                    local theme = upgrades.getActiveTheme()
+                    local THEME_COLORS = {
+                        green_phosphor = {fg=colors.lime,       hdr=colors.green},
+                        amber          = {fg=colors.orange,     hdr=colors.brown},
+                        ice_blue       = {fg=colors.cyan,       hdr=colors.lightBlue},
+                        deep_violet    = {fg=colors.purple,     hdr=colors.purple},
+                        neon_pink      = {fg=colors.pink,       hdr=colors.pink},
+                        solar_orange   = {fg=colors.orange,     hdr=colors.red},
+                        arctic_white   = {fg=colors.white,      hdr=colors.lightGray},
+                        spectrum       = {fg=colors.white,      hdr=colors.blue},
+                        void_red       = {fg=colors.red,        hdr=colors.red},
+                        genesis_gold   = {fg=colors.yellow,     hdr=colors.yellow},
+                        crown_gold     = {fg=colors.yellow,     hdr=colors.yellow},
+                    }
+                    local tc = (theme and THEME_COLORS[theme]) or {fg=colors.white, hdr=colors.red}
 
-                -- Divider
-                mon.setTextColor(colors.gray)
-                mon.setCursorPos(1, 2)
-                mon.write(string.rep("-", mw))
+                    mon.setBackgroundColor(colors.black)
+                    mon.clear()
 
-                -- Stats
-                local active = miner.getActive()
-                local snap   = ledger.snapshot()
-                local total  = 0
-                for _, v in pairs(snap) do total = total + v end
-                local ami = string.format("%.6f AMI", total / 1000000)
+                    -- Header bar
+                    mon.setBackgroundColor(tc.hdr)
+                    mon.setTextColor(colors.white)
+                    mon.setCursorPos(1, 1)
+                    mon.clearLine()
+                    local title = " AmiCoin Node v" .. NODE_VERSION
+                    mon.setCursorPos(math.floor((mw - #title) / 2) + 1, 1)
+                    mon.write(title)
+                    mon.setBackgroundColor(colors.black)
 
-                mon.setCursorPos(1, 3)
-                mon.setTextColor(tc.fg)
-                mon.write("Key:    " .. nodeKey:sub(1, 16) .. "...")
-
-                mon.setCursorPos(1, 4)
-                mon.setTextColor(tc.fg)
-                mon.write("Active: " .. #active .. " wallet(s)")
-
-                mon.setCursorPos(1, 5)
-                mon.setTextColor(tc.fg)
-                mon.write("Supply: " .. total .. " uAMI")
-
-                mon.setCursorPos(1, 6)
-                mon.setTextColor(tc.fg)
-                mon.write("      = " .. ami)
-
-                mon.setCursorPos(1, 7)
-                mon.setTextColor(tc.fg)
-                mon.write("Chan:   " .. MESH_CHANNEL)
-
-                -- Reward rate panel
-                local baseRate = miner.getCurrentRate()
-                local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
-                -- 3600s/hr ÷ 30s/tick = 120 ticks/hr
-                local amiPerHr = effRate * 120 / 1000000
-
-                mon.setCursorPos(1, 8)
-                mon.setTextColor(colors.gray)
-                mon.write(string.rep("-", mw))
-
-                mon.setCursorPos(1, 9)
-                mon.setTextColor(tc.fg)
-                mon.write(string.format("Rate:   %d uAMI/tk", effRate))
-
-                mon.setCursorPos(1, 10)
-                mon.setTextColor(tc.fg)
-                mon.write(string.format("      = %.4f AMI/hr", amiPerHr))
-
-                -- Lag indicator
-                mon.setCursorPos(1, 11)
-                if lag < 0.7 then
-                    mon.setTextColor(colors.red)
-                    mon.write(string.format("LAG:    ~%.0f%% TPS", lag * 100))
-                else
-                    mon.setTextColor(colors.green)
-                    mon.write("TPS:    OK")
-                end
-
-                -- ── Thermal display (Stage 3) ───────────────────────────────────────────────
-                local netTemp   = upgrades.computeNetTemp(true)   -- with cosmetic jitter
-                local _, shutoff, _ = upgrades.computeThermalFactor()
-                local acLv  = upgrades.getAirCoolerLevel()
-                local lcLv  = upgrades.getLiquidCoolingLevel()
-                local hasCooling = (acLv + lcLv) > 0
-
-                -- Animated 3-blade fan: rotates each refresh if any cooling upgrade owned.
-                -- Fan frame cycles through 4 states; we derive frame from os.clock().
-                local fanFrames = {
-                    string.char(218) .. string.char(196) .. string.char(191),
-                    string.char(179) .. " " .. string.char(179),
-                    string.char(192) .. string.char(196) .. string.char(217)
-                }
-                local fanFrame  = math.floor(os.clock() * 5) % #fanFrames + 1
-                local fanStr
-                if hasCooling then
-                    fanStr = fanFrames[fanFrame]   -- spinning
-                else
-                    fanStr = " O "   -- static/off
-                end
-
-                local tempCol
-                local tempLabel
-                if shutoff then
-                    tempCol   = colors.red
-                    tempLabel = string.format("%dC THROTTLED", netTemp)
-                elseif netTemp >= 200 then
-                    tempCol   = colors.orange
-                    tempLabel = string.format("%dC HOT", netTemp)
-                elseif netTemp >= 100 then
-                    tempCol   = colors.yellow
-                    tempLabel = string.format("%dC WARM", netTemp)
-                else
-                    tempCol   = colors.green
-                    tempLabel = string.format("%dC OK", netTemp)
-                end
-
-                mon.setCursorPos(1, 12)
-                mon.setTextColor(colors.gray)
-                mon.write(string.rep("-", mw))
-
-                mon.setCursorPos(1, 13)
-                mon.setTextColor(tempCol)
-                mon.write(string.format("Temp:   %s  %s", tempLabel, fanStr):sub(1, mw))
-
-                -- Active upgrades panel (only shown if any upgrades are purchased)
-                local upLines = upgrades.getActiveSummary()
-                if #upLines > 0 then
-                    local _, mh = mon.getSize()
-                    mon.setCursorPos(1, 14)
                     mon.setTextColor(colors.gray)
+                    mon.setCursorPos(1, 2)
                     mon.write(string.rep("-", mw))
-                    mon.setCursorPos(1, 15)
-                    mon.setTextColor(colors.yellow)
-                    mon.write("Upgrades active:")
-                    local ur = 16
-                    for _, line in ipairs(upLines) do
-                        if ur > mh then break end
-                        mon.setCursorPos(1, ur)
-                        mon.setTextColor(tc.fg)
-                        mon.write(line:sub(1, mw))
-                        ur = ur + 1
+
+                    -- Stats
+                    local active = miner.getActive()
+                    local snap   = ledger.snapshot()
+                    local total  = 0
+                    for _, v in pairs(snap) do total = total + v end
+                    local ami = string.format("%.6f AMI", total / 1000000)
+
+                    mon.setCursorPos(1, 3); mon.setTextColor(tc.fg)
+                    mon.write("Key:    " .. nodeKey:sub(1, 16) .. "...")
+                    mon.setCursorPos(1, 4); mon.setTextColor(tc.fg)
+                    mon.write("Active: " .. #active .. " wallet(s)")
+                    mon.setCursorPos(1, 5); mon.setTextColor(tc.fg)
+                    mon.write("Supply: " .. total .. " uAMI")
+                    mon.setCursorPos(1, 6); mon.setTextColor(tc.fg)
+                    mon.write("      = " .. ami)
+                    mon.setCursorPos(1, 7); mon.setTextColor(tc.fg)
+                    mon.write("Chan:   " .. MESH_CHANNEL)
+
+                    -- Reward rate panel
+                    local baseRate = miner.getCurrentRate()
+                    local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
+                    local amiPerHr = effRate * 120 / 1000000
+
+                    mon.setCursorPos(1, 8); mon.setTextColor(colors.gray)
+                    mon.write(string.rep("-", mw))
+                    mon.setCursorPos(1, 9); mon.setTextColor(tc.fg)
+                    mon.write(string.format("Rate:   %d uAMI/tk", effRate))
+                    mon.setCursorPos(1, 10); mon.setTextColor(tc.fg)
+                    mon.write(string.format("      = %.4f AMI/hr", amiPerHr))
+
+                    mon.setCursorPos(1, 11)
+                    if lag < 0.7 then
+                        mon.setTextColor(colors.red)
+                        mon.write(string.format("LAG:    ~%.0f%% TPS", lag * 100))
+                    else
+                        mon.setTextColor(colors.green)
+                        mon.write("TPS:    OK")
+                    end
+
+                    -- Thermal text
+                    local netTemp = upgrades.computeNetTemp(true)
+                    local _, shutoff, _ = upgrades.computeThermalFactor()
+                    local tempCol, tempLabel
+                    if shutoff then
+                        tempCol, tempLabel = colors.red, string.format("%dC THROTTLED", netTemp)
+                    elseif netTemp >= 200 then
+                        tempCol, tempLabel = colors.orange, string.format("%dC HOT", netTemp)
+                    elseif netTemp >= 100 then
+                        tempCol, tempLabel = colors.yellow, string.format("%dC WARM", netTemp)
+                    else
+                        tempCol, tempLabel = colors.green, string.format("%dC OK", netTemp)
+                    end
+                    mon.setCursorPos(1, 12); mon.setTextColor(colors.gray)
+                    mon.write(string.rep("-", mw))
+                    mon.setCursorPos(1, 13); mon.setTextColor(tempCol)
+                    mon.write(("Temp:   " .. tempLabel):sub(1, mw))
+
+                    -- Active upgrades panel
+                    local upLines = upgrades.getActiveSummary()
+                    if #upLines > 0 then
+                        mon.setCursorPos(1, 14); mon.setTextColor(colors.gray)
+                        mon.write(string.rep("-", mw))
+                        mon.setCursorPos(1, 15); mon.setTextColor(colors.yellow)
+                        mon.write("Upgrades active:")
+                        local ur = 16
+                        for _, line in ipairs(upLines) do
+                            if ur > mh then break end
+                            mon.setCursorPos(1, ur); mon.setTextColor(tc.fg)
+                            mon.write(line:sub(1, mw))
+                            ur = ur + 1
+                        end
+                    end
+                end
+
+                -- ── Big pre-rendered cooling fan (animated) ──
+                if fanFrames then
+                    local hasCooling = (upgrades.getAirCoolerLevel()
+                                      + upgrades.getLiquidCoolingLevel()) > 0
+                    local frame = fanFrames.frames[fanIdx]
+                    local fcols, frows = fanFrames.cols, fanFrames.rows
+                    local ox, oy
+                    if mw >= 26 + fcols then        -- room to the right of the stats
+                        ox, oy = mw - fcols, 3
+                    else                             -- otherwise stack below the stats
+                        ox, oy = 1, math.max(15, mh - frows)
+                    end
+                    mon.setBackgroundColor(colors.black)
+                    mon.setTextColor(hasCooling and colors.lightBlue or colors.gray)
+                    for r = 1, #frame do
+                        if oy + r - 1 <= mh then
+                            mon.setCursorPos(ox, oy + r - 1)
+                            mon.write(frame[r])
+                        end
+                    end
+                    if oy + frows <= mh then
+                        mon.setCursorPos(ox, oy + frows)
+                        mon.setTextColor(hasCooling and colors.lime or colors.gray)
+                        mon.write(hasCooling and "  COOLING " or "  IDLE     ")
+                    end
+                    if hasCooling then
+                        fanIdx = fanIdx % #fanFrames.frames + 1
                     end
                 end
             end)
         end
-        os.sleep(sleepSec)
+        os.sleep((lag < 0.7) and 0.4 or 1.2)
     end
 end
 

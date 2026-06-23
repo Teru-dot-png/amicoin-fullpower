@@ -647,6 +647,17 @@ function UI.Window:clearArea(x, y, width, height, bg)
 end
 
 function UI.Window:write(x, y, text, bg, tc)
+	-- CC:Tweaked instruction-budget guard. A full-page paint (incl. the
+	-- parametric Fan's ~150 per-cell writes) can exceed the ~7s "too long
+	-- without yielding" wall-clock limit on a laggy server. Yield from the
+	-- single chokepoint every N writes. (Effects are disabled, so the
+	-- runTransitions deadlock that the scattered yields used to trigger is gone.)
+	UI._writeCount = (UI._writeCount or 0) + 1
+	if UI._writeCount >= 64 then
+		UI._writeCount = 0
+		os.sleep(0)
+	end
+
 	bg = bg or self.backgroundColor
 	tc = tc or self.textColor
 

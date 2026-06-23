@@ -69,7 +69,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "6.1"
+local NODE_VERSION    = "6.2"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -706,17 +706,21 @@ local function updateDashboard()
         dashboardPage.infoPanel.lagValue.textColor = colors.lime
     end
     
-    -- Update upgrades list
+    -- Update upgrades list.
+    -- getActiveSummary() returns lines like "OvrclkMiner  Lv5" (name padded to
+    -- 12 chars, then the level/status), NOT "Name (LvN)". Split on the first run
+    -- of whitespace: first token = name, remainder = level/status.
     local upgradeData = {}
     local upLines = upgrades.getActiveSummary()
     for _, line in ipairs(upLines) do
-        -- Parse "Name (LvN)" format
-        local name, level = line:match("^(.+)%s+%((.+)%)$")
+        local name, level = line:match("^(%S+)%s+(.+)$")
         if name and level then
             table.insert(upgradeData, {
-                name = name:gsub("^%s*(.-)%s*$", "%1"),
-                level = level,
+                name  = name,
+                level = (level:gsub("%s+$", "")),
             })
+        elseif line:match("%S") then
+            table.insert(upgradeData, { name = (line:gsub("%s+$", "")), level = "" })
         end
     end
     dashboardPage.upgradesPanel.upgradesList:setValues(upgradeData)

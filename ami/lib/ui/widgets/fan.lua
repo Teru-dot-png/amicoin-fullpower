@@ -90,6 +90,12 @@ function UI.Fan:renderFrame()
     end
 end
 
+-- Paint the current frame whenever the page draws (so the fan is visible at
+-- rest, not only while the spin timer is firing).
+function UI.Fan:draw()
+    self:renderFrame()
+end
+
 function UI.Fan:enable()
     UI.Window.enable(self)
     if self.spinning then

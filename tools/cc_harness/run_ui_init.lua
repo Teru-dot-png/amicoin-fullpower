@@ -46,11 +46,28 @@ step("require gauge widget", function() require("ami.lib.ui.widgets.gauge") end)
 step("require node_ui", function() nodeUI = require("node_ui") end)
 step("UI:disableEffects", function() UI:disableEffects() end)
 if not step("createDashboard", function()
-  page = nodeUI.createDashboard("fae5dacd0f07a37911fe027808e0132e", "5.7")
+  page = nodeUI.createDashboard("fae5dacd0f07a37911fe027808e0132e", "5.9")
 end) then os.exit(1) end
 step("UI:setPage (paint)", function() UI:setPage(page) end)
 
 print("\n=== Final screen buffer ===")
+print(shim.dumpScreen())
+
+-- Populate the grid + start the fan to verify dynamic content renders.
+step("populate grid + fan", function()
+  page.upgradesPanel.upgradesList:setValues({
+    { name = "OvrclkMiner", level = "Lv5" },
+    { name = "MintSurge",   level = "Lv3" },
+    { name = "WalletBonus", level = "Lv6" },
+    { name = "AirCooler",   level = "Lv3" },
+  })
+  page.thermalPanel.fan:setLevel(3)
+  page.thermalPanel.fan:start()
+  page.infoPanel.miningRateGauge.value = 90
+  page:draw()
+  page:sync()
+end)
+print("\n=== Populated screen buffer ===")
 print(shim.dumpScreen())
 
 -- Try a few event-loop iterations (timer-driven fan frames + one click)

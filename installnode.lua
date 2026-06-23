@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "4.1"
+local VERSION   = "4.2"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
@@ -228,7 +228,9 @@ for _, entry in ipairs(FILES) do
         term.setTextColor(colors.white)
     else
         io.write("  " .. entry.dst .. " ... ")
-        local url = REPO_BASE .. entry.src
+        -- Cache-busting: append timestamp to bypass GitHub CDN cache
+        local cacheBust = os.epoch("utc") or os.time()
+        local url = REPO_BASE .. entry.src .. "?" .. cacheBust
         local content, remoteHash, fetchErr = fetchRemote(url)
         if not content then
             term.setTextColor(colors.red)

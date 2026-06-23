@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "5.0"
+local NODE_VERSION    = "5.1"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -1137,15 +1137,15 @@ local function main()
     dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
     
     print("[UI] Setting active page...")
-    UI:setPage(dashboardPage)
+    UI:setActivePage(dashboardPage)
+    
+    print("[UI] Enabling dashboard...")
+    dashboardPage:enable()
     
     print("[UI] Drawing dashboard...")
     dashboardPage:draw()
     
-    print("[UI] Syncing to device...")
-    dashboardPage:sync()
-    
-    print("[UI] Dashboard ready!")
+    print("[UI] Dashboard ready (skipped sync to avoid hang)!")
     os.sleep(1)
 
     print("[Parallel] Starting background threads...")

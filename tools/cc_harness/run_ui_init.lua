@@ -46,7 +46,7 @@ step("require gauge widget", function() require("ami.lib.ui.widgets.gauge") end)
 step("require node_ui", function() nodeUI = require("node_ui") end)
 step("UI:disableEffects", function() UI:disableEffects() end)
 if not step("createDashboard", function()
-  page = nodeUI.createDashboard("fae5dacd0f07a37911fe027808e0132e", "6.1")
+  page = nodeUI.createDashboard("fae5dacd0f07a37911fe027808e0132e", "6.4")
 end) then os.exit(1) end
 step("UI:setPage (paint)", function() UI:setPage(page) end)
 
@@ -67,6 +67,10 @@ step("populate grid + log", function()
   end
   page.logPanel.tempValue.value = "84C OK | Cool Lv3"
   page.infoPanel.miningRateGauge.value = 90
+  page.infoPanel.supplyValue.value = "95.896324 AMI"
+  page.infoPanel.supplyuAMI.value = "(95896324 uAMI)"
+  page.infoPanel.mintBar.value = 60
+  page.infoPanel.mintCountdown.value = "12s"
   page:draw()
   page:sync()
 end)

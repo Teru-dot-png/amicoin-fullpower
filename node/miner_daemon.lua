@@ -48,6 +48,7 @@ local activeWallets = {}  -- [address] = lastSeenTimestamp
 local totalTicks    = 0
 local lastLagFactor = 1.0  -- 1.0 = perfect timing; < 0.7 = server lag detected
 local lastSurgeTick = 0    -- totalTicks value when the last Mint Surge fired
+local cycleStartMs  = 0    -- os.epoch("utc") at the start of the current 30s cycle
 
 -- Persist totalTicks so the halving schedule survives reboots.
 local STATE_FILE = "/data/miner_state.json"
@@ -92,6 +93,7 @@ function daemon.run()
 
     while true do
         local cycleStart = os.epoch("utc")   -- ms timestamp before sleep
+        cycleStartMs = cycleStart            -- expose for the mint-countdown UI
         os.sleep(REWARD_INTERVAL)
         local elapsed = (os.epoch("utc") - cycleStart) / 1000  -- actual seconds
 
@@ -251,5 +253,18 @@ end
 function daemon.getCurrentRate() return currentRate()  end
 function daemon.getTotalTicks()  return totalTicks     end
 function daemon.getLagFactor()   return lastLagFactor  end
+
+-- Mint cycle timing for the dashboard countdown bar.
+-- Returns: progress (0..1 through the current 30s cycle), secondsRemaining.
+function daemon.getRewardInterval() return REWARD_INTERVAL end
+function daemon.getMintProgress()
+    if cycleStartMs == 0 then
+        return 0, REWARD_INTERVAL
+    end
+    local elapsed = (os.epoch("utc") - cycleStartMs) / 1000
+    if elapsed < 0 then elapsed = 0 end
+    if elapsed > REWARD_INTERVAL then elapsed = REWARD_INTERVAL end
+    return elapsed / REWARD_INTERVAL, REWARD_INTERVAL - elapsed
+end
 
 return daemon

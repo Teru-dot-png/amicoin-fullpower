@@ -69,7 +69,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "6.3"
+local NODE_VERSION    = "6.4"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -729,6 +729,19 @@ local function updateDashboard()
     dashboardPage:sync()
 end
 
+-- Lightweight ~1Hz updater for just the mint-countdown bar (the full
+-- updateDashboard only runs every 30s, too slow for a 1-second countdown).
+local function updateMintBar()
+    if not dashboardPage then return end
+    if not uiActive then return end
+    local progress, remaining = miner.getMintProgress()
+    local ip = dashboardPage.infoPanel
+    ip.mintBar.value      = math.floor(progress * 100 + 0.5)
+    ip.mintCountdown.value = string.format("%ds", math.ceil(remaining))
+    ip:draw()
+    ip:sync()
+end
+
 -- ── Status display ───────────────────────────────────────────────────────────
 local function statusLoop(textModeOnly, nodeKeyHint)
     while true do
@@ -1209,6 +1222,13 @@ local function main()
         -- Live stats refresh (drives updateDashboard every 30s)
         function()
             statusLoop(false, nodeKey)
+        end,
+        -- Mint countdown bar (~1Hz; just the infoPanel, cheap)
+        function()
+            while true do
+                os.sleep(1)
+                updateMintBar()
+            end
         end,
         -- Opus UI event loop (mouse clicks, hovers, redraws)
         function()

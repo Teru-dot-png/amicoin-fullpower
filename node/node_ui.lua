@@ -31,41 +31,54 @@ local function createDashboard(nodeKey, nodeVersion)
                 x = 2, y = 1, value = 'Node Key', textColor = colors.white,
             }),
             nodeKeyValue = UI.Text({
-                x = 2, y = 2, value = nodeKey:sub(1, 16) .. '..', textColor = colors.yellow,
+                x = 2, y = 2, width = 24, value = nodeKey:sub(1, 16) .. '..', textColor = colors.yellow,
             }),
 
             activeWalletsLabel = UI.Text({
-                x = 2, y = 4, value = 'Wallets', textColor = colors.white,
+                x = 2, y = 3, value = 'Wallets', textColor = colors.white,
             }),
             activeWalletsValue = UI.Text({
-                x = 12, y = 4, value = '0', textColor = colors.lime,
+                x = 12, y = 3, width = 5, value = '0', textColor = colors.lime,
+            }),
+            -- TPS / lag status shares the Wallets row.
+            lagValue = UI.Text({
+                x = 18, y = 3, width = 7, value = 'OK', textColor = colors.lime,
             }),
 
             supplyLabel = UI.Text({
-                x = 2, y = 6, value = 'Supply', textColor = colors.white,
+                x = 2, y = 4, value = 'Supply', textColor = colors.white,
             }),
             supplyValue = UI.Text({
-                x = 2, y = 7, value = '0.000000 AMI', textColor = colors.yellow,
+                x = 2, y = 5, width = 24, value = '0.000000 AMI', textColor = colors.yellow,
             }),
             supplyuAMI = UI.Text({
-                x = 2, y = 8, value = '(0 uAMI)', textColor = colors.lightGray,
+                x = 2, y = 6, width = 24, value = '(0 uAMI)', textColor = colors.lightGray,
             }),
 
             miningRateLabel = UI.Text({
-                x = 2, y = 9, value = 'Mining Rate', textColor = colors.white,
+                x = 2, y = 7, value = 'Mining Rate', textColor = colors.white,
             }),
             miningRateGauge = UI.Gauge({
-                x = 2, y = 10, width = 23, max = 200,
+                x = 2, y = 8, width = 23, max = 200,
             }),
             miningRateText = UI.Text({
-                x = 2, y = 11, value = '0 uAMI/tk', textColor = colors.lime,
+                x = 2, y = 9, width = 13, value = '0 uAMI/tk', textColor = colors.lime,
             }),
             ratePerHour = UI.Text({
-                x = 14, y = 11, value = '0/hr', textColor = colors.lightGray,
+                x = 14, y = 9, width = 11, value = '0/hr', textColor = colors.lightGray,
             }),
-            -- lagValue lives in the title-less corner; keep field for updateDashboard
-            lagValue = UI.Text({
-                x = 18, y = 4, value = 'OK', textColor = colors.lime,
+
+            -- Next-mint countdown (updates ~1/s; the bar fills over the 30s cycle).
+            mintLabel = UI.Text({
+                x = 2, y = 10, value = 'Next Mint', textColor = colors.white,
+            }),
+            mintCountdown = UI.Text({
+                x = 16, y = 10, width = 9, value = '30s', textColor = colors.cyan,
+            }),
+            mintBar = UI.Gauge({
+                x = 2, y = 11, width = 23, max = 100, showValue = false,
+                colorLow = colors.cyan, colorMid = colors.cyan,
+                colorHigh = colors.cyan, colorCrit = colors.cyan,
             }),
         }),
 

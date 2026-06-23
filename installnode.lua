@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "6.9"
+local VERSION   = "7.0"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {

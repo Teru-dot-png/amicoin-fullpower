@@ -69,7 +69,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "6.9"
+local NODE_VERSION    = "7.0"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -920,10 +920,36 @@ local function monitorLoop(nodeKey)
                     end
                 end
 
-                -- ── Big pre-rendered cooling fan (animated) ──
+                -- ── Big pre-rendered cooling fan (animated, temp-coloured) ──
                 if fanFrames then
-                    local hasCooling = (upgrades.getAirCoolerLevel()
-                                      + upgrades.getLiquidCoolingLevel()) > 0
+                    local airLv  = upgrades.getAirCoolerLevel()
+                    local liqLv  = upgrades.getLiquidCoolingLevel()
+                    local coolLv = airLv + liqLv
+                    local hasCooling = coolLv > 0
+                    local netTemp = upgrades.computeNetTemp(false)
+                    local _, shutoff = upgrades.computeThermalFactor()
+
+                    -- Fan colour reflects TEMPERATURE: coolest = white, then blue/
+                    -- cyan, warming to yellow/orange, and red when MELTING/dying.
+                    local fanCol
+                    if not hasCooling then
+                        fanCol = colors.gray                 -- no cooler: idle
+                    elseif shutoff or netTemp >= 280 then
+                        fanCol = colors.red                  -- MELTING / SCREAMING
+                    elseif netTemp >= 220 then
+                        fanCol = colors.orange               -- very hot
+                    elseif netTemp >= 160 then
+                        fanCol = colors.yellow               -- hot
+                    elseif netTemp >= 110 then
+                        fanCol = colors.lime                 -- warm
+                    elseif netTemp >= 70 then
+                        fanCol = colors.cyan                 -- cool
+                    elseif netTemp >= 40 then
+                        fanCol = colors.lightBlue            -- cold
+                    else
+                        fanCol = colors.white                -- coolest
+                    end
+
                     local frame = fanFrames.frames[fanIdx]
                     local fcols, frows = fanFrames.cols, fanFrames.rows
                     local ox, oy
@@ -933,7 +959,7 @@ local function monitorLoop(nodeKey)
                         ox, oy = 1, math.max(15, mh - frows)
                     end
                     mon.setBackgroundColor(colors.black)
-                    mon.setTextColor(hasCooling and colors.lightBlue or colors.gray)
+                    mon.setTextColor(fanCol)
                     for r = 1, #frame do
                         if oy + r - 1 <= mh then
                             mon.setCursorPos(ox, oy + r - 1)
@@ -942,8 +968,9 @@ local function monitorLoop(nodeKey)
                     end
                     if oy + frows <= mh then
                         mon.setCursorPos(ox, oy + frows)
-                        mon.setTextColor(hasCooling and colors.lime or colors.gray)
-                        mon.write(hasCooling and "  COOLING " or "  IDLE     ")
+                        mon.setTextColor(fanCol)
+                        mon.write(hasCooling and string.format("  COOLING Lv%d  ", coolLv)
+                                              or  "  IDLE        ")
                     end
                     if hasCooling then
                         fanIdx = fanIdx % #fanFrames.frames + 1
@@ -951,10 +978,17 @@ local function monitorLoop(nodeKey)
                 end
             end)
         end
-        -- Fan playback fps. Frames are baked SMOOTH (7.5 deg each) across a FULL
-        -- 360 deg loop, so speed comes from fps here: 0.1s = 10fps = 75 deg/s,
-        -- i.e. one full rotation every ~4.8s. Back off hard when the server lags.
-        os.sleep((lag < 0.7) and 0.1 or 1.0)
+        -- Fan playback speed scales with COOLING LEVEL: more cooling power = a
+        -- faster spin. No cooler => idle (slow poll). Each level shaves the frame
+        -- interval; clamped so it never thrashes the monitor. Backs off on lag.
+        local coolLv = upgrades.getAirCoolerLevel() + upgrades.getLiquidCoolingLevel()
+        local fanSleep
+        if coolLv <= 0 then
+            fanSleep = 0.5
+        else
+            fanSleep = math.max(0.04, 0.13 - coolLv * 0.018)
+        end
+        os.sleep((lag < 0.7) and fanSleep or 1.0)
     end
 end
 

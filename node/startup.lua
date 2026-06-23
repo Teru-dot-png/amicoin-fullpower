@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "5.2"
+local NODE_VERSION    = "5.3"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -691,18 +691,48 @@ local function updateDashboard()
 end
 
 -- ── Status display ───────────────────────────────────────────────────────────
-local function statusLoop()
+local function statusLoop(textModeOnly, nodeKeyHint)
     while true do
         os.sleep(30)
         ledger.flush()  -- flush any cached ledger writes (Smart Cache safety net)
-        updateDashboard()  -- Update UI
+        
         local active = miner.getActive()
         local snap   = ledger.snapshot()
         local total  = 0
         for _, v in pairs(snap) do total = total + v end
         local lag = miner.getLagFactor()
-        local lagStr = lag < 0.7 and string.format(" | LAG %.0f%%", lag * 100) or ""
-        print(string.format("[Node] Active: %d | Supply: %d uAMI%s", #active, total, lagStr))
+        
+        if textModeOnly then
+            -- TEXT MODE: full-screen status update every 30 seconds
+            term.clear()
+            term.setCursorPos(1, 1)
+            print("===========================================")
+            print("  AmiCoin Node v" .. NODE_VERSION)
+            print("===========================================")
+            print("")
+            print("Key:    " .. nodeKeyHint:sub(1, 16) .. "...")
+            print("Supply: " .. string.format("%.6f AMI", total / 1000000))
+            print("        " .. total .. " uAMI")
+            print("")
+            local rate = math.floor(miner.getCurrentRate() * upgrades.getMinerMultiplier())
+            print("Rate:   " .. rate .. " uAMI/tick")
+            print("        " .. string.format("%.4f AMI/hr", rate * 120 / 1000000))
+            print("")
+            print("Active: " .. #active .. " wallet(s)")
+            print("")
+            if lag < 0.7 then
+                print("LAG:    ~" .. string.format("%.0f", lag * 100) .. "% (server lagging)")
+            else
+                print("TPS:    OK")
+            end
+            print("")
+            print("[U] Update  [P] Upgrade Shop  [A] Admin")
+        else
+            -- UI MODE: update dashboard and print to log
+            updateDashboard()
+            local lagStr = lag < 0.7 and string.format(" | LAG %.0f%%", lag * 100) or ""
+            print(string.format("[Node] Active: %d | Supply: %d uAMI%s", #active, total, lagStr))
+        end
     end
 end
 
@@ -1122,28 +1152,40 @@ local function main()
                 print("[Rate] Could not parse remote rate -- using compiled default")
             end
         else
-            print("[Rate] GitHub unreachable -- using compiled default")
-        end
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("[UI] Dashboard ready!")
+        os.sleep(1)
+    else
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("===========================================")
+        print("  AmiCoin Node v" .. NODE_VERSION)
+        print("  TEXT MODE (UI initialization timeout)")
+        print("===========================================")
+        print("")
+        print("[!] Opus UI took too long to load.")
+        print("[!] Running in text-only mode.")
+        print("[!] All features work normally.")
+        print("")
+        print("Starting node threads...")
+        os.sleep(2)
     end
-    local monAttached = peripheral.find("monitor") ~= nil
-    print("[Mon] Monitor: " .. (monAttached and "found" or "not found"))
-    
-    os.sleep(2)  -- Brief pause to read boot messages
-    
-    print("[UI] Loading node_ui module...")
-    local nodeUILib = require('node_ui')
-    
-    print("[UI] Creating dashboard page...")
-    dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
-    
-    print("[UI] Attempting UI initialization with 5-second timeout...")
-    local uiSuccess = false
-    local function tryUI()
-        UI:setActivePage(dashboardPage)
-        dashboardPage:enable()
-        dashboardPage:draw()
-        uiSuccess = true
-    end
+
+    parallel.waitForAll(
+        function() 
+            miner.run() 
+        end,
+        function() 
+            statusLoop(not uiSuccess, nodeKey)
+        end,
+        function() 
+            if uiSuccess then
+                UI:pullEvents()
+            else
+                -- No UI - sleep forever
+                while true do os.sleep(99999) end
+            end
     
     local function timeout()
         os.sleep(5)
@@ -1196,11 +1238,7 @@ local function main()
             end
         end,
         function() monitorLoop(nodeKey) end,
-        function()
-            -- Peripheral watchdog: reboot if Ender Router disconnects.
-            -- A missing peripheral makes any method call throw; pcall catches it.
-            while true do
-                os.sleep(30)
+        func    os.sleep(30)
                 local alive = pcall(function() return router.isOpen(MESH_CHANNEL) end)
                 if not alive then
                     print("[Watchdog] Ender Router lost! Rebooting in 5s...")

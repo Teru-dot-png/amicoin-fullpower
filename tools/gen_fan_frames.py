@@ -27,17 +27,19 @@ SX, SY = 2, 3                   # sub-pixels per char cell
 GW, GH = COLS * SX, ROWS * SY   # 34 x 27 sub-pixel grid
 
 BLADES = 4
-FRAMES = 10                     # baked frames in the loop
+FRAMES = 5                      # baked frames in the loop (halved: snappier + cheaper)
 # A B-blade fan repeats every 360/B degrees (the "symmetry period"). Sweeping
 # only ONE period across N frames makes each frame a tiny step (11.25 deg @ 8
 # frames) -> the fan crawls. Instead advance ROTATIONS whole periods across the
 # loop: each frame jumps ROTATIONS/FRAMES of a period. With gcd(ROTATIONS,FRAMES)
 # == 1 the frames stay distinct AND the loop still closes seamlessly, so the fan
 # appears to spin ROTATIONS-times faster for free.
-#   step = ROTATIONS/FRAMES * (360/BLADES) = 3/10 * 90 = 27 deg/frame.
+#   step = ROTATIONS/FRAMES * (360/BLADES) = 2/5 * 90 = 36 deg/frame.
+# Halving the frame count (10 -> 5) drops every other in-between frame: bigger
+# jumps = faster feel, and half the baked data + half the monitor draws.
 # Keep step < 45 deg (half the 4-blade spacing) so it reads as forward motion and
 # not the backward "wagon-wheel" strobe.
-ROTATIONS = 3
+ROTATIONS = 2
 assert math.gcd(ROTATIONS, FRAMES) == 1, "ROTATIONS and FRAMES must be coprime"
 
 CXp = (GW - 1) / 2.0

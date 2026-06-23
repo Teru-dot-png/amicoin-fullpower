@@ -1,82 +1,95 @@
 -- AmiCoin Named Glyph Map
--- Comprehensive reference for CC:Tweaked's 256-character font
--- CRITICAL: Always use string.char(code) - never literal high-byte characters
+-- Reference for CC:Tweaked's font (verified against the real term_font.png via
+-- tools/cc_glyphs/decode_font.py).
+--
+-- IMPORTANT - CC:Tweaked's font is NOT CP437:
+--   * 0-31   : special glyphs (smileys, card suits, arrows, music) - CP437-like, VALID.
+--   * 32-126 : standard ASCII - VALID.
+--   * 128-159: 2x3 "teletext" sextant blocks (the ONLY real drawing glyphs).
+--   * Box-drawing (CP437 179/196/218...) and block/shade (219/176-178) DO NOT
+--     exist - those code points render as garbage letters. Use teletext blocks,
+--     or paint a SPACE with a background colour for solid fills.
+-- CRITICAL: Always use string.char(code) - never literal high-byte characters.
 
 local colors = _G.colors
 
 local Glyphs = {}
 
 -------------------------------------------
--- BOX DRAWING (192-218)
+-- TELETEXT 2x3 BLOCKS (codes 128-159) - the real CC drawing glyphs.
+-- Sub-pixel layout per char cell (2 wide x 3 tall):
+--     TL(1)  TR(2)
+--     ML(4)  MR(8)
+--     BL(16) BR(via fg/bg colour-swap)
+--   code = 128 + TL*1 + TR*2 + ML*4 + MR*8 + BL*16     (BR is NOT a code bit)
 -------------------------------------------
-Glyphs.BOX_TL         = string.char(218)  -- ┌ Top-left corner
-Glyphs.BOX_TR         = string.char(191)  -- ┐ Top-right corner
-Glyphs.BOX_BL         = string.char(192)  -- └ Bottom-left corner
-Glyphs.BOX_BR         = string.char(217)  -- ┘ Bottom-right corner
-Glyphs.BOX_H          = string.char(196)  -- ─ Horizontal line
-Glyphs.BOX_V          = string.char(179)  -- │ Vertical line
-Glyphs.BOX_CROSS      = string.char(197)  -- ┼ Four-way intersection
-Glyphs.BOX_T_DOWN     = string.char(194)  -- ┬ T pointing down
-Glyphs.BOX_T_UP       = string.char(193)  -- ┴ T pointing up
-Glyphs.BOX_T_RIGHT    = string.char(195)  -- ├ T pointing right
-Glyphs.BOX_T_LEFT     = string.char(180)  -- ┤ T pointing left
+-- Box-drawing approximations built from teletext (CC has no CP437 box chars):
+Glyphs.BOX_H          = string.char(140)  -- middle horizontal bar (ML+MR)
+Glyphs.BOX_V          = string.char(149)  -- left vertical bar (TL+ML+BL)
+Glyphs.BOX_TL         = string.char(140)  -- no true corner; reuse H-bar
+Glyphs.BOX_TR         = string.char(140)
+Glyphs.BOX_BL         = string.char(140)
+Glyphs.BOX_BR         = string.char(140)
+Glyphs.BOX_CROSS      = string.char(159)  -- densest block as a junction
+Glyphs.BOX_T_DOWN     = string.char(140)
+Glyphs.BOX_T_UP       = string.char(140)
+Glyphs.BOX_T_RIGHT    = string.char(149)
+Glyphs.BOX_T_LEFT     = string.char(149)
 
--- Double-line box drawing
-Glyphs.BOX_DOUBLE_TL  = string.char(201)  -- ╔
-Glyphs.BOX_DOUBLE_TR  = string.char(187)  -- ╗
-Glyphs.BOX_DOUBLE_BL  = string.char(200)  -- ╚
-Glyphs.BOX_DOUBLE_BR  = string.char(188)  -- ╝
-Glyphs.BOX_DOUBLE_H   = string.char(205)  -- ═
-Glyphs.BOX_DOUBLE_V   = string.char(186)  -- ║
-
--- Single vertical + double horizontal
-Glyphs.BOX_MIX_TL     = string.char(214)  -- ╓
-Glyphs.BOX_MIX_TR     = string.char(183)  -- ╖
-Glyphs.BOX_MIX_BL     = string.char(211)  -- ╙
-Glyphs.BOX_MIX_BR     = string.char(189)  -- ╜
+-- Double / mixed box variants don't exist in CC; alias to the approximations.
+Glyphs.BOX_DOUBLE_TL  = Glyphs.BOX_TL
+Glyphs.BOX_DOUBLE_TR  = Glyphs.BOX_TR
+Glyphs.BOX_DOUBLE_BL  = Glyphs.BOX_BL
+Glyphs.BOX_DOUBLE_BR  = Glyphs.BOX_BR
+Glyphs.BOX_DOUBLE_H   = Glyphs.BOX_H
+Glyphs.BOX_DOUBLE_V   = Glyphs.BOX_V
+Glyphs.BOX_MIX_TL     = Glyphs.BOX_TL
+Glyphs.BOX_MIX_TR     = Glyphs.BOX_TR
+Glyphs.BOX_MIX_BL     = Glyphs.BOX_BL
+Glyphs.BOX_MIX_BR     = Glyphs.BOX_BR
 
 -------------------------------------------
--- BLOCKS (176-178, 219-223)
+-- BLOCKS / SHADES (CC has no CP437 blocks; use teletext or space+bg)
+-- The fullest single foreground glyph is 159 (~5/6 filled). For a truly solid
+-- cell, paint a SPACE with the desired BACKGROUND colour instead.
 -------------------------------------------
-Glyphs.SHADE_LIGHT    = string.char(176)  -- ░ Light shade
-Glyphs.SHADE_MEDIUM   = string.char(177)  -- ▒ Medium shade
-Glyphs.SHADE_DARK     = string.char(178)  -- ▓ Dark shade
-Glyphs.BLOCK_FULL     = string.char(219)  -- █ Full block
-Glyphs.BLOCK_BOTTOM   = string.char(220)  -- ▄ Bottom half
-Glyphs.BLOCK_LEFT     = string.char(221)  -- ▌ Left half
-Glyphs.BLOCK_RIGHT    = string.char(222)  -- ▐ Right half
-Glyphs.BLOCK_TOP      = string.char(223)  -- ▀ Top half
+Glyphs.BLOCK_FULL     = string.char(159)  -- densest fg glyph (TL+TR+ML+MR+BL)
+Glyphs.BLOCK_BOTTOM   = string.char(151)  -- bottom-ish (ML+MR+BL + top) approx
+Glyphs.BLOCK_LEFT     = string.char(149)  -- left half (TL+ML+BL)
+Glyphs.BLOCK_RIGHT    = string.char(154)  -- right half (TR+MR) approx
+Glyphs.BLOCK_TOP      = string.char(131)  -- top third (TL+TR)
+
+-- "Shades" approximated with teletext density (no true CP437 shades in CC).
+Glyphs.SHADE_LIGHT    = string.char(129)  -- sparse (TL only)
+Glyphs.SHADE_MEDIUM   = string.char(137)  -- TL+MR diagonal-ish
+Glyphs.SHADE_DARK     = string.char(151)  -- dense (TL+TR+ML+MR + ...)
 
 -------------------------------------------
 -- 2x3 TELETEXT BLOCKS (128-159)
--- Each glyph represents a 2x3 grid of subpixels
--- Bit pattern: top-left, top-right, mid-left, mid-right, bot-left, bot-right
--- (6th subpixel achieved via fg/bg color swap)
+-- bit order: 0x01=TL, 0x02=TR, 0x04=ML, 0x08=MR, 0x10=BL  (BR via colour-swap)
 -------------------------------------------
 Glyphs.TELETEXT = {}
--- Helper to build 2x3 block map (bit pattern to char code)
--- Bit order: 0x01=TL, 0x02=TR, 0x04=ML, 0x08=MR, 0x10=BL, 0x20=BR
+-- Map a 5-bit pattern (0-31) to its char code (128-159).
 local function buildTeletextMap()
     local map = {}
-    for i = 0, 63 do
-        -- Teletext block codes start at 128
+    for i = 0, 31 do
         map[i] = string.char(128 + i)
     end
     return map
 end
 Glyphs.TELETEXT.map = buildTeletextMap()
 
--- Common 2x3 patterns
-Glyphs.TELETEXT_EMPTY      = Glyphs.TELETEXT.map[0]      -- All off
-Glyphs.TELETEXT_FULL       = Glyphs.TELETEXT.map[63]     -- All on (0x3F)
+-- Common 2x3 patterns (BR pixel needs a fg/bg swap; not encodable as a code).
+Glyphs.TELETEXT_EMPTY      = Glyphs.TELETEXT.map[0]      -- all off (space-like)
+Glyphs.TELETEXT_FULL       = Glyphs.TELETEXT.map[31]     -- 0x1F densest (BR off)
 Glyphs.TELETEXT_TOP_LEFT   = Glyphs.TELETEXT.map[1]      -- 0x01
 Glyphs.TELETEXT_TOP_RIGHT  = Glyphs.TELETEXT.map[2]      -- 0x02
-Glyphs.TELETEXT_TOP_HALF   = Glyphs.TELETEXT.map[3]      -- 0x03
+Glyphs.TELETEXT_TOP_HALF   = Glyphs.TELETEXT.map[3]      -- 0x03 (TL+TR)
 Glyphs.TELETEXT_BOT_LEFT   = Glyphs.TELETEXT.map[16]     -- 0x10
-Glyphs.TELETEXT_BOT_RIGHT  = Glyphs.TELETEXT.map[32]     -- 0x20
-Glyphs.TELETEXT_BOT_HALF   = Glyphs.TELETEXT.map[48]     -- 0x30
+Glyphs.TELETEXT_BOT_RIGHT  = Glyphs.TELETEXT.map[0]      -- BR not codable; see swap
+Glyphs.TELETEXT_BOT_HALF   = Glyphs.TELETEXT.map[16]     -- 0x10 (BL; BR via swap)
 Glyphs.TELETEXT_LEFT_FULL  = Glyphs.TELETEXT.map[21]     -- 0x15 (TL+ML+BL)
-Glyphs.TELETEXT_RIGHT_FULL = Glyphs.TELETEXT.map[42]     -- 0x2A (TR+MR+BR)
+Glyphs.TELETEXT_RIGHT_FULL = Glyphs.TELETEXT.map[10]     -- 0x0A (TR+MR; BR via swap)
 
 -------------------------------------------
 -- ARROWS (16-31)
@@ -119,7 +132,7 @@ Glyphs.SMILEY         = string.char(1)    -- ☺
 Glyphs.SMILEY_INV     = string.char(2)    -- ☻
 Glyphs.SQUARE         = string.char(254)  -- ■ Small square
 Glyphs.CHECKMARK      = string.char(251)  -- √
-Glyphs.MULTIPLY       = string.char(158)  -- × Multiplication sign
+Glyphs.MULTIPLY       = "x"                -- CC has no x glyph; use ASCII
 Glyphs.DIVIDE         = string.char(246)  -- ÷
 
 -------------------------------------------
@@ -152,13 +165,13 @@ Glyphs.CARD_Q         = "Q"
 Glyphs.CARD_K         = "K"
 
 -------------------------------------------
--- FAN ANIMATION FRAMES
--- 3-blade rotating fan using block glyphs
+-- FAN ANIMATION FRAMES (legacy; the live fan now uses baked fan_frames.lua)
+-- Simple ASCII spinner - guaranteed to render on any CC font.
 -------------------------------------------
-Glyphs.FAN_FRAME_1    = string.char(179)  -- │ Vertical
-Glyphs.FAN_FRAME_2    = string.char(47)   -- / Diagonal 1
-Glyphs.FAN_FRAME_3    = string.char(196)  -- ─ Horizontal
-Glyphs.FAN_FRAME_4    = string.char(92)   -- \ Diagonal 2
+Glyphs.FAN_FRAME_1    = "|"   -- vertical
+Glyphs.FAN_FRAME_2    = "/"   -- diagonal
+Glyphs.FAN_FRAME_3    = "-"   -- horizontal
+Glyphs.FAN_FRAME_4    = "\\"  -- diagonal
 
 -------------------------------------------
 -- HELPER FUNCTIONS
@@ -176,22 +189,24 @@ function Glyphs.render(glyph, fg, bg)
 end
 
 --- Get a 2x3 teletext block by bit pattern
--- @param pattern number Bit pattern (0-63)
--- @return string Glyph character
+-- @param pattern number Bit pattern (0-31): TL1 TR2 ML4 MR8 BL16 (BR via swap)
+-- @return string Glyph character (codes 128-159)
 function Glyphs.getTeletextBlock(pattern)
-    if pattern < 0 or pattern > 63 then
-        error("Teletext pattern must be 0-63", 2)
+    if pattern < 0 or pattern > 31 then
+        error("Teletext pattern must be 0-31 (BR pixel needs a fg/bg swap)", 2)
     end
     return Glyphs.TELETEXT.map[pattern]
 end
 
---- Build a horizontal bar using block characters
+--- Build a horizontal bar string (drawn in the bar colour as foreground).
+-- For a crisp SOLID bar prefer painting spaces with a background colour; this
+-- helper returns the densest fg glyph (159) for the filled part.
 -- @param fillPercent number Fill percentage (0-100)
 -- @param width number Width in characters
 -- @return string String of block characters
 function Glyphs.buildBar(fillPercent, width)
     local filled = math.floor((fillPercent / 100) * width)
-    local bar = string.rep(Glyphs.BLOCK_FULL, filled)
+    local bar = string.rep(string.char(159), filled)
     local remaining = width - filled
     if remaining > 0 then
         bar = bar .. string.rep(" ", remaining)

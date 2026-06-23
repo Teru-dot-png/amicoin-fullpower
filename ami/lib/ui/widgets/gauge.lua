@@ -78,65 +78,54 @@ end
 function UI.Gauge:draw()
     -- Clear background
     self:clear(self.backgroundColor)
-    
-    local barWidth = self.width
+
     local barY = 1
-    
-    -- Adjust for label
+
+    -- Optional label on its own line above the bar.
     if self.showLabel and self.label ~= '' then
         self:write(1, barY, self.label, self.backgroundColor, Theme.getColor('textDim'))
         barY = barY + 1
-        if self.height > 1 then
-            barWidth = self.width
-        end
     end
-    
-    -- Calculate fill percentage
-    local fillPercent = (self.value / self.max) * 100
-    local barColor = self:getBarColor()
-    
-    -- Draw border if enabled
-    local innerWidth = barWidth
-    local barX = 1
-    if self.borderColor then
-        -- Top border
-        self:write(1, barY, Glyphs.BOX_TL .. string.rep(Glyphs.BOX_H, barWidth - 2) .. Glyphs.BOX_TR,
-            self.backgroundColor, self.borderColor)
-        barY = barY + 1
-        barX = 2
-        innerWidth = barWidth - 2
+
+    local barColor   = self:getBarColor()
+    local trackColor = Theme.getColor('panel') or colors.gray
+    local barWidth   = self.width
+
+    -- ── Solid bar via space + BACKGROUND color (the CC-native technique). ──
+    -- CC:Tweaked's font has NO CP437 block glyph at 219; a space painted with a
+    -- background colour is the only reliable way to fill a cell solidly. A single
+    -- left-half teletext block (char 149 = TL+ML+BL) gives one extra sub-cell of
+    -- precision for the fractional cell.
+    local exact   = (self.value / self.max) * barWidth      -- fractional cells
+    local full    = math.floor(exact)
+    local frac    = exact - full
+    if full > barWidth then full = barWidth end
+
+    -- Empty track across the whole width first.
+    self:write(1, barY, string.rep(' ', barWidth), trackColor)
+    -- Solid filled portion.
+    if full > 0 then
+        self:write(1, barY, string.rep(' ', full), barColor)
     end
-    
-    -- Build the bar using blocks
-    local filledChars = math.floor((fillPercent / 100) * innerWidth)
-    local bar = string.rep(Glyphs.BLOCK_FULL, filledChars)
-    local emptyChars = innerWidth - filledChars
-    if emptyChars > 0 then
-        bar = bar .. string.rep(" ", emptyChars)
+    -- Half-cell for the fractional remainder (left-half block in barColor).
+    if frac >= 0.5 and full < barWidth then
+        self:write(full + 1, barY, string.char(149), trackColor, barColor)
     end
-    
-    -- Draw the bar
-    if self.borderColor then
-        self:write(1, barY, Glyphs.BOX_V, self.backgroundColor, self.borderColor)
-        self:write(2, barY, bar, self.backgroundColor, barColor)
-        self:write(barWidth, barY, Glyphs.BOX_V, self.backgroundColor, self.borderColor)
-        barY = barY + 1
-        -- Bottom border
-        self:write(1, barY, Glyphs.BOX_BL .. string.rep(Glyphs.BOX_H, barWidth - 2) .. Glyphs.BOX_BR,
-            self.backgroundColor, self.borderColor)
-    else
-        self:write(barX, barY, bar, self.backgroundColor, barColor)
-    end
-    
-    -- Draw value text if enabled
+
+    -- ── Centered value text, split at the fill boundary for readability. ──
     if self.showValue then
         local valueText = string.format("%d/%d", self.value, self.max)
-        local textX = math.floor((self.width - #valueText) / 2) + 1
-        local textY = self.borderColor and 2 or 1
-        if self.showLabel and self.label ~= '' then
-            textY = textY + 1
+        local startX    = math.floor((barWidth - #valueText) / 2) + 1
+        for i = 1, #valueText do
+            local cx   = startX + i - 1
+            if cx >= 1 and cx <= barWidth then
+                local ch   = valueText:sub(i, i)
+                local onFill = cx <= full
+                local bg   = onFill and barColor or trackColor
+                local fg   = onFill and colors.black or colors.white
+                self:write(cx, barY, ch, bg, fg)
+            end
         end
-        self:write(textX, textY, valueText, barColor, Theme.getColor('text'))
     end
 end
 

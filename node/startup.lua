@@ -37,10 +37,25 @@ require('ami.lib.ui.widgets.gauge')
 -- Set demon theme
 Theme.setTheme('demon')
 
+-- ── Terminal output gate ─────────────────────────────────────────────────────
+-- While the Opus dashboard owns the screen, stray print()/io.write() from the
+-- background threads (miner ticks, net packets, watchdog) must NOT reach the
+-- terminal: every print() scrolls the device and shoves the Opus canvas upward.
+-- Opus renders via device.blit (not print), so gating these is invisible to it.
+-- Sub-flows ([P]/[A]/[T]/[U]) call setUIActive(false) to get a normal text term.
+local uiActive = false
+do
+    local realPrint   = _G.print
+    local realIoWrite = io.write
+    _G.print = function(...) if not uiActive then return realPrint(...) end end
+    io.write = function(...) if not uiActive then return realIoWrite(...) end end
+end
+local function setUIActive(on) uiActive = on end
+
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "5.9"
+local NODE_VERSION    = "6.0"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -603,7 +618,8 @@ local nodeUI = nil         -- Main UI page
 
 local function updateDashboard()
     if not dashboardPage then return end
-    
+    if not uiActive then return end  -- a sub-flow owns the terminal; don't overdraw
+
     -- Query current state
     local active = miner.getActive()
     local snap   = ledger.snapshot()
@@ -1166,6 +1182,9 @@ local function main()
     UI:disableEffects()
     dashboardPage = nodeUI.createDashboard(nodeKey, NODE_VERSION)
     UI:setPage(dashboardPage)
+    -- Dashboard now owns the screen: silence background print()/io.write() so
+    -- they stop scrolling the Opus canvas. (updateDashboard requires uiActive.)
+    setUIActive(true)
     updateDashboard()
 
     parallel.waitForAll(
@@ -1216,27 +1235,35 @@ local function main()
             end
         end,
         -- Keyboard shortcuts (U/P/T/A). Sub-flows take over the terminal,
-        -- then return to the dashboard via setPage().
+        -- then return to the dashboard via setPage(). setUIActive(false) restores
+        -- normal text output for the sub-flow; (true) re-silences on return.
         function()
             while true do
                 local _, key = os.pullEvent("key")
                 if key == keys.u then
+                    setUIActive(false)
                     term.clear(); term.setCursorPos(1, 1)
                     selfUpdate()
                 elseif key == keys.p then
+                    setUIActive(false)
                     term.clear(); term.setCursorPos(1, 1)
                     upgrades.runUpgradeFlow(router)
                     UI:setPage(dashboardPage)
+                    setUIActive(true)
                     updateDashboard()
                 elseif key == keys.t then
+                    setUIActive(false)
                     term.clear(); term.setCursorPos(1, 1)
                     upgrades.runAmdMinigame()
                     UI:setPage(dashboardPage)
+                    setUIActive(true)
                     updateDashboard()
                 elseif key == keys.a then
+                    setUIActive(false)
                     term.clear(); term.setCursorPos(1, 1)
                     adminMenu(setupPassword)
                     UI:setPage(dashboardPage)
+                    setUIActive(true)
                     updateDashboard()
                 end
             end

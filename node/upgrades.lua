@@ -926,10 +926,13 @@ function upgrades.getActiveSummary()
             lines[#lines + 1] = string.format("%-12s Lv%d", d.short, lv)
         end
     end
-    -- Append AMIdecode boost status if active
+    -- Append AMIdecode boost status if active. Route the multiplier through the
+    -- module table (upgrades.getAmdBoostMultiplier) - calling the file-local
+    -- loadAmdState directly here is a forward reference (it's declared lower in
+    -- the file) and would resolve to a nil global at runtime.
     local br, cd = upgrades.getAmdStatus()
     if br > 0 then
-        lines[#lines + 1] = string.format("AMIdecode  BOOST x%.2f %dm", loadAmdState().boost_mult, math.floor(br/60))
+        lines[#lines + 1] = string.format("AMIdecode  BOOST x%.2f %dm", upgrades.getAmdBoostMultiplier(), math.floor(br/60))
     elseif cd > 0 then
         lines[#lines + 1] = string.format("AMIdecode  CD %dm", math.floor(cd/60))
     end

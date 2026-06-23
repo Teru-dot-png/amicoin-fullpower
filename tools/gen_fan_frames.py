@@ -27,7 +27,18 @@ SX, SY = 2, 3                   # sub-pixels per char cell
 GW, GH = COLS * SX, ROWS * SY   # 34 x 27 sub-pixel grid
 
 BLADES = 4
-FRAMES = 8                      # one seamless loop (rotation sweeps 2*pi/BLADES)
+FRAMES = 10                     # baked frames in the loop
+# A B-blade fan repeats every 360/B degrees (the "symmetry period"). Sweeping
+# only ONE period across N frames makes each frame a tiny step (11.25 deg @ 8
+# frames) -> the fan crawls. Instead advance ROTATIONS whole periods across the
+# loop: each frame jumps ROTATIONS/FRAMES of a period. With gcd(ROTATIONS,FRAMES)
+# == 1 the frames stay distinct AND the loop still closes seamlessly, so the fan
+# appears to spin ROTATIONS-times faster for free.
+#   step = ROTATIONS/FRAMES * (360/BLADES) = 3/10 * 90 = 27 deg/frame.
+# Keep step < 45 deg (half the 4-blade spacing) so it reads as forward motion and
+# not the backward "wagon-wheel" strobe.
+ROTATIONS = 3
+assert math.gcd(ROTATIONS, FRAMES) == 1, "ROTATIONS and FRAMES must be coprime"
 
 CXp = (GW - 1) / 2.0
 CYp = (GH - 1) / 2.0
@@ -69,7 +80,8 @@ def build_frame(rotation):
 
 
 def main():
-    frames = [build_frame(i * (2 * math.pi / BLADES) / FRAMES) for i in range(FRAMES)]
+    period = 2 * math.pi / BLADES          # one visual rotation in radians
+    frames = [build_frame(i * ROTATIONS * period / FRAMES) for i in range(FRAMES)]
 
     out = [
         "-- ami/lib/ui/widgets/fan_frames.lua",

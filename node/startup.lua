@@ -46,12 +46,15 @@ Theme.setTheme('demon')
 -- During boot and the text sub-flows ([U]/[P]/[T]/[A]) print goes to the real
 -- terminal as normal. Opus itself renders via device.blit, never print().
 local uiActive = false
+local uiModal  = false  -- an Opus SUB-page (e.g. upgrade shop) owns the screen
 local logSink  = nil   -- set to nodeLog() once the dashboard exists
 do
     local realPrint   = _G.print
     local realIoWrite = io.write
     _G.print = function(...)
-        if uiActive then
+        if uiModal then
+            return            -- a modal Opus sub-page is up: swallow background prints
+        elseif uiActive then
             if logSink then
                 local parts = {}
                 for i = 1, select('#', ...) do parts[i] = tostring((select(i, ...))) end
@@ -62,15 +65,16 @@ do
         end
     end
     io.write = function(...)
-        if not uiActive then return realIoWrite(...) end
+        if not uiActive and not uiModal then return realIoWrite(...) end
     end
 end
 local function setUIActive(on) uiActive = on end
+local function setUIModal(on) uiModal = on end
 
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "7.3"
+local NODE_VERSION    = "7.4"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -560,6 +564,7 @@ local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"   },
     { src="/node/startup.lua",      dst="/startup.lua"       },
     { src="/node/node_ui.lua",      dst="/node_ui.lua"       },
+    { src="/node/upgrade_ui.lua",   dst="/upgrade_ui.lua"    },
     { src="/node/ledger.lua",       dst="/ledger.lua"        },
     { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
     { src="/node/xtea.lua",         dst="/xtea.lua"          },
@@ -786,6 +791,66 @@ local function updateMintBar()
     ip.mintCountdown.value = string.format("%ds", math.ceil(remaining))
     ip:draw()
     ip:sync()
+end
+
+-- ── Opus Upgrade Shop ([P]) ──────────────────────────────────────────────────
+-- A full Opus page (scrolling grid + details + Buy/Back buttons + name field),
+-- driven by the node's existing UI:pullEvents loop. The page emits 'shop_buy' /
+-- 'shop_close' os events; this blocking flow reacts to them. The actual purchase
+-- reuses the existing term-based confirm/payment flow (upgrades.purchaseByIndex).
+local function runUpgradeShop(router)
+    -- First-run treasury wizard is still a brief term step.
+    if upgrades.needsTreasurySetup() then
+        setUIActive(false); setUIModal(false)
+        term.clear(); term.setCursorPos(1, 1)
+        if not upgrades.setupTreasuryFlow() then
+            return  -- operator cancelled setup
+        end
+    end
+
+    local UpgradeUI = require("upgrade_ui")
+    local shopPage  = UpgradeUI.createPage(NODE_VERSION)
+    UpgradeUI.setCatalog(shopPage, upgrades.getCatalog())
+
+    -- The Opus shop owns the screen: modal so background prints are swallowed
+    -- (no scroll, no dashboard overdraw). The main UI:pullEvents loop drives it.
+    setUIActive(false)
+    setUIModal(true)
+    UI:setPage(shopPage)
+    shopPage.buyerEntry:focus()
+
+    while true do
+        local ev = os.pullEvent()
+        if ev == "shop_close" then
+            break
+        elseif ev == "shop_buy" then
+            local idx  = UpgradeUI.selectedIndex(shopPage)
+            local name = shopPage.buyerEntry.value
+            local addr, clean = upgrades.resolveBuyer(name)
+            if not idx then
+                shopPage.hint:setStatus("Select an upgrade first")
+                shopPage.hint:draw(); shopPage.hint:sync()
+            elseif not addr then
+                shopPage.hint:setStatus("Enter a valid Ami-DNS name")
+                shopPage.hint:draw(); shopPage.hint:sync()
+            else
+                -- Hand off to the existing term-based purchase/payment flow.
+                setUIModal(false)
+                term.clear(); term.setCursorPos(1, 1)
+                upgrades.purchaseByIndex(router, idx, addr, clean)
+                -- Back to the Opus shop with refreshed levels/costs.
+                UpgradeUI.setCatalog(shopPage, upgrades.getCatalog())
+                setUIModal(true)
+                UI:setPage(shopPage)
+            end
+        end
+    end
+
+    -- Leave the shop: hand the screen back to the dashboard.
+    setUIModal(false)
+    setUIActive(true)
+    UI:setPage(dashboardPage)
+    updateDashboard()
 end
 
 -- ── Status display ───────────────────────────────────────────────────────────
@@ -1357,12 +1422,16 @@ local function main()
         -- the dashboard via setPage(); setUIActive toggles text vs UI output.
         function()
             local function runAction(action)
+                if action == 'p' then
+                    -- The Opus upgrade shop manages its own screen state and
+                    -- returns to the dashboard itself.
+                    runUpgradeShop(router)
+                    return
+                end
                 setUIActive(false)
                 term.clear(); term.setCursorPos(1, 1)
                 if action == 'u' then
                     selfUpdate()                 -- reboots on success
-                elseif action == 'p' then
-                    upgrades.runUpgradeFlow(router)
                 elseif action == 't' then
                     upgrades.runAmdMinigame()
                 elseif action == 'a' then

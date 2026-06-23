@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "7.3"
+local VERSION   = "7.4"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 -- Node-specific service files. The ENTIRE Opus UI tree (ami/lib/ui/**) is added
@@ -21,6 +21,7 @@ local FILES = {
     { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"   },
     { src = "/node/startup.lua",      dst = "/startup.lua"       },
     { src = "/node/node_ui.lua",      dst = "/node_ui.lua"       },
+    { src = "/node/upgrade_ui.lua",   dst = "/upgrade_ui.lua"    },
     { src = "/node/ledger.lua",       dst = "/ledger.lua"        },
     { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
     { src = "/node/xtea.lua",         dst = "/xtea.lua"          },

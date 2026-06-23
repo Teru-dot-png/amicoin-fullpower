@@ -915,6 +915,63 @@ function upgrades.runUpgradeFlow(router)
     print("[Tip] Press U to update  |  P for Upgrade Shop")
 end
 
+-- ── Opus shop data API (read-only catalog + purchase wrappers) ───────────────
+-- These power the Opus UI upgrade shop without duplicating purchase/payment
+-- logic. Additive only; all existing flow logic above is unchanged.
+
+-- Read-only catalog snapshot: one entry per upgrade with live level/cost.
+function upgrades.getCatalog()
+    local state = loadState()
+    local out   = {}
+    for idx, d in ipairs(DEFS) do
+        local lv    = state.levels[d.id] or 0
+        local mx    = upgradeMax(d.id)
+        local maxed = lv >= mx
+        out[#out + 1] = {
+            idx      = idx,
+            id       = d.id,
+            name     = d.name,
+            short    = d.short,
+            desc     = d.desc,
+            burn     = d.burn == true,
+            level    = lv,
+            max      = mx,
+            maxed    = maxed,
+            nextCost = maxed and 0 or calcCost(d.id, lv + 1),  -- uAMI
+        }
+    end
+    return out
+end
+
+-- True when the treasury wallet hasn't been configured yet (first-run setup).
+function upgrades.needsTreasurySetup()
+    local state = loadState()
+    return type(state.treasury) ~= "string" or #state.treasury ~= 128
+end
+
+-- Run the term-based first-run treasury wizard. Returns true on success.
+function upgrades.setupTreasuryFlow()
+    local state = loadState()
+    return setupTreasury(state) and true or false
+end
+
+-- Resolve an Ami-DNS name to an address (or nil) + the trimmed name.
+function upgrades.resolveBuyer(name)
+    if type(name) ~= "string" then return nil end
+    name = name:gsub("^%s*(.-)%s*$", "%1")
+    if #name == 0 then return nil end
+    return ledger.lookupName(name), name
+end
+
+-- Purchase one upgrade by catalog index, reusing the EXACT existing term-based
+-- confirm + INVOICE/PAYMENT_ACK flow (doPurchase). doPurchase draws its own
+-- confirm/wait screens and applies the level on success.
+function upgrades.purchaseByIndex(router, defIdx, buyerAddr, buyerName)
+    if type(defIdx) ~= "number" or defIdx < 1 or defIdx > #DEFS then return end
+    local state = loadState()
+    doPurchase(router, state, defIdx, buyerAddr, buyerName)
+end
+
 -- Returns formatted lines for every active (level > 0) upgrade.
 -- Used by monitorLoop in startup.lua to render the upgrades panel.
 function upgrades.getActiveSummary()

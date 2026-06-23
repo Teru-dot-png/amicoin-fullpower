@@ -23,6 +23,5 @@ function UI.ProgressBar:draw()
 	for i = 1, self.height do
 		self:write(1, i, filler, nil, self.fillColor)
 		self:write(1, i, progress, self.progressColor)
-		if i % 5 == 0 then os.sleep(0) end
 	end
 end

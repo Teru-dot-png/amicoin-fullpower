@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "5.3"
+local NODE_VERSION    = "5.4"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -1138,8 +1138,7 @@ local function main()
     -- Smart Cache Aggregator: configure ledger flush interval from upgrade level
     ledger.setFlushDelay(upgrades.getSmartCacheDelay())
 
-    print("[Tip] Initializing Opus UI dashboard...")
-    print("[Tip] Press U to update  |  P for Upgrade Shop  |  T for AMIdecode  |  A for Admin")
+    -- Live reward rate (informational print only)
     do
         local ok, res = pcall(http.get,
             "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/reward_rate.txt")
@@ -1152,75 +1151,40 @@ local function main()
                 print("[Rate] Could not parse remote rate -- using compiled default")
             end
         else
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("[UI] Dashboard ready!")
-        os.sleep(1)
-    else
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("===========================================")
-        print("  AmiCoin Node v" .. NODE_VERSION)
-        print("  TEXT MODE (UI initialization timeout)")
-        print("===========================================")
-        print("")
-        print("[!] Opus UI took too long to load.")
-        print("[!] Running in text-only mode.")
-        print("[!] All features work normally.")
-        print("")
-        print("Starting node threads...")
-        os.sleep(2)
+            print("[Rate] Could not reach GitHub -- using compiled default")
+        end
     end
 
-    parallel.waitForAll(
-        function() 
-            miner.run() 
-        end,
-        function() 
-            statusLoop(not uiSuccess, nodeKey)
-        end,
-        function() 
-            if uiSuccess then
-                UI:pullEvents()
-            else
-                -- No UI - sleep forever
-                while true do os.sleep(99999) end
-            end
-    
-    local function timeout()
-        os.sleep(5)
-    end
-    
-    parallel.waitForAny(tryUI, timeout)
-    
-    if uiSuccess then
-        print("[UI] Dashboard ready!")
-    else
-        print("[UI] TIMEOUT - falling back to text mode")
-        print("[UI] (Opus UI is too slow for this computer)")
-        -- Clear any partial UI render
-        term.clear()
-        term.setCursorPos(1, 1)
-    end
+    -- ── Opus UI bootstrap ────────────────────────────────────────────────────
+    -- Strategic fix (studied from upstream kepler155c/opus):
+    --   * disableEffects() makes Device:sync() skip runTransitions(), whose
+    --     `while true ... os.sleep(0)` loop is what hung forever ("zombie UI").
+    --   * setPage()/pullEvents() are the real Opus API; no hand-rolled init.
+    print("[Tip] Initializing Opus UI dashboard...")
+    print("[Tip] Press U to update  |  P for Upgrade Shop  |  T for AMIdecode  |  A for Admin")
+    local nodeUI = require("node_ui")
+    UI:disableEffects()
+    dashboardPage = nodeUI.createDashboard(nodeKey, NODE_VERSION)
+    UI:setPage(dashboardPage)
+    updateDashboard()
 
-    print("[Parallel] Starting background threads...")
     parallel.waitForAll(
-        function() 
-            print("[Miner] Thread started")
-            miner.run() 
-        end,
-        function() 
-            print("[Status] Thread started")
-            statusLoop() 
-        end,
-        function() 
-            print("[UI] Event loop started")
-            UI:pullEvents() 
-        end,
+        -- Proof-of-Uptime miner
         function()
-            print("[Net] Listening for wallet packets...")
+            miner.run()
+        end,
+        -- Live stats refresh (drives updateDashboard every 30s)
+        function()
+            statusLoop(false, nodeKey)
+        end,
+        -- Opus UI event loop (mouse clicks, hovers, redraws)
+        function()
+            UI:pullEvents()
+        end,
+        -- Encrypted mesh packet handler
+        function()
             while true do
-                local event, side, senderChan, replyChan, rawMsg = os.pullEvent("modem_message")
+                local _, _, _, replyChan, rawMsg = os.pullEvent("modem_message")
                 if rawMsg and type(rawMsg) == "string" then
                     local sep = rawMsg:find("|")
                     if sep then
@@ -1231,14 +1195,18 @@ local function main()
                         else
                             print("[Net] Ignored: bad wire format (key=" .. #senderKey .. " chars)")
                         end
-                    else
-                        print("[Net] Ignored: no | separator in message")
                     end
                 end
             end
         end,
-        function() monitorLoop(nodeKey) end,
-        func    os.sleep(30)
+        -- External monitor mirror
+        function()
+            monitorLoop(nodeKey)
+        end,
+        -- Ender Router watchdog
+        function()
+            while true do
+                os.sleep(30)
                 local alive = pcall(function() return router.isOpen(MESH_CHANNEL) end)
                 if not alive then
                     print("[Watchdog] Ender Router lost! Rebooting in 5s...")
@@ -1247,35 +1215,28 @@ local function main()
                 end
             end
         end,
+        -- Keyboard shortcuts (U/P/T/A). Sub-flows take over the terminal,
+        -- then return to the dashboard via setPage().
         function()
-            -- UI event loop (processes mouse clicks, draws, etc.)
-            UI:pullEvents()
-        end,
-        function()
-            -- Keyboard shortcuts (intercept key events before UI processes them)
             while true do
                 local _, key = os.pullEvent("key")
-                if key == keys.u then 
-                    term.clear()
-                    term.setCursorPos(1, 1)
+                if key == keys.u then
+                    term.clear(); term.setCursorPos(1, 1)
                     selfUpdate()
-                elseif key == keys.p then 
-                    term.clear()
-                    term.setCursorPos(1, 1)
+                elseif key == keys.p then
+                    term.clear(); term.setCursorPos(1, 1)
                     upgrades.runUpgradeFlow(router)
-                    UI:setPage(dashboardPage)  -- Return to UI after shop
+                    UI:setPage(dashboardPage)
                     updateDashboard()
-                elseif key == keys.t then 
-                    term.clear()
-                    term.setCursorPos(1, 1)
+                elseif key == keys.t then
+                    term.clear(); term.setCursorPos(1, 1)
                     upgrades.runAmdMinigame()
-                    UI:setPage(dashboardPage)  -- Return to UI after game
+                    UI:setPage(dashboardPage)
                     updateDashboard()
-                elseif key == keys.a then 
-                    term.clear()
-                    term.setCursorPos(1, 1)
+                elseif key == keys.a then
+                    term.clear(); term.setCursorPos(1, 1)
                     adminMenu(setupPassword)
-                    UI:setPage(dashboardPage)  -- Return to UI after admin
+                    UI:setPage(dashboardPage)
                     updateDashboard()
                 end
             end

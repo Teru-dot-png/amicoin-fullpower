@@ -481,7 +481,6 @@ function UI.Window:initChildren()
 					child:enable()
 				end
 			end
-			os.sleep(0)
 		end
 		self.children = children
 	end
@@ -563,7 +562,6 @@ function UI.Window:resize()
 	if self.children then
 		for _,child in ipairs(self.children) do
 			child:resize()
-			os.sleep(0)
 		end
 	end
 end
@@ -594,7 +592,6 @@ function UI.Window:draw()
 			if child.enabled then
 				child:draw()
 			end
-			os.sleep(0)
 		end
 	end
 end
@@ -610,7 +607,6 @@ function UI.Window:enable(...)
 	if self.children then
 		for _,child in pairs(self.children) do
 			child:enable(...)
-			os.sleep(0)
 		end
 	end
 end
@@ -620,7 +616,6 @@ function UI.Window:disable()
 	if self.children then
 		for _,child in pairs(self.children) do
 			child:disable()
-			os.sleep(0)
 		end
 	end
 end
@@ -647,18 +642,11 @@ function UI.Window:clearArea(x, y, width, height, bg)
 		local filler = _rep(' ', width)
 		for i = 0, height - 1 do
 			self:write(x, y + i, filler, bg)
-			if i % 5 == 0 then os.sleep(0) end
 		end
 	end
 end
 
 function UI.Window:write(x, y, text, bg, tc)
-	-- Global yield counter to prevent timeout during heavy rendering
-	UI.Window._writeCount = (UI.Window._writeCount or 0) + 1
-	if UI.Window._writeCount % 25 == 0 then
-		os.sleep(0)
-	end
-	
 	bg = bg or self.backgroundColor
 	tc = tc or self.textColor
 
@@ -770,7 +758,6 @@ function UI.Window:print(text, bg, fg)
 			self.cursorX = marginLeft + 1
 			self.cursorY = self.cursorY + 1
 		end
-		os.sleep(0)
 	end
 
 	return self.cursorX, self.cursorY

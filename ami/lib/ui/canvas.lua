@@ -234,7 +234,6 @@ function Canvas:clear(bg, fg)
 	bg = _rep(self.palette[bg or colors.black], self.width)
 	for i = 1, #self.lines do
 		self:writeLine(i, text, fg, bg)
-		if i % 10 == 0 then os.sleep(0) end
 	end
 end
 
@@ -408,7 +407,6 @@ function Canvas:__blitRect(device, src, tgt)
 			end
 			device.setCursorPos(tgt.x, tgt.y + i)
 			device.blit(t, fg, bg)
-			if i % 10 == 0 then os.sleep(0) end
 		end
 	end
 end

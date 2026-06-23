@@ -3,6 +3,8 @@
 -- Separated for clarity; required by startup.lua
 
 local UI = require('ami.lib.ui.ui')
+require('ami.lib.ui.widgets.fan')
+require('ami.lib.ui.widgets.gauge')
 local colors = _G.colors
 
 local function createDashboard(nodeKey, nodeVersion)

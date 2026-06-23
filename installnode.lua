@@ -29,9 +29,11 @@ local FILES = {
     { src = "/ami/lib/ui/event.lua",    dst = "/ami/lib/ui/event.lua"    },
     { src = "/ami/lib/ui/terminal.lua", dst = "/ami/lib/ui/terminal.lua" },
     { src = "/ami/lib/ui/region.lua",   dst = "/ami/lib/ui/region.lua"   },
-    { src = "/ami/lib/ui/input.lua",    dst = "/ami/lib/ui/input.lua"    },
-    { src = "/ami/lib/ui/util.lua",     dst = "/ami/lib/ui/util.lua"     },
-    { src = "/ami/lib/ui/entry.lua",    dst = "/ami/lib/ui/entry.lua"    },
+    { src = "/ami/lib/ui/input.lua",      dst = "/ami/lib/ui/input.lua"      },
+    { src = "/ami/lib/ui/util.lua",       dst = "/ami/lib/ui/util.lua"       },
+    { src = "/ami/lib/ui/entry.lua",      dst = "/ami/lib/ui/entry.lua"      },
+    { src = "/ami/lib/ui/transition.lua", dst = "/ami/lib/ui/transition.lua" },
+    { src = "/ami/lib/ui/tween.lua",      dst = "/ami/lib/ui/tween.lua"      },
     
     -- === Opus UI Framework - Theme & Glyphs ===
     { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },

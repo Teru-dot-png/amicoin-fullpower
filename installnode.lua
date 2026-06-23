@@ -10,9 +10,12 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "7.1"
+local VERSION   = "7.2"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
+-- Node-specific service files. The ENTIRE Opus UI tree (ami/lib/ui/**) is added
+-- below from /ami/lib/ui/manifest.txt so every component/widget ships and we
+-- never hand-maintain a UI file list again.
 local FILES = {
     -- === Node Service Files ===
     { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"   },
@@ -22,40 +25,29 @@ local FILES = {
     { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
     { src = "/node/xtea.lua",         dst = "/xtea.lua"          },
     { src = "/node/upgrades.lua",     dst = "/upgrades.lua"      },
-    
-    -- === Opus UI Framework - Core (Minimal for Fan Widget) ===
-    { src = "/ami/lib/ui/class.lua",    dst = "/ami/lib/ui/class.lua"    },
-    { src = "/ami/lib/ui/ui.lua",       dst = "/ami/lib/ui/ui.lua"       },
-    { src = "/ami/lib/ui/canvas.lua",   dst = "/ami/lib/ui/canvas.lua"   },
-    { src = "/ami/lib/ui/event.lua",    dst = "/ami/lib/ui/event.lua"    },
-    { src = "/ami/lib/ui/terminal.lua", dst = "/ami/lib/ui/terminal.lua" },
-    { src = "/ami/lib/ui/region.lua",   dst = "/ami/lib/ui/region.lua"   },
-    { src = "/ami/lib/ui/input.lua",      dst = "/ami/lib/ui/input.lua"      },
-    { src = "/ami/lib/ui/util.lua",       dst = "/ami/lib/ui/util.lua"       },
-    { src = "/ami/lib/ui/entry.lua",      dst = "/ami/lib/ui/entry.lua"      },
-    { src = "/ami/lib/ui/transition.lua", dst = "/ami/lib/ui/transition.lua" },
-    { src = "/ami/lib/ui/tween.lua",      dst = "/ami/lib/ui/tween.lua"      },
-    
-    -- === Opus UI Framework - Theme & Glyphs ===
-    { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },
-    { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
-    
-    -- === Opus UI Framework - Widgets ===
-    { src = "/ami/lib/ui/widgets/fan.lua",        dst = "/ami/lib/ui/widgets/fan.lua"        },
-    { src = "/ami/lib/ui/widgets/fan_frames.lua", dst = "/ami/lib/ui/widgets/fan_frames.lua" },
-    { src = "/ami/lib/ui/widgets/gauge.lua",      dst = "/ami/lib/ui/widgets/gauge.lua"      },
-    
-    -- === Opus UI Framework - Components ===
-    { src = "/ami/lib/ui/components/TitleBar.lua",      dst = "/ami/lib/ui/components/TitleBar.lua"      },
-    { src = "/ami/lib/ui/components/Text.lua",          dst = "/ami/lib/ui/components/Text.lua"          },
-    { src = "/ami/lib/ui/components/StatusBar.lua",     dst = "/ami/lib/ui/components/StatusBar.lua"     },
-    { src = "/ami/lib/ui/components/Grid.lua",          dst = "/ami/lib/ui/components/Grid.lua"          },
-    { src = "/ami/lib/ui/components/ScrollBar.lua",     dst = "/ami/lib/ui/components/ScrollBar.lua"     },
-    { src = "/ami/lib/ui/components/ScrollingGrid.lua", dst = "/ami/lib/ui/components/ScrollingGrid.lua" },
 
-    -- === Dev tool: on-computer glyph explorer (run `glyphexplorer` to browse the font) ===
+    -- === Dev tool: on-computer glyph explorer (run `glyphexplorer`) ===
     { src = "/ami/tools/glyph_explorer.lua", dst = "/glyphexplorer.lua" },
 }
+
+-- Pull the COMPLETE ami/lib/ui tree from the committed manifest, so every Opus
+-- component and widget is shipped (no more "missing component" gaps). Appends
+-- one { src, dst } per manifest line to `files`. Returns count or nil,err.
+local function appendUiManifest(files)
+    local cb  = (os.epoch and os.epoch("utc")) or os.time()
+    local res = http.get(REPO_BASE .. "/ami/lib/ui/manifest.txt?" .. cb)
+    if not res then return nil, "could not fetch ui manifest" end
+    local body = res.readAll(); res.close()
+    local n = 0
+    for line in (body .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("%s+", "")
+        if #line > 0 and line:sub(1, 1) ~= "#" then
+            files[#files + 1] = { src = line, dst = line }
+            n = n + 1
+        end
+    end
+    return n
+end
 
 -- Files/dirs wiped on Clean Install.
 local CLEAN_LUAS = {
@@ -211,6 +203,22 @@ for _, d in ipairs({"/shared", "/data"}) do
         term.setTextColor(colors.lightGray); print("  mkdir " .. d)
         term.setTextColor(colors.white)
     end
+end
+
+-- Append the COMPLETE Opus UI tree from the manifest before downloading.
+do
+    term.setTextColor(colors.lightGray)
+    io.write("  Fetching UI manifest ... ")
+    local n, mErr = appendUiManifest(FILES)
+    if n then
+        term.setTextColor(colors.green); print(n .. " UI files")
+    else
+        term.setTextColor(colors.red)
+        print("FAILED (" .. tostring(mErr) .. ")")
+        print("  Cannot ship the UI without the manifest. Aborting.")
+        return
+    end
+    term.setTextColor(colors.white)
 end
 
 -- ── Download and install .lua files ──────────────────────────────────────────

@@ -70,7 +70,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "7.1"
+local NODE_VERSION    = "7.2"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -553,14 +553,36 @@ end
 
 -- ── Self-update ─────────────────────────────────────────────────────────────
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+-- Node service files pulled by the in-node [U] self-update. The COMPLETE Opus UI
+-- tree (ami/lib/ui/**) is appended at update time from the committed manifest, so
+-- pressing [U] now updates the whole UI - not just these service files.
 local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"   },
     { src="/node/startup.lua",      dst="/startup.lua"       },
+    { src="/node/node_ui.lua",      dst="/node_ui.lua"       },
     { src="/node/ledger.lua",       dst="/ledger.lua"        },
     { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
     { src="/node/xtea.lua",         dst="/xtea.lua"          },
     { src="/node/upgrades.lua",     dst="/upgrades.lua"      },
 }
+
+-- Append the full ami/lib/ui tree from the committed manifest to a file list.
+-- Returns count, or nil + error. Shared by the [U] self-update below.
+local function appendUiManifest(files)
+    local cb  = (os.epoch and os.epoch("utc")) or os.time()
+    local ok, res = pcall(http.get, REPO_BASE .. "/ami/lib/ui/manifest.txt?" .. cb)
+    if not ok or not res then return nil, "could not fetch ui manifest" end
+    local body = res.readAll(); res.close()
+    local n = 0
+    for line in (body .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("%s+", "")
+        if #line > 0 and line:sub(1, 1) ~= "#" then
+            files[#files + 1] = { src = line, dst = line }
+            n = n + 1
+        end
+    end
+    return n
+end
 
 -- Compute a combined FNV-1a hash of all running node files.
 -- Called once at boot; result is stored in the module-level nodeFingerprint.
@@ -591,13 +613,25 @@ local function selfUpdate()
     print("[Update] Fetching latest files from GitHub...")
     local failed  = false
     local hashes  = {}
-    for _, entry in ipairs(UPDATE_FILES) do
+
+    -- Build the full file set: node services + the entire ami/lib/ui tree.
+    local files = {}
+    for _, e in ipairs(UPDATE_FILES) do files[#files + 1] = e end
+    local uiN, uiErr = appendUiManifest(files)
+    if uiN then
+        print("[Update] UI manifest: " .. uiN .. " files")
+    else
+        print("[Update] WARNING: " .. tostring(uiErr) .. " - updating services only")
+    end
+
+    for _, entry in ipairs(files) do
         io.write("[Update] " .. entry.dst .. " ... ")
-        local ok, res = pcall(http.get, REPO_BASE .. entry.src)
+        local cb = (os.epoch and os.epoch("utc")) or os.time()
+        local ok, res = pcall(http.get, REPO_BASE .. entry.src .. "?" .. cb)
         if ok and res then
             local content = res.readAll()
             res.close()
-            if #content < 64 then
+            if #content < 16 then
                 print("REJECTED (too small - possible 404)")
                 failed = true
             else

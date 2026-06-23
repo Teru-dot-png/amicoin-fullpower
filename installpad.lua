@@ -10,9 +10,11 @@
 --   Clean Install  : Wipes all wallet data + lua files then fresh install.
 --   Fresh Install  : (auto, when wallet absent) standard first-time setup.
 
-local VERSION   = "3.3"
+local VERSION   = "3.4"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
+-- Wallet-specific service files. The ENTIRE Opus UI tree (ami/lib/ui/**) is added
+-- below from /ami/lib/ui/manifest.txt so every component/widget ships.
 local FILES = {
     { src = "/shared/xtea.lua",           dst = "/shared/xtea.lua"    },
     { src = "/wallet/main.lua",           dst = "/startup.lua"        },
@@ -20,30 +22,24 @@ local FILES = {
     { src = "/wallet/secret_manager.lua", dst = "/secret_manager.lua" },
     { src = "/wallet/session.lua",        dst = "/session.lua"        },
     { src = "/wallet/comms.lua",          dst = "/comms.lua"          },
-    
-    -- === Opus UI Framework - Core (Minimal for Wallet UI) ===
-    { src = "/ami/lib/ui/class.lua",      dst = "/ami/lib/ui/class.lua"      },
-    { src = "/ami/lib/ui/ui.lua",         dst = "/ami/lib/ui/ui.lua"         },
-    { src = "/ami/lib/ui/canvas.lua",     dst = "/ami/lib/ui/canvas.lua"     },
-    { src = "/ami/lib/ui/event.lua",      dst = "/ami/lib/ui/event.lua"      },
-    { src = "/ami/lib/ui/terminal.lua",   dst = "/ami/lib/ui/terminal.lua"   },
-    { src = "/ami/lib/ui/region.lua",     dst = "/ami/lib/ui/region.lua"     },
-    { src = "/ami/lib/ui/input.lua",      dst = "/ami/lib/ui/input.lua"      },
-    { src = "/ami/lib/ui/util.lua",       dst = "/ami/lib/ui/util.lua"       },
-    { src = "/ami/lib/ui/entry.lua",      dst = "/ami/lib/ui/entry.lua"      },
-    { src = "/ami/lib/ui/transition.lua", dst = "/ami/lib/ui/transition.lua" },
-    { src = "/ami/lib/ui/tween.lua",      dst = "/ami/lib/ui/tween.lua"      },
-    
-    -- === Opus UI Framework - Theme & Glyphs ===
-    { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },
-    { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
-
-    -- === Opus UI Framework - Components (used by wallet_ui) ===
-    { src = "/ami/lib/ui/components/TitleBar.lua",  dst = "/ami/lib/ui/components/TitleBar.lua"  },
-    { src = "/ami/lib/ui/components/Text.lua",      dst = "/ami/lib/ui/components/Text.lua"      },
-    { src = "/ami/lib/ui/components/Button.lua",    dst = "/ami/lib/ui/components/Button.lua"    },
-    { src = "/ami/lib/ui/components/StatusBar.lua", dst = "/ami/lib/ui/components/StatusBar.lua" },
 }
+
+-- Pull the COMPLETE ami/lib/ui tree from the committed manifest.
+local function appendUiManifest(files)
+    local cb  = (os.epoch and os.epoch("utc")) or os.time()
+    local res = http.get(REPO_BASE .. "/ami/lib/ui/manifest.txt?" .. cb)
+    if not res then return nil, "could not fetch ui manifest" end
+    local body = res.readAll(); res.close()
+    local n = 0
+    for line in (body .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("%s+", "")
+        if #line > 0 and line:sub(1, 1) ~= "#" then
+            files[#files + 1] = { src = line, dst = line }
+            n = n + 1
+        end
+    end
+    return n
+end
 
 -- Files/dirs wiped on Clean Install.
 -- /wallet_data/ holds secret.key, address.txt, nodes.json, session.enc, etc.
@@ -194,6 +190,22 @@ if MODE == "clean" then
 end
 
 -- ── Download and install .lua files ──────────────────────────────────────────
+-- Append the COMPLETE Opus UI tree from the manifest before downloading.
+do
+    term.setTextColor(colors.lightGray)
+    io.write("  Fetching UI manifest ... ")
+    local n, mErr = appendUiManifest(FILES)
+    if n then
+        term.setTextColor(colors.green); print(n .. " UI files")
+    else
+        term.setTextColor(colors.red)
+        print("FAILED (" .. tostring(mErr) .. ")")
+        print("  Cannot ship the UI without the manifest. Aborting.")
+        return
+    end
+    term.setTextColor(colors.white)
+end
+
 local modeLabel = ({
     update = "Checking for updates...",
     force  = "Force-reinstalling wallet...",

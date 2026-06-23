@@ -481,6 +481,7 @@ function UI.Window:initChildren()
 					child:enable()
 				end
 			end
+			os.sleep(0)
 		end
 		self.children = children
 	end
@@ -562,6 +563,7 @@ function UI.Window:resize()
 	if self.children then
 		for _,child in ipairs(self.children) do
 			child:resize()
+			os.sleep(0)
 		end
 	end
 end
@@ -592,6 +594,7 @@ function UI.Window:draw()
 			if child.enabled then
 				child:draw()
 			end
+			os.sleep(0)
 		end
 	end
 end
@@ -607,6 +610,7 @@ function UI.Window:enable(...)
 	if self.children then
 		for _,child in pairs(self.children) do
 			child:enable(...)
+			os.sleep(0)
 		end
 	end
 end
@@ -616,6 +620,7 @@ function UI.Window:disable()
 	if self.children then
 		for _,child in pairs(self.children) do
 			child:disable()
+			os.sleep(0)
 		end
 	end
 end

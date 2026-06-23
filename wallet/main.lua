@@ -921,6 +921,10 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     local registered    = {}
     
     -- Dashboard UI page
+    -- disableEffects() is REQUIRED: it makes Device:sync() skip runTransitions(),
+    -- whose `while true ... os.sleep(0)` loop otherwise hangs forever on setPage
+    -- (the same "zombie UI" deadlock the node hit). See repo memory / node startup.
+    UI:disableEffects()
     local dashboardPage = WalletUI.createDashboard(address, playerName)
     
     -- ── Data refresh ─────────────────────────────────────────────────────────

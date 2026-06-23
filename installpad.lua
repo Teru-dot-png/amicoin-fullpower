@@ -10,12 +10,13 @@
 --   Clean Install  : Wipes all wallet data + lua files then fresh install.
 --   Fresh Install  : (auto, when wallet absent) standard first-time setup.
 
-local VERSION   = "3.2"
+local VERSION   = "3.3"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
     { src = "/shared/xtea.lua",           dst = "/shared/xtea.lua"    },
     { src = "/wallet/main.lua",           dst = "/startup.lua"        },
+    { src = "/wallet/wallet_ui.lua",      dst = "/wallet_ui.lua"      },
     { src = "/wallet/secret_manager.lua", dst = "/secret_manager.lua" },
     { src = "/wallet/session.lua",        dst = "/session.lua"        },
     { src = "/wallet/comms.lua",          dst = "/comms.lua"          },
@@ -36,6 +37,12 @@ local FILES = {
     -- === Opus UI Framework - Theme & Glyphs ===
     { src = "/ami/lib/ui/theme.lua",  dst = "/ami/lib/ui/theme.lua"  },
     { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
+
+    -- === Opus UI Framework - Components (used by wallet_ui) ===
+    { src = "/ami/lib/ui/components/TitleBar.lua",  dst = "/ami/lib/ui/components/TitleBar.lua"  },
+    { src = "/ami/lib/ui/components/Text.lua",      dst = "/ami/lib/ui/components/Text.lua"      },
+    { src = "/ami/lib/ui/components/Button.lua",    dst = "/ami/lib/ui/components/Button.lua"    },
+    { src = "/ami/lib/ui/components/StatusBar.lua", dst = "/ami/lib/ui/components/StatusBar.lua" },
 }
 
 -- Files/dirs wiped on Clean Install.

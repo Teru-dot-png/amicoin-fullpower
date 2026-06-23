@@ -31,19 +31,19 @@ function WalletUI.createDashboard(address, amidnsName)
             backgroundColor = colors.gray,
             
             balanceLabel = UI.Text({
-                x = 'center', y = 2,
+                x = 1, y = 2, width = 50, align = 'center',
                 value = 'Balance',
                 textColor = colors.white,
             }),
             
             balanceValue = UI.Text({
-                x = 'center', y = 4,
+                x = 1, y = 4, width = 50, align = 'center',
                 value = '0.000000 AMI',
                 textColor = colors.yellow,
             }),
             
             balanceMicro = UI.Text({
-                x = 'center', y = 5,
+                x = 1, y = 5, width = 50, align = 'center',
                 value = '(0 uAMI)',
                 textColor = colors.gray,
             }),
@@ -146,14 +146,14 @@ end
 
 -- Update dashboard with current state
 function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netStats)
-    -- Update balance display
+    -- Update balance display (Text components expose `.value`; no setValue method)
     if balance then
         local ami = balance / 1000000
-        page.balancePanel.balanceValue:setValue(string.format("%.6f AMI", ami))
-        page.balancePanel.balanceMicro:setValue(string.format("(%d uAMI)", balance))
+        page.balancePanel.balanceValue.value = string.format("%.6f AMI", ami)
+        page.balancePanel.balanceMicro.value = string.format("(%d uAMI)", balance)
     else
-        page.balancePanel.balanceValue:setValue("Loading...")
-        page.balancePanel.balanceMicro:setValue("")
+        page.balancePanel.balanceValue.value = "Loading..."
+        page.balancePanel.balanceMicro.value = ""
     end
     
     -- Update status bar
@@ -170,9 +170,10 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
     else
         statusText = "No nodes configured - press Nodes"
     end
-    page.statusBar:setValue(statusText)
-    
+    page.statusBar:setStatus(statusText)
+
     page:draw()
+    page:sync()
 end
 
 return WalletUI

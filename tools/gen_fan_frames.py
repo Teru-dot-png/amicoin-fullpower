@@ -27,19 +27,19 @@ SX, SY = 2, 3                   # sub-pixels per char cell
 GW, GH = COLS * SX, ROWS * SY   # 34 x 27 sub-pixel grid
 
 BLADES = 4
-FRAMES = 12                     # frames per loop. More frames = smoother + seamless.
-# A B-blade fan looks IDENTICAL every 360/B degrees (the "symmetry period" = 90
-# deg for 4 blades). So sampling frames evenly across exactly ONE period makes a
-# perfectly seamless loop: the last frame is one step short of 90 deg, which wraps
-# straight back to frame 0.
-#   step = (360/BLADES) / FRAMES = 90/12 = 7.5 deg/frame  -> very smooth.
-# IMPORTANT: smoothness (deg/frame) and SPEED are independent knobs:
-#   apparent speed = deg_per_frame * playback_fps.
-# So we bake SMOOTH (small step, many frames) and make it FAST by playing at a
-# higher fps on the monitor (see monitorLoop). Do NOT crank deg/frame for speed -
-# big steps just look steppy/wagon-wheel. ROTATIONS stays 1 for the cleanest loop.
-ROTATIONS = 1
-assert math.gcd(ROTATIONS, FRAMES) == 1, "ROTATIONS and FRAMES must be coprime"
+FRAMES = 48                     # frames per loop. 360/48 = 7.5 deg/frame (smooth).
+# Sweep a FULL 360-degree rotation per loop. A 4-blade fan looks identical every
+# 90 deg, so it's tempting to bake only one 90-deg period and rely on "90 == 0".
+# But once the blades are discretised onto the 2x3 teletext PIXEL grid (34x27,
+# not square), the rendered image at 90 deg is NOT pixel-identical to 0 deg, so
+# the loop wrap SNAPS backward -> the fan looks like it spins partway then resets
+# ("stops at ~45 deg"). Sweeping a true 360 deg fixes this: 360 == 0 is an exact
+# identity (same image), so the loop closes seamlessly with zero snap.
+#   step = 360 / FRAMES = 7.5 deg/frame.
+# Smoothness (deg/frame) and SPEED are independent: speed = deg_per_frame * fps,
+# so bake SMOOTH (small step, many frames) and set SPEED via playback fps in
+# monitorLoop. Each frame is tiny (9 short strings), so 48 frames is cheap.
+TURNS = 1                       # full rotations swept per loop (1 => 360 deg)
 
 CXp = (GW - 1) / 2.0
 CYp = (GH - 1) / 2.0
@@ -81,8 +81,8 @@ def build_frame(rotation):
 
 
 def main():
-    period = 2 * math.pi / BLADES          # one visual rotation in radians
-    frames = [build_frame(i * ROTATIONS * period / FRAMES) for i in range(FRAMES)]
+    full = 2 * math.pi                     # one full 360-degree rotation
+    frames = [build_frame(i * TURNS * full / FRAMES) for i in range(FRAMES)]
 
     out = [
         "-- ami/lib/ui/widgets/fan_frames.lua",

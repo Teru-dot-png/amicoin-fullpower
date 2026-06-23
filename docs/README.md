@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="AMILOGO.gif" alt="AmiCoin Logo" />
+</p>
+
 # AmiCoin
 
 **A standalone, cross-dimensional cryptocurrency for Minecraft built on CC:Tweaked.**

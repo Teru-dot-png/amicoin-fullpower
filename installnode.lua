@@ -10,13 +10,14 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "3.3"
+local VERSION   = "3.4"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
     -- === Node Service Files ===
     { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"   },
     { src = "/node/startup.lua",      dst = "/startup.lua"       },
+    { src = "/node/node_ui.lua",      dst = "/node_ui.lua"       },
     { src = "/node/ledger.lua",       dst = "/ledger.lua"        },
     { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
     { src = "/node/xtea.lua",         dst = "/xtea.lua"          },
@@ -45,7 +46,7 @@ local FILES = {
 }
 
 -- Files/dirs wiped on Clean Install.
-local CLEAN_LUAS = {
+local CLEAN_LUAS = {node_ui.lua", "/
     "/startup.lua", "/ledger.lua", "/miner_daemon.lua", "/xtea.lua",
     "/shared/xtea.lua", "/upgrades.lua",
 }

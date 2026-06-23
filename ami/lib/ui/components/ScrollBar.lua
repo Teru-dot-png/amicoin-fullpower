@@ -18,7 +18,10 @@ UI.ScrollBar.defaults = {
 function UI.ScrollBar:draw()
 	local view = self.parent:getViewArea()
 
-	if view.totalHeight > view.height then
+	-- Defensive guard: a non-positive view height (or empty grid) would make
+	-- `view.height / view.totalHeight` divide by zero -> sliderSize = inf ->
+	-- `for i = 1, inf` infinite loop. Only draw a slider when geometry is sane.
+	if view.height and view.height > 0 and view.totalHeight > view.height then
 		local maxScroll = view.totalHeight - view.height
 		local percent = view.offsetY / maxScroll
 		local sliderSize = math.max(1, Util.round(view.height / view.totalHeight * (view.height - 2)))

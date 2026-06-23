@@ -512,6 +512,21 @@ function UI.Window:layout()
 		self.y = self.parent.height + self.y + 1
 	end
 
+	-- Resolve negative width/height as "fill toward the far parent edge,
+	-- leaving |value|-1 cells of margin". node_ui/wallet_ui panels use this
+	-- relative-sizing convention (e.g. width=-2, height=-1). Upstream Opus only
+	-- handles negative x/y/ex/ey, so without this a negative height survives
+	-- into Grid:pageSize (= height - headerHeight) and goes negative, which made
+	-- ScrollBar:draw divide by zero and loop `for i=1, infinity`. (#fan/grid hang)
+	if type(self.width) == 'number' and self.width < 0 then
+		self.width = self.parent.width - self.x + 1 + self.width + 1
+		if self.width < 1 then self.width = 1 end
+	end
+	if type(self.height) == 'number' and self.height < 0 then
+		self.height = self.parent.height - self.y + 1 + self.height + 1
+		if self.height < 1 then self.height = 1 end
+	end
+
 	if self.ex then
 		local ex = self.ex
 		if self.ex <= 1 then

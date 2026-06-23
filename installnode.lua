@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "5.6"
+local VERSION   = "5.7"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
@@ -41,8 +41,9 @@ local FILES = {
     { src = "/ami/lib/ui/glyphs.lua", dst = "/ami/lib/ui/glyphs.lua" },
     
     -- === Opus UI Framework - Widgets ===
-    { src = "/ami/lib/ui/widgets/fan.lua",   dst = "/ami/lib/ui/widgets/fan.lua"   },
-    { src = "/ami/lib/ui/widgets/gauge.lua", dst = "/ami/lib/ui/widgets/gauge.lua" },
+    { src = "/ami/lib/ui/widgets/fan.lua",        dst = "/ami/lib/ui/widgets/fan.lua"        },
+    { src = "/ami/lib/ui/widgets/fan_frames.lua", dst = "/ami/lib/ui/widgets/fan_frames.lua" },
+    { src = "/ami/lib/ui/widgets/gauge.lua",      dst = "/ami/lib/ui/widgets/gauge.lua"      },
     
     -- === Opus UI Framework - Components ===
     { src = "/ami/lib/ui/components/TitleBar.lua",      dst = "/ami/lib/ui/components/TitleBar.lua"      },

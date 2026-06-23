@@ -12,6 +12,14 @@ local sm    = require("secret_manager")
 local sess  = require("session")
 local comms = require("comms")
 
+-- Opus UI framework
+local UI       = require('ami.lib.ui.ui')
+local Theme    = require('ami.lib.ui.theme')
+local Event    = require('ami.lib.ui.event')
+
+-- Set demon theme
+Theme.setTheme('demon')
+
 -- ── Display helpers ───────────────────────────────────────────────────────────
 local W, H = term.getSize()
 
@@ -899,6 +907,9 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- Cache our own name immediately
     if playerName then cacheName(address, playerName) end
 
+    -- Load wallet UI module
+    local WalletUI = require("wallet_ui")
+    
     -- ── State ────────────────────────────────────────────────────────────────
     local totalBalance  = nil
     local perNode       = {}   -- {name, balance, err, latency, stats}
@@ -908,15 +919,18 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- Track which nodes we've successfully registered on so we can retry
     -- nodes that were offline at boot.
     local registered    = {}
-
+    
+    -- Dashboard UI page
+    local dashboardPage = WalletUI.createDashboard(address, playerName)
+    
     -- ── Data refresh ─────────────────────────────────────────────────────────
     local function fetchLiveRate()
         local ok, res = pcall(http.get, RATE_URL)
         if not ok or not res then return end
         local body = res.readAll()
         res.close()
-        local clean_body = (body or ""):gsub("%s", "") -- Lua still returns 2 values here
-        local n = tonumber(clean_body)                 -- But here, we only use the first one
+        local clean_body = (body or ""):gsub("%s", "")
+        local n = tonumber(clean_body)
         if n and n >= 1 and n <= 100000 then
             liveRate = math.floor(n)
         end
@@ -951,7 +965,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                 local sok, sdata = comms.getStats(secretKey, node.key, address)
                 if sok and sdata then
                     if not netStats then netStats = sdata end
-                    entry.stats = sdata  -- store per-node so draw() can sum rates
+                    entry.stats = sdata  -- store per-node so we can sum rates
                     -- Integrity: Trust-On-First-Connect or mismatch detection
                     if sdata.fingerprint then
                         local fp = sdata.fingerprint
@@ -988,351 +1002,250 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             end
         end
     end
-
-    -- ── Drawing helpers ───────────────────────────────────────────────────────
-    local function hRule(y)
-        term.setCursorPos(1, y)
-        term.setTextColor(colors.gray)
-        term.write(string.rep("-", W))
-    end
-
-    local function rjust(s, w)
-        s = tostring(s)
-        if #s >= w then return s:sub(1, w) end
-        return string.rep(" ", w - #s) .. s
-    end
-
-    -- ── Draw ─────────────────────────────────────────────────────────────────
-    local function draw()
-        -- Always fetch fresh dimensions so layout is correct on any hardware.
-        local w, h = term.getSize()
-        banner("AMI-Dashboard")
-
-        -- Row 4: divider
-        term.setCursorPos(1, 4); term.setTextColor(colors.gray)
-        term.write(string.rep("-", w))
-
-        -- Row 5: player name + short address
-        local dispAddr = address:sub(1,8) .. ".." .. address:sub(-4)
-        local nameStr  = (playerName or "(unknown)") .. " | " .. dispAddr
-        term.setCursorPos(1, 5); term.setTextColor(colors.orange)
-        term.write(nameStr:sub(1, w))
-
-        -- Rows 6-7: balance display
-        if balErr then
-            term.setCursorPos(1, 6); term.setTextColor(colors.red)
-            term.write(("Balance: [" .. balErr .. "]"):sub(1, w))
-            term.setCursorPos(1, 7); term.clearLine()
-        elseif totalBalance then
-            term.setCursorPos(1, 6); term.setTextColor(colors.green)
-            local ami = string.format("%.4f AMI", totalBalance / 1000000)
-            term.write(ami:sub(1, w))
-            term.setCursorPos(1, 7); term.setTextColor(colors.lime)
-            local ustr = tostring(totalBalance) .. " uAMI"
-            term.write(rjust(ustr, w):sub(1, w))
-        else
-            term.setCursorPos(1, 6); term.setTextColor(colors.gray)
-            term.write(("Balance: press [R]"):sub(1, w))
-            term.setCursorPos(1, 7); term.clearLine()
+    
+    -- ── Update UI ────────────────────────────────────────────────────────────
+    local function updateDashboard()
+        local onlineCount = 0
+        for _, n in ipairs(perNode) do
+            if not n.err then onlineCount = onlineCount + 1 end
         end
-
-        -- ── Node health table ────────────────────────────────────────────────
-        -- Bottom-anchored layout (menus always visible regardless of node count):
-        --   Row 8         : divider
-        --   Row 9         : column header
-        --   Rows 10..h-5  : node data  (h-14 rows; 6 on h=20 Pad, 5 on h=19 Computer)
-        --   Row h-4       : divider
-        --   Row h-3       : network stats
-        --   Row h-2       : divider
-        --   Row h-1       : hotkey row 1  (always visible)
-        --   Row h         : hotkey row 2  (always visible)
-        --
-        -- narrow = Ender Router Pad (w=26); wide = Advanced Computer (w>=39)
-        local narrow = (w < 39)
-
-        -- Row 8: divider
-        term.setCursorPos(1, 8); term.setTextColor(colors.gray)
-        term.write(string.rep("-", w))
-
-        -- Row 9: column header
-        -- narrow: name(12)+1+balance(7)+2+status(2) = 24 chars
-        -- wide:   name(12)+1+balance(9)+1+ping(6)+2+status(2) = 33 chars
-        term.setCursorPos(1, 9); term.setTextColor(colors.gray)
-        if narrow then
-            term.write((string.format("%-12s %7s  %s", "Node", "Balance", "St")):sub(1, w))
-        else
-            term.write((string.format("%-12s %9s %6s  %s", "Node", "Balance", "Ping", "St")):sub(1, w))
-        end
-
-        -- Rows 10..(h-5): node data rows; clear any row with no entry
-        local maxRows = (h - 5) - 10 + 1   -- e.g. 6 for h=20, 5 for h=19
-        for i = 1, maxRows do
-            local row = 9 + i
-            local n   = perNode[i]
-            term.setCursorPos(1, row)
-            if not n then
-                -- Clear stale content from a previous draw with more nodes
-                term.clearLine()
-            elseif n.err then
-                term.setTextColor(colors.red)
-                local line
-                if narrow then
-                    line = string.format("%-12s %7s  [!]", n.name:sub(1, 12), "---")
-                else
-                    line = string.format("%-12s %9s %6s  [!]", n.name:sub(1, 12), "---", "---")
-                end
-                term.write(line:sub(1, w))
+        WalletUI.updateDashboard(dashboardPage, totalBalance, onlineCount, #nodes, netStats)
+    end
+    
+    -- ── Event handlers ───────────────────────────────────────────────────────
+    function dashboardPage:eventHandler(event)
+        if event.type == 'action_send' then
+            -- Send AMI (fallback to text UI)
+            term.clear()
+            term.setCursorPos(1, 1)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+            banner("Send AMI")
+            if #nodes == 0 then
+                pmsg("No nodes configured.", 5, colors.red)
+                pmsg("Add a node first with Nodes.", 6)
+                waitKey()
             else
-                local bal  = string.format("%.4f", n.balance / 1000000)
-                local badge, bcol
-                if     n.fp_ok == false                      then badge = "[FP]"; bcol = colors.orange
-                elseif n.fp_ok == "tofc" or n.fp_ok == nil   then badge = "[??]"; bcol = colors.gray
-                else                                              badge = "[OK]"; bcol = colors.lime
-                end
-                -- line is exactly (w-4) chars; badge fills the last 4 columns.
-                local line
-                if narrow then
-                    -- name(12)+1+balance(7)+2 = 22 chars; badge at cols 23-26
-                    line = string.format("%-12s %7s  ", n.name:sub(1, 12), bal:sub(1, 7))
+                pmsg("Recipient (player name or address):", 5)
+                local toRaw = prompt("> ", 7)
+                toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
+                local toAddr = nil
+
+                if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
+                    toAddr = toRaw:lower()
                 else
-                    local ping = n.latency and (n.latency .. "ms") or "---"
-                    -- name(12)+1+balance(9)+1+ping(6)+2 = 31 chars; badge at end
-                    line = string.format("%-12s %9s %6s  ",
-                        n.name:sub(1, 12), bal:sub(1, 9), ping:sub(1, 6))
+                    -- 1. Check local Ami-DNS cache first (instant, works offline)
+                    local cached = reverseResolve(toRaw)
+                    if cached then
+                        toAddr = cached
+                        pmsg("Found (local): " .. resolveAddr(toAddr), 9, colors.lime)
+                    else
+                        -- 2. Fall back to querying all nodes
+                        pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
+                        local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
+                        if ok and data and data.address then
+                            toAddr = data.address
+                            cacheName(toAddr, toRaw)
+                            comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
+                            pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
+                        else
+                            pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
+                            pmsg("Enter 128-hex address (blank=cancel):", 10, colors.yellow)
+                            local raw2 = (prompt("> ", 11) or ""):gsub("%s", ""):lower()
+                            if #raw2 == 128 and raw2:match("^[0-9a-fA-F]+$") then
+                                toAddr = raw2
+                                pmsg("Using raw address.", 12, colors.lime)
+                            end
+                        end
+                    end
                 end
-                term.setTextColor(colors.white)
-                term.write(line:sub(1, w - 4))
-                term.setTextColor(bcol)
-                term.write(badge)
-            end
-        end
 
-        -- Row h-4: divider
-        term.setCursorPos(1, h - 4); term.setTextColor(colors.gray)
-        term.write(string.rep("-", w))
-
-        -- Row h-3: network stats
-        term.setCursorPos(1, h - 3)
-        if netStats then
-            -- Sum effective_rate (base * miner_boost multiplier) across every
-            -- responding node.  Falls back to current_rate if effective_rate is
-            -- absent (older node software).
-            local totalRate = 0
-            local nodeCount = 0
-            for _, n in ipairs(perNode) do
-                if n.stats then
-                    local r = n.stats.effective_rate or n.stats.current_rate or 0
-                    totalRate = totalRate + r
-                    nodeCount = nodeCount + 1
+                if toAddr then
+                    local chosenNode = nodes[1]
+                    if #nodes > 1 then
+                        pmsg("Send via which node?", 11, colors.yellow)
+                        for i, n in ipairs(nodes) do
+                            pmsg(string.format("  [%d] %s", i, n.name), 11 + i, colors.white)
+                        end
+                        local inp = prompt("> ", 12 + #nodes)
+                        local idx = tonumber(inp)
+                        if idx and idx >= 1 and idx <= #nodes then
+                            chosenNode = nodes[idx]
+                        end
+                    end
+                    local amtRow = (#nodes > 1) and (14 + #nodes) or 12
+                    -- Unit selection
+                    pmsg("Unit? [A]MI or [U]uAMI:", amtRow, colors.white)
+                    local unitIn = prompt("> ", amtRow + 1)
+                    local useUAMI = (unitIn:lower():sub(1,1) == "u")
+                    local unitLabel = useUAMI and "uAMI" or "AMI"
+                    pmsg("Amount (" .. unitLabel .. "):", amtRow + 3)
+                    local rawAmt = prompt("> ", amtRow + 4)
+                    local amt = tonumber(rawAmt)
+                    if not amt or amt <= 0 then
+                        pmsg("Invalid amount.", amtRow + 6, colors.red); waitKey()
+                    else
+                        local microAmt = useUAMI
+                            and math.floor(amt)
+                            or  math.floor(amt * 1000000)
+                        pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 6, colors.yellow)
+                        local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
+                        if ok then
+                            local display = useUAMI
+                                and string.format("%d uAMI", microAmt)
+                                or  string.format("%.4f AMI", amt)
+                            pmsg("Sent " .. display .. " to " .. resolveAddr(toAddr), amtRow + 6, colors.green)
+                        else
+                            pmsg("Failed: " .. (err or "unknown"), amtRow + 6, colors.red)
+                        end
+                        waitKey(); refreshBalance()
+                    end
                 end
             end
-            -- If no per-node stats yet, fall back to the first netStats entry.
-            if nodeCount == 0 then
-                totalRate = liveRate or netStats.effective_rate or netStats.current_rate or 0
-            end
-            -- 3600s/hr ÷ 30s/tick = 120 ticks/hr
-            local earn_hr = totalRate * 120
-            term.setTextColor(colors.lightGray)
-            local line
-            if narrow then
-                -- "Net 7  25/30s  +3000/hr" fits w=26
-                line = string.format("Net %d  %d/30s  +%d/hr",
-                    netStats.active_wallets or 0, totalRate, earn_hr)
+            UI:setPage(dashboardPage)
+            updateDashboard()
+            return true
+            
+        elseif event.type == 'action_receive' then
+            -- Receive dialog (show address)
+            term.clear()
+            term.setCursorPos(1, 1)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+            banner("Receive AMI")
+            pmsg("Share this address to receive AMI:", 5, colors.white)
+            pmsg(address:sub(1, 64), 7, colors.yellow)
+            pmsg(address:sub(65, 128), 8, colors.yellow)
+            if playerName then
+                pmsg("Ami-DNS: " .. playerName, 10, colors.lime)
             else
-                line = string.format("Net %d  %d uAMI/30s (%d nodes)  +%d/hr",
-                    netStats.active_wallets or 0, totalRate,
-                    math.max(nodeCount, #nodes), earn_hr)
+                pmsg("No Ami-DNS name registered", 10, colors.gray)
             end
-            term.write(line:sub(1, w))
-        else
-            term.setTextColor(colors.gray)
-            term.write(("[R] to load stats"):sub(1, w))
-        end
-
-        -- Row h-2: divider
-        term.setCursorPos(1, h - 2); term.setTextColor(colors.gray)
-        term.write(string.rep("-", w))
-
-        -- Row h-1: hotkey row 1 (anchored — always visible regardless of node count)
-        term.setCursorPos(1, h - 1); term.setTextColor(colors.orange)
-        if narrow then
-            -- "[S]end [R]efr [E]xp [N](2)" = 26 chars for 1-digit node count
-            term.write(("[S]end [R]efr [E]xp [N](" .. #nodes .. ")"):sub(1, w))
-        else
-            term.write(("[S]end [R]efresh [E]xport [N] CmdCtr(" .. #nodes .. ")"):sub(1, w))
-        end
-
-        -- Row h: hotkey row 2 (anchored)
-        term.setCursorPos(1, h)
-        if narrow then
-            -- "[V]ault  [U]pdate  [L]out" = 25 chars <= 26
-            term.setTextColor(colors.pink);   term.write("[V]")
-            term.setTextColor(colors.orange); term.write("ault  ")
-            term.setTextColor(colors.orange); term.write("[U]pdate  ")
-            term.setTextColor(colors.gray);   term.write("[L]out")
-        else
-            term.setTextColor(colors.pink);   term.write("[V]")
-            term.setTextColor(colors.orange); term.write("ault  ")
-            term.setTextColor(colors.orange); term.write("[U]pdate  ")
-            term.setTextColor(colors.gray);   term.write("[L]ogout")
+            waitKey()
+            UI:setPage(dashboardPage)
+            updateDashboard()
+            return true
+            
+        elseif event.type == 'action_export' then
+            -- Export secret key
+            term.clear()
+            term.setCursorPos(1, 1)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+            banner("Export Secret Key")
+            if playerName then pmsg("Player: " .. playerName, 5, colors.orange) end
+            pmsg("Your SECRET KEY is:", 7, colors.red)
+            pmsg(secretKey:sub(1, 16),  9, colors.yellow)
+            pmsg(secretKey:sub(17, 32), 10, colors.yellow)
+            pmsg("Never share this with anyone.",  12, colors.red)
+            pmsg("Use it to migrate to a new Pad.", 13, colors.lightGray)
+            waitKey()
+            UI:setPage(dashboardPage)
+            updateDashboard()
+            return true
+            
+        elseif event.type == 'action_nodes' then
+            -- Command Center
+            nodes = screenCommandCenter(nodes, secretKey, address)
+            UI:setPage(dashboardPage)
+            updateDashboard()
+            return true
+            
+        elseif event.type == 'action_vault' then
+            -- Vault screen
+            screenVault(secretKey, address, nodes)
+            UI:setPage(dashboardPage)
+            updateDashboard()
+            return true
+            
+        elseif event.type == 'action_update' then
+            -- Software update
+            screenUpdate()
+            return true
+            
+        elseif event.type == 'action_logout' then
+            -- Logout
+            sess.clear()
+            os.reboot()
+            return true
         end
     end
-
+    
     -- Open the AmiStore broadcast channel so we receive INVOICE packets.
     comms.openShopChannel()
-
-    -- Show a loading screen immediately so the pad isn't blank while
-    -- refreshBalance() makes blocking network calls (up to 8s × #nodes).
-    banner("AMI-Dashboard")
-    pmsg("Loading...", 6, colors.yellow)
-
+    
+    -- Set UI page
+    UI:setPage(dashboardPage)
+    
+    -- Initial data fetch
     refreshBalance()
-    draw()
-
-    while true do
-        local ev, p1, p2, p3, p4 = os.pullEvent()
-
-        if ev == "key" then
-
-            if p1 == keys.r then
-                cls(); banner("AMI-Dashboard")
-                term.setCursorPos(1, 6); term.setTextColor(colors.yellow)
-                term.write("Refreshing...")
-                refreshBalance(); draw()
-
-            elseif p1 == keys.s then
-                banner("Send AMI")
-                if #nodes == 0 then
-                    pmsg("No nodes configured.", 5, colors.red)
-                    pmsg("Add a node first with [N].", 6)
-                    waitKey(); draw()
-                else
-                    pmsg("Recipient (player name or address):", 5)
-                    local toRaw = prompt("> ", 7)
-                    toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
-                    local toAddr = nil
-
-                    if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
-                        toAddr = toRaw:lower()
-                    else
-                        -- 1. Check local Ami-DNS cache first (instant, works offline)
-                        local cached = reverseResolve(toRaw)
-                        if cached then
-                            toAddr = cached
-                            pmsg("Found (local): " .. resolveAddr(toAddr), 9, colors.lime)
-                        else
-                            -- 2. Fall back to querying all nodes
-                            pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
-                            local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
-                            if ok and data and data.address then
-                                toAddr = data.address
-                                cacheName(toAddr, toRaw)
-                                comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
-                                pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
-                            else
-                                -- DNS lookup failed; offer raw-hex fallback so funds
-                                -- are never stranded by a missing name record.
-                                pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
-                                pmsg("Enter 128-hex address (blank=cancel):", 10, colors.yellow)
-                                local raw2 = (prompt("> ", 11) or ""):gsub("%s", ""):lower()
-                                if #raw2 == 128 and raw2:match("^[0-9a-fA-F]+$") then
-                                    toAddr = raw2
-                                    pmsg("Using raw address.", 12, colors.lime)
-                                end
-                                -- toAddr nil => outer `if toAddr then` skips gracefully
-                            end
-                        end
-                    end
-
-                    if toAddr then
-                        local chosenNode = nodes[1]
-                        if #nodes > 1 then
-                            pmsg("Send via which node?", 11, colors.yellow)
-                            for i, n in ipairs(nodes) do
-                                pmsg(string.format("  [%d] %s", i, n.name), 11 + i, colors.white)
-                            end
-                            local inp = prompt("> ", 12 + #nodes)
-                            local idx = tonumber(inp)
-                            if idx and idx >= 1 and idx <= #nodes then
-                                chosenNode = nodes[idx]
-                            end
-                        end
-                        local amtRow = (#nodes > 1) and (14 + #nodes) or 12
-                        -- Unit selection
-                        pmsg("Unit? [A]MI or [U]uAMI:", amtRow, colors.white)
-                        local unitIn = prompt("> ", amtRow + 1)
-                        local useUAMI = (unitIn:lower():sub(1,1) == "u")
-                        local unitLabel = useUAMI and "uAMI" or "AMI"
-                        pmsg("Amount (" .. unitLabel .. "):", amtRow + 3)
-                        local rawAmt = prompt("> ", amtRow + 4)
-                        local amt = tonumber(rawAmt)
-                        if not amt or amt <= 0 then
-                            pmsg("Invalid amount.", amtRow + 6, colors.red); waitKey()
-                        else
-                            local microAmt = useUAMI
-                                and math.floor(amt)
-                                or  math.floor(amt * 1000000)
-                            pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 6, colors.yellow)
-                            local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
-                            if ok then
-                                local display = useUAMI
-                                    and string.format("%d uAMI", microAmt)
-                                    or  string.format("%.4f AMI", amt)
-                                pmsg("Sent " .. display .. " to " .. resolveAddr(toAddr), amtRow + 6, colors.green)
-                            else
-                                pmsg("Failed: " .. (err or "unknown"), amtRow + 6, colors.red)
-                            end
-                            waitKey(); refreshBalance()
-                        end
-                    end
-                    draw()
-                end
-
-            elseif p1 == keys.e then
-                banner("Export Secret Key")
-                if playerName then pmsg("Player: " .. playerName, 5, colors.orange) end
-                pmsg("Your SECRET KEY is:", 7, colors.red)
-                pmsg(secretKey:sub(1, 16),  9, colors.yellow)
-                pmsg(secretKey:sub(17, 32), 10, colors.yellow)
-                pmsg("Never share this with anyone.",  12, colors.red)
-                pmsg("Use it to migrate to a new Pad.", 13, colors.lightGray)
-                waitKey(); draw()
-
-            elseif p1 == keys.n then
-                nodes = screenCommandCenter(nodes, secretKey, address)
-                draw()
-
-            elseif p1 == keys.v then
-                screenVault(secretKey, address, nodes); draw()
-
-            elseif p1 == keys.u then
-                screenUpdate(); draw()
-
-            elseif p1 == keys.l then
-                sess.clear()
-                pmsg("Logged out.", H - 1, colors.gray)
-                os.sleep(1)
-                return
+    updateDashboard()
+    
+    -- Run all coroutines in parallel
+    parallel.waitForAll(
+        -- Balance refresh loop
+        function()
+            while true do
+                sleep(5)
+                refreshBalance()
+                updateDashboard()
             end
-
-        elseif ev == "modem_message" then
-            -- p1=side, p2=channel, p3=replyChannel, p4=message
-            -- Only handle plaintext INVOICE broadcasts on SHOP_CHANNEL (1338).
-            if p2 == 1338 and type(p4) == "string" and p4:sub(1,1) == "{" then
-                local ok2, pkt = pcall(textutils.unserialiseJSON, p4)
-                if ok2 and type(pkt) == "table"
-                    and pkt.type == "INVOICE"
-                    and pkt.to   == address then
-                    invoicePopup(pkt, secretKey, address, nodes)
-                    draw()
+        end,
+        
+        -- Heartbeat loop
+        function()
+            while true do
+                sleep(60)
+                comms.heartbeatAll(secretKey, address, nodes)
+            end
+        end,
+        
+        -- Invoice listener (network messages)
+        function()
+            while true do
+                local ev, p1, p2, p3, p4 = os.pullEvent("modem_message")
+                -- Only handle plaintext INVOICE broadcasts on SHOP_CHANNEL (1338).
+                if p2 == 1338 and type(p4) == "string" and p4:sub(1,1) == "{" then
+                    local ok2, pkt = pcall(textutils.unserialiseJSON, p4)
+                    if ok2 and type(pkt) == "table"
+                        and pkt.type == "INVOICE"
+                        and pkt.to   == address then
+                        invoicePopup(pkt, secretKey, address, nodes)
+                        UI:setPage(dashboardPage)
+                        updateDashboard()
+                    end
                 end
             end
-
-        elseif ev == "timer" then
-            comms.heartbeatAll(secretKey, address, nodes)
-            os.startTimer(60)
+        end,
+        
+        -- UI event loop
+        function()
+            UI:pullEvents()
+        end,
+        
+        -- Keyboard shortcuts (legacy support)
+        function()
+            while true do
+                local _, key = os.pullEvent("key")
+                if key == keys.r then
+                    refreshBalance()
+                    updateDashboard()
+                elseif key == keys.s then
+                    dashboardPage:eventHandler({type = 'action_send'})
+                elseif key == keys.e then
+                    dashboardPage:eventHandler({type = 'action_export'})
+                elseif key == keys.n then
+                    dashboardPage:eventHandler({type = 'action_nodes'})
+                elseif key == keys.v then
+                    dashboardPage:eventHandler({type = 'action_vault'})
+                elseif key == keys.u then
+                    dashboardPage:eventHandler({type = 'action_update'})
+                elseif key == keys.l then
+                    dashboardPage:eventHandler({type = 'action_logout'})
+                end
+            end
         end
-    end
+    )
 end
 
 -- ── Boot ──────────────────────────────────────────────────────────────────────

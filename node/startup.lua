@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "4.8"
+local NODE_VERSION    = "4.9"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -687,6 +687,7 @@ local function updateDashboard()
     dashboardPage.upgradesPanel.upgradesList:setValues(upgradeData)
     
     dashboardPage:draw()
+    dashboardPage:sync()
 end
 
 -- ── Status display ───────────────────────────────────────────────────────────
@@ -1132,13 +1133,14 @@ local function main()
     -- Create Opus UI dashboard
     local nodeUILib = require('node_ui')
     dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
-    nodeUI = UI.Page({
-        dashboardPage
-    })
-    UI:setPage(dashboardPage)
     
-    -- Initial dashboard render
-    updateDashboard()
+    -- Set as active page and do initial render
+    UI:setPage(dashboardPage)
+    dashboardPage:draw()
+    dashboardPage:sync()
+    
+    print("[UI] Dashboard ready!")
+    os.sleep(1)
 
     -- Run all coroutines in parallel; all loop forever.
     parallel.waitForAll(

@@ -1,7 +1,7 @@
 ---
 description: "Use as the lead/orchestrator for any non-trivial AmiCoin task. Plans the work, then delegates to Builder (implement), Auditor (review, read-only), and Crash Handler (fix runtime failures). Trigger phrases: plan this, coordinate, handle end-to-end, orchestrate, multi-step, do everything for X."
 name: "Mastermind"
-tools: [agent, todo, read, search]
+tools: [agent, todo, read, search, web]
 model: ['Claude Sonnet 4.5 (copilot)', 'GPT-5 (copilot)']
 argument-hint: "Describe the overall goal"
 agents: [Builder, Auditor, Crash Handler]

@@ -1,7 +1,7 @@
 ---
 description: "Use when auditing the AmiCoin codebase: doc-vs-code mismatches, dead-code detection, ranked bug reports, security review, money-math correctness. Read-only — produces reports, does not change logic. Trigger phrases: audit, review, find bugs, dead code, doc mismatch, security review, check correctness."
 name: "Auditor"
-tools: [read, search, execute]
+tools: [read, search, execute, web]
 model: ['Claude Sonnet 4.5 (copilot)', 'GPT-5 (copilot)']
 argument-hint: "What to audit (file, subsystem, or whole project)"
 user-invocable: true

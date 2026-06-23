@@ -6,7 +6,7 @@
 --   2. Start the Proof-of-Uptime miner daemon in a parallel coroutine.
 --   3. Listen for incoming XTEA-encrypted packets on the mesh channel.
 --   4. Dispatch verified commands: HEARTBEAT, BALANCE, TRANSFER.
---   5. Display a live status dashboard on the terminal.
+--   5. Display a live status dashboard with Opus UI framework (demon theme).
 --
 -- Packet format (JSON, encrypted with sender's secret key, 128-bit):
 --   { cmd="HEARTBEAT", from="<64-hex address>" }
@@ -21,10 +21,21 @@
 -- that can decrypt/encrypt with the correct key effectively proves ownership.
 -- (For a production chain you would layer a Schnorr/EdDSA signature on top.)
 
+-- Core services
 local xtea     = require("xtea")
 local ledger   = require("ledger")
 local miner    = require("miner_daemon")
 local upgrades = require("upgrades")
+
+-- Opus UI framework
+local UI       = require('ami.lib.ui.ui')
+local Theme    = require('ami.lib.ui.theme')
+local Event    = require('ami.lib.ui.event')
+require('ami.lib.ui.widgets.fan')
+require('ami.lib.ui.widgets.gauge')
+
+-- Set demon theme
+Theme.setTheme('demon')
 
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
@@ -586,11 +597,104 @@ local function selfUpdate()
     end
 end
 
+-- ── Opus UI Dashboard ───────────────────────────────────────────────────────
+local dashboardPage = nil  -- Will be created in main()
+local nodeUI = nil         -- Main UI page
+
+local function updateDashboard()
+    if not dashboardPage then return end
+    
+    -- Query current state
+    local active = miner.getActive()
+    local snap   = ledger.snapshot()
+    local total  = 0
+    for _, v in pairs(snap) do total = total + v end
+    local baseRate = miner.getCurrentRate()
+    local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
+    local amiPerHr = effRate * 120 / 1000000  -- 120 ticks/hr
+    
+    -- Update stats
+    dashboardPage.infoPanel.activeWalletsValue.value = tostring(#active)
+    dashboardPage.infoPanel.supplyValue.value = string.format("%.6f AMI", total / 1000000)
+    dashboardPage.infoPanel.supplyuAMI.value = string.format("(%d uAMI)", total)
+    
+    -- Mining rate gauge
+    local maxRate = 200  -- Max theoretical rate with all upgrades
+    dashboardPage.infoPanel.miningRateGauge.value = math.min(effRate, maxRate)
+    dashboardPage.infoPanel.miningRateText.value = string.format("%d uAMI/tk", effRate)
+    dashboardPage.infoPanel.ratePerHour.value = string.format("%.4f AMI/hr", amiPerHr)
+    
+    -- Thermal display
+    local netTemp = upgrades.computeNetTemp(true)
+    local _, shutoff, _ = upgrades.computeThermalFactor()
+    local tempColor = colors.lime
+    local tempLabel = "OK"
+    
+    if shutoff then
+        tempColor = colors.red
+        tempLabel = "THROTTLED"
+    elseif netTemp >= 200 then
+        tempColor = colors.orange
+        tempLabel = "HOT"
+    elseif netTemp >= 100 then
+        tempColor = colors.yellow
+        tempLabel = "WARM"
+    end
+    
+    dashboardPage.thermalPanel.tempValue.value = string.format("%dC %s", netTemp, tempLabel)
+    dashboardPage.thermalPanel.tempValue.textColor = tempColor
+    
+    -- Update fan widget
+    local coolingLevel = upgrades.getAirCoolerLevel()
+    if coolingLevel > 0 then
+        dashboardPage.thermalPanel.fan:setLevel(coolingLevel)
+        if not dashboardPage.thermalPanel.fan.spinning then
+            dashboardPage.thermalPanel.fan:start()
+        end
+        dashboardPage.thermalPanel.coolingLabel.value = "Cooling: Level " .. coolingLevel
+        dashboardPage.thermalPanel.coolingLabel.textColor = colors.lime
+    else
+        if dashboardPage.thermalPanel.fan.spinning then
+            dashboardPage.thermalPanel.fan:stop()
+        end
+        dashboardPage.thermalPanel.coolingLabel.value = "Cooling: None"
+        dashboardPage.thermalPanel.coolingLabel.textColor = colors.gray
+    end
+    
+    -- Lag indicator
+    local lag = miner.getLagFactor()
+    if lag < 0.7 then
+        dashboardPage.infoPanel.lagValue.value = string.format("~%.0f%% (lagging)", lag * 100)
+        dashboardPage.infoPanel.lagValue.textColor = colors.red
+    else
+        dashboardPage.infoPanel.lagValue.value = "OK"
+        dashboardPage.infoPanel.lagValue.textColor = colors.lime
+    end
+    
+    -- Update upgrades list
+    local upgradeData = {}
+    local upLines = upgrades.getActiveSummary()
+    for _, line in ipairs(upLines) do
+        -- Parse "Name (LvN)" format
+        local name, level = line:match("^(.+)%s+%((.+)%)$")
+        if name and level then
+            table.insert(upgradeData, {
+                name = name:gsub("^%s*(.-)%s*$", "%1"),
+                level = level,
+            })
+        end
+    end
+    dashboardPage.upgradesPanel.upgradesList:setValues(upgradeData)
+    
+    dashboardPage:draw()
+end
+
 -- ── Status display ───────────────────────────────────────────────────────────
 local function statusLoop()
     while true do
         os.sleep(30)
         ledger.flush()  -- flush any cached ledger writes (Smart Cache safety net)
+        updateDashboard()  -- Update UI
         local active = miner.getActive()
         local snap   = ledger.snapshot()
         local total  = 0
@@ -957,6 +1061,7 @@ end
 
 -- ── Main ─────────────────────────────────────────────────────────────────────
 local function main()
+    -- Boot message (briefly shown before UI takes over)
     term.setCursorPos(1, 1)
     print("===========================================")
     print("  AmiCoin Node v" .. NODE_VERSION)
@@ -1002,6 +1107,7 @@ local function main()
     -- Smart Cache Aggregator: configure ledger flush interval from upgrade level
     ledger.setFlushDelay(upgrades.getSmartCacheDelay())
 
+    print("[Tip] Initializing Opus UI dashboard...")
     print("[Tip] Press U to update  |  P for Upgrade Shop  |  T for AMIdecode  |  A for Admin")
     do
         local ok, res = pcall(http.get,
@@ -1020,6 +1126,19 @@ local function main()
     end
     local monAttached = peripheral.find("monitor") ~= nil
     print("[Mon] Monitor: " .. (monAttached and "found" or "not found"))
+    
+    os.sleep(2)  -- Brief pause to read boot messages
+    
+    -- Create Opus UI dashboard
+    local nodeUILib = require('node_ui')
+    dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
+    nodeUI = UI.Page({
+        dashboardPage
+    })
+    UI:setPage(dashboardPage)
+    
+    -- Initial dashboard render
+    updateDashboard()
 
     -- Run all coroutines in parallel; all loop forever.
     parallel.waitForAll(
@@ -1060,12 +1179,35 @@ local function main()
             end
         end,
         function()
+            -- UI event loop (processes mouse clicks, draws, etc.)
+            UI:pullEvents()
+        end,
+        function()
+            -- Keyboard shortcuts (intercept key events before UI processes them)
             while true do
                 local _, key = os.pullEvent("key")
-                if key == keys.u then selfUpdate()
-                elseif key == keys.p then upgrades.runUpgradeFlow(router)
-                elseif key == keys.t then upgrades.runAmdMinigame()
-                elseif key == keys.a then adminMenu(setupPassword)
+                if key == keys.u then 
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    selfUpdate()
+                elseif key == keys.p then 
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    upgrades.runUpgradeFlow(router)
+                    UI:setPage(dashboardPage)  -- Return to UI after shop
+                    updateDashboard()
+                elseif key == keys.t then 
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    upgrades.runAmdMinigame()
+                    UI:setPage(dashboardPage)  -- Return to UI after game
+                    updateDashboard()
+                elseif key == keys.a then 
+                    term.clear()
+                    term.setCursorPos(1, 1)
+                    adminMenu(setupPassword)
+                    UI:setPage(dashboardPage)  -- Return to UI after admin
+                    updateDashboard()
                 end
             end
         end

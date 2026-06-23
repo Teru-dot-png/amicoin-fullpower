@@ -114,6 +114,24 @@ themes.void_red = {
     buttonFocusFg = colors.white,
 }
 
+-- Demon theme: Professional red/crimson for AMI (the demon currency)
+-- Primary red UI with dark backgrounds, lime success indicators
+themes.demon = {
+    background = colors.black,
+    panel = colors.gray,
+    accent = colors.red,
+    ok = colors.lime,
+    warn = colors.yellow,
+    danger = colors.orange,
+    text = colors.white,
+    textDim = colors.lightGray,
+    border = colors.red,
+    buttonBg = colors.red,
+    buttonFg = colors.white,
+    buttonFocusBg = colors.orange,
+    buttonFocusFg = colors.white,
+}
+
 --- Register a new theme
 -- @param name string Theme name
 -- @param colors table Color table with all required keys

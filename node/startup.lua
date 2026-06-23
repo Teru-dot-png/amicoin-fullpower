@@ -31,6 +31,7 @@ local upgrades = require("upgrades")
 local UI       = require('ami.lib.ui.ui')
 local Theme    = require('ami.lib.ui.theme')
 local Event    = require('ami.lib.ui.event')
+local Util     = require('ami.lib.ui.util')
 require('ami.lib.ui.widgets.fan')
 require('ami.lib.ui.widgets.gauge')
 
@@ -69,7 +70,7 @@ local function setUIActive(on) uiActive = on end
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "7.0"
+local NODE_VERSION    = "7.1"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -630,18 +631,29 @@ end
 local dashboardPage = nil  -- Will be created in main()
 local nodeUI = nil         -- Main UI page
 
--- Live "Node Log" ring buffer shown in the dashboard's right panel. Every
--- print() made while the dashboard is active is routed here (see logSink).
-local LOG_LINES = 14
-local logBuf    = {}
+-- Live "Node Log" shown in the dashboard's right panel. Every print() made while
+-- the dashboard is active is routed here (see logSink). Raw messages are kept and
+-- WORD-WRAPPED to the panel width on each update, then the last LOG_LINES wrapped
+-- lines are shown (newest at the bottom) - so long lines wrap instead of truncate.
+local LOG_LINES   = 14
+local LOG_WIDTH   = 22          -- inner width of the log panel (cols 2..23)
+local LOG_RAW_MAX = 80          -- raw messages retained before wrapping
+local logRaw      = {}
 local function nodeLog(line)
-    line = tostring(line)
-    logBuf[#logBuf + 1] = line
-    while #logBuf > LOG_LINES do table.remove(logBuf, 1) end
+    logRaw[#logRaw + 1] = tostring(line)
+    while #logRaw > LOG_RAW_MAX do table.remove(logRaw, 1) end
     if dashboardPage and uiActive and dashboardPage.logPanel then
+        -- Wrap every retained message, flatten, then show the last LOG_LINES.
+        local wrapped = {}
+        for _, msg in ipairs(logRaw) do
+            for _, wl in ipairs(Util.wordWrap(msg, LOG_WIDTH)) do
+                wrapped[#wrapped + 1] = wl
+            end
+        end
+        local startIdx = math.max(1, #wrapped - LOG_LINES + 1)
         for i = 1, LOG_LINES do
             local w = dashboardPage.logPanel['logLine' .. i]
-            if w then w.value = logBuf[i] or '' end
+            if w then w.value = wrapped[startIdx + i - 1] or '' end
         end
         dashboardPage.logPanel:draw()
         dashboardPage.logPanel:sync()
@@ -1305,37 +1317,37 @@ local function main()
                 end
             end
         end,
-        -- Keyboard shortcuts (U/P/T/A). Sub-flows take over the terminal,
-        -- then return to the dashboard via setPage(). setUIActive(false) restores
-        -- normal text output for the sub-flow; (true) re-silences on return.
+        -- Footer actions (U/P/T/A keys AND footer-button clicks). Footer buttons
+        -- queue an 'ami_action' event (see node_ui), so mouse and keyboard share
+        -- ONE dispatch path here. Sub-flows take over the terminal, then return to
+        -- the dashboard via setPage(); setUIActive toggles text vs UI output.
         function()
-            while true do
-                local _, key = os.pullEvent("key")
-                if key == keys.u then
-                    setUIActive(false)
-                    term.clear(); term.setCursorPos(1, 1)
-                    selfUpdate()
-                elseif key == keys.p then
-                    setUIActive(false)
-                    term.clear(); term.setCursorPos(1, 1)
+            local function runAction(action)
+                setUIActive(false)
+                term.clear(); term.setCursorPos(1, 1)
+                if action == 'u' then
+                    selfUpdate()                 -- reboots on success
+                elseif action == 'p' then
                     upgrades.runUpgradeFlow(router)
-                    UI:setPage(dashboardPage)
-                    setUIActive(true)
-                    updateDashboard()
-                elseif key == keys.t then
-                    setUIActive(false)
-                    term.clear(); term.setCursorPos(1, 1)
+                elseif action == 't' then
                     upgrades.runAmdMinigame()
-                    UI:setPage(dashboardPage)
-                    setUIActive(true)
-                    updateDashboard()
-                elseif key == keys.a then
-                    setUIActive(false)
-                    term.clear(); term.setCursorPos(1, 1)
+                elseif action == 'a' then
                     adminMenu(setupPassword)
-                    UI:setPage(dashboardPage)
-                    setUIActive(true)
-                    updateDashboard()
+                end
+                UI:setPage(dashboardPage)
+                setUIActive(true)
+                updateDashboard()
+            end
+            while true do
+                local ev, a = os.pullEvent()
+                if ev == 'key' then
+                    if     a == keys.u then runAction('u')
+                    elseif a == keys.p then runAction('p')
+                    elseif a == keys.t then runAction('t')
+                    elseif a == keys.a then runAction('a')
+                    end
+                elseif ev == 'ami_action' then
+                    runAction(a)
                 end
             end
         end

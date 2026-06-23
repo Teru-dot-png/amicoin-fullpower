@@ -619,7 +619,42 @@ function Util.widthify(s, len, align)
 	return s .. _srep(' ', len - slen)
 end
 
--- http://snippets.luacode.org/?p=snippets/trim_whitespace_from_string_76
+-- Word-wrap `text` to `width` columns, returning a list of lines. Breaks on
+-- whitespace; words longer than `width` are hard-split. Embedded newlines are
+-- honoured. This is the wrapping primitive the UI lacked (widthify only
+-- truncates/pads) and is used to pre-wrap log lines before feeding a list.
+function Util.wordWrap(text, width)
+	local lines = {}
+	text = tostring(text or '')
+	if not width or width < 1 then width = 1 end
+	for rawline in (text .. "\n"):gmatch("(.-)\n") do
+		if #rawline == 0 then
+			lines[#lines + 1] = ''
+		else
+			local cur = ''
+			for word in rawline:gmatch("%S+") do
+				-- hard-split any single word longer than the column width
+				while #word > width do
+					if #cur > 0 then lines[#lines + 1] = cur; cur = '' end
+					lines[#lines + 1] = _ssub(word, 1, width)
+					word = _ssub(word, width + 1)
+				end
+				if #cur == 0 then
+					cur = word
+				elseif #cur + 1 + #word <= width then
+					cur = cur .. ' ' .. word
+				else
+					lines[#lines + 1] = cur
+					cur = word
+				end
+			end
+			if #cur > 0 then lines[#lines + 1] = cur end
+		end
+	end
+	return lines
+end
+
+
 function Util.trim(s)
 	return s:find('^%s*$') and '' or s:match('^%s*(.*%S)')
 end

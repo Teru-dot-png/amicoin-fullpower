@@ -7,6 +7,16 @@ require('ami.lib.ui.widgets.fan')
 require('ami.lib.ui.widgets.gauge')
 local colors = _G.colors
 
+-- Footer button event -> action key. The page eventHandler turns a button click
+-- into os.queueEvent('ami_action', <key>), which the node's keyboard thread also
+-- listens for, so mouse and the U/P/T/A accelerators share ONE dispatch path.
+local FOOTER_ACTIONS = {
+    act_update = 'u',
+    act_shop   = 'p',
+    act_decode = 't',
+    act_admin  = 'a',
+}
+
 local function createDashboard(nodeKey, nodeVersion)
     -- Clean tiled layout for a 51x19 advanced terminal (no overlapping panels):
     --   row 1        TitleBar
@@ -128,17 +138,45 @@ local function createDashboard(nodeKey, nodeVersion)
             return UI.Window(p)
         end)(),
 
-        statusBar = UI.StatusBar({
+        -- Footer: real clickable Opus Buttons (row 19). Each fires a distinct
+        -- event the page maps to an 'ami_action' os event; the U/P/T/A keyboard
+        -- accelerators run the same actions via the node's keyboard thread.
+        footerBar = UI.Window({
+            x = 1, y = 19, width = 51, height = 1,
             backgroundColor = colors.red,
-            textColor = colors.white,
-            columns = {
-                { key = 'message', width = -1 },
-            },
-            values = {
-                message = '[U]pdate [P]grades [T]AMIdecode [A]dmin',
-            },
+
+            btnUpdate = UI.Button({
+                x = 1, y = 1, width = 13, text = '[U]pdate', event = 'act_update',
+                backgroundColor = colors.red, textColor = colors.white,
+                backgroundFocusColor = colors.orange, textFocusColor = colors.white,
+            }),
+            btnShop = UI.Button({
+                x = 14, y = 1, width = 12, text = '[P]Shop', event = 'act_shop',
+                backgroundColor = colors.red, textColor = colors.white,
+                backgroundFocusColor = colors.orange, textFocusColor = colors.white,
+            }),
+            btnDecode = UI.Button({
+                x = 26, y = 1, width = 13, text = '[T]Decode', event = 'act_decode',
+                backgroundColor = colors.red, textColor = colors.white,
+                backgroundFocusColor = colors.orange, textFocusColor = colors.white,
+            }),
+            btnAdmin = UI.Button({
+                x = 39, y = 1, width = 13, text = '[A]dmin', event = 'act_admin',
+                backgroundColor = colors.red, textColor = colors.white,
+                backgroundFocusColor = colors.orange, textFocusColor = colors.white,
+            }),
         }),
     })
+
+    -- Route footer button clicks into the shared 'ami_action' dispatch. Falls
+    -- through to the default Page handler (focus traversal) for everything else.
+    page.eventHandler = function(self, event)
+        if event.type and FOOTER_ACTIONS[event.type] then
+            os.queueEvent('ami_action', FOOTER_ACTIONS[event.type])
+            return true
+        end
+        return UI.Page.eventHandler(self, event)
+    end
 
     return page
 end

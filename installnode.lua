@@ -1,4 +1,4 @@
--- installnode.lua  v3.8
+-- installnode.lua  v3.9
 -- AmiCoin Node Installer for CC:Tweaked Advanced Computer + Ender Router.
 -- Supports Hard Update, Force Update, Clean Install, and Fresh Install.
 --
@@ -10,7 +10,7 @@
 --   Clean Install  : Wipes /data/ and all .lua files then fresh install.
 --   Fresh Install  : (auto, when node absent) standard first-time setup.
 
-local VERSION   = "3.8"
+local VERSION   = "3.9"
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
@@ -48,6 +48,8 @@ local FILES = {
     { src = "/ami/lib/ui/components/TitleBar.lua",      dst = "/ami/lib/ui/components/TitleBar.lua"      },
     { src = "/ami/lib/ui/components/Text.lua",          dst = "/ami/lib/ui/components/Text.lua"          },
     { src = "/ami/lib/ui/components/StatusBar.lua",     dst = "/ami/lib/ui/components/StatusBar.lua"     },
+    { src = "/ami/lib/ui/components/Grid.lua",          dst = "/ami/lib/ui/components/Grid.lua"          },
+    { src = "/ami/lib/ui/components/ScrollBar.lua",     dst = "/ami/lib/ui/components/ScrollBar.lua"     },
     { src = "/ami/lib/ui/components/ScrollingGrid.lua", dst = "/ami/lib/ui/components/ScrollingGrid.lua" },
 }
 

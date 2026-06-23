@@ -1210,7 +1210,7 @@ local function loadComponents()
 		-- Vendored version: use loadfile with custom environment
 		local componentPath = '/ami/lib/ui/components/' .. name .. '.lua'
 		local env = setmetatable({ UI = UI }, { __index = _G })
-		local fn, err = loadfile(componentPath, env)
+		local fn, err = loadfile(componentPath, 't', env)
 		if not fn then
 			error('Failed to load component ' .. name .. ': ' .. tostring(err))
 		end

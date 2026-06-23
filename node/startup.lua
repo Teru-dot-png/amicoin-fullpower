@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "4.9"
+local NODE_VERSION    = "5.0"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -1130,23 +1130,38 @@ local function main()
     
     os.sleep(2)  -- Brief pause to read boot messages
     
-    -- Create Opus UI dashboard
+    print("[UI] Loading node_ui module...")
     local nodeUILib = require('node_ui')
+    
+    print("[UI] Creating dashboard page...")
     dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
     
-    -- Set as active page and do initial render
+    print("[UI] Setting active page...")
     UI:setPage(dashboardPage)
+    
+    print("[UI] Drawing dashboard...")
     dashboardPage:draw()
+    
+    print("[UI] Syncing to device...")
     dashboardPage:sync()
     
     print("[UI] Dashboard ready!")
     os.sleep(1)
 
-    -- Run all coroutines in parallel; all loop forever.
+    print("[Parallel] Starting background threads...")
     parallel.waitForAll(
-        function() miner.run() end,
-        function() statusLoop() end,
-        function() UI:pullEvents() end,
+        function() 
+            print("[Miner] Thread started")
+            miner.run() 
+        end,
+        function() 
+            print("[Status] Thread started")
+            statusLoop() 
+        end,
+        function() 
+            print("[UI] Event loop started")
+            UI:pullEvents() 
+        end,
         function()
             print("[Net] Listening for wallet packets...")
             while true do

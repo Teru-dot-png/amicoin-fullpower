@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "5.1"
+local NODE_VERSION    = "5.2"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"
@@ -1136,17 +1136,30 @@ local function main()
     print("[UI] Creating dashboard page...")
     dashboardPage = nodeUILib.createDashboard(nodeKey, NODE_VERSION)
     
-    print("[UI] Setting active page...")
-    UI:setActivePage(dashboardPage)
+    print("[UI] Attempting UI initialization with 5-second timeout...")
+    local uiSuccess = false
+    local function tryUI()
+        UI:setActivePage(dashboardPage)
+        dashboardPage:enable()
+        dashboardPage:draw()
+        uiSuccess = true
+    end
     
-    print("[UI] Enabling dashboard...")
-    dashboardPage:enable()
+    local function timeout()
+        os.sleep(5)
+    end
     
-    print("[UI] Drawing dashboard...")
-    dashboardPage:draw()
+    parallel.waitForAny(tryUI, timeout)
     
-    print("[UI] Dashboard ready (skipped sync to avoid hang)!")
-    os.sleep(1)
+    if uiSuccess then
+        print("[UI] Dashboard ready!")
+    else
+        print("[UI] TIMEOUT - falling back to text mode")
+        print("[UI] (Opus UI is too slow for this computer)")
+        -- Clear any partial UI render
+        term.clear()
+        term.setCursorPos(1, 1)
+    end
 
     print("[Parallel] Starting background threads...")
     parallel.waitForAll(

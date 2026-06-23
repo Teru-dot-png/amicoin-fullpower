@@ -199,7 +199,7 @@ function page1:animateGauges()
 end
 
 -------------------------------------------
--- PAGE 2: Fan + Card
+-- PAGE 2: Parametric Fan + Card
 -------------------------------------------
 page2 = UI.Page {
     backgroundColor = colors.black,
@@ -208,56 +208,111 @@ page2 = UI.Page {
     titleText = UI.Text {
         x = 2,
         y = 2,
-        value = "Page 2: Animated Widgets",
+        value = "Page 2: Parametric Fan + Card",
         textColor = colors.yellow,
     },
     
     subtitleText = UI.Text {
         x = 2,
         y = 3,
-        value = "Fan + Card widgets",
+        value = "Math-based sine-wave rendering",
         textColor = colors.lightGray,
     },
     
-    -- Fan widget
+    -- Fan widget (larger, starts at level 1)
     fanLabel = UI.Text {
         x = 2,
         y = 5,
-        value = "Cooling Fan:",
+        value = "Air Cooler (Level 1):",
         textColor = colors.white,
     },
     fan = UI.Fan {
-        x = 16,
-        y = 5,
+        x = 2,
+        y = 6,
+        level = 1,
         spinning = false,
         color = colors.lightBlue,
     },
     
-    -- Fan controls
-    fanStartBtn = UI.Button {
+    -- Fan stats display
+    fanStatsLabel = UI.Text {
         x = 2,
-        y = 9,
-        text = "Start Fan",
+        y = 18,
+        value = "Blades: 2  Radius: 5  Twist: 0.0  Speed: 1.0x",
+        textColor = colors.lightGray,
+    },
+    
+    -- Fan controls row 1
+    fanStartBtn = UI.Button {
+        x = 24,
+        y = 7,
+        text = "Start",
         event = 'start_fan',
     },
     
     fanStopBtn = UI.Button {
-        x = 15,
-        y = 9,
-        text = "Stop Fan",
+        x = 32,
+        y = 7,
+        text = "Stop",
         event = 'stop_fan',
     },
     
-    -- Card widget
+    -- Level controls row 2
+    levelLabel = UI.Text {
+        x = 24,
+        y = 9,
+        value = "Level:",
+        textColor = colors.white,
+    },
+    levelDownBtn = UI.Button {
+        x = 32,
+        y = 9,
+        text = "-",
+        event = 'level_down',
+    },
+    levelUpBtn = UI.Button {
+        x = 35,
+        y = 9,
+        text = "+",
+        event = 'level_up',
+    },
+    levelMaxBtn = UI.Button {
+        x = 38,
+        y = 9,
+        text = "Max",
+        event = 'level_max',
+    },
+    
+    -- Direction control row 3
+    dirLabel = UI.Text {
+        x = 24,
+        y = 11,
+        value = "Spin:",
+        textColor = colors.white,
+    },
+    dirCWBtn = UI.Button {
+        x = 32,
+        y = 11,
+        text = "CW",
+        event = 'dir_cw',
+    },
+    dirCCWBtn = UI.Button {
+        x = 37,
+        y = 11,
+        text = "CCW",
+        event = 'dir_ccw',
+    },
+    
+    -- Card widget (moved down)
     cardLabel = UI.Text {
-        x = 30,
-        y = 5,
+        x = 24,
+        y = 14,
         value = "Playing Card:",
         textColor = colors.white,
     },
     card = UI.Card {
-        x = 30,
-        y = 6,
+        x = 24,
+        y = 15,
         suit = 'heart',
         rank = 'A',
         faceUp = true,
@@ -265,31 +320,30 @@ page2 = UI.Page {
     
     -- Card controls
     flipBtn = UI.Button {
-        x = 30,
-        y = 12,
+        x = 32,
+        y = 15,
         text = "Flip",
         event = 'flip_card',
     },
     
     nextCardBtn = UI.Button {
-        x = 38,
-        y = 12,
+        x = 32,
+        y = 17,
         text = "Next",
         event = 'next_card',
     },
     
-    -- Back button
+    -- Navigation
     backBtn = UI.Button {
         x = 2,
-        y = 15,
+        y = 20,
         text = "Back",
         event = 'prev_page',
     },
     
-    -- Theme button
     themeBtn = UI.Button {
-        x = 15,
-        y = 15,
+        x = 10,
+        y = 20,
         text = "Themes",
         event = 'show_themes',
     },
@@ -300,12 +354,56 @@ local suits = { 'spade', 'heart', 'diamond', 'club' }
 local ranks = { 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K' }
 local cardIndex = 1
 
+-- Fan preset data for display
+local FAN_PRESETS = {
+    [1]  = { blades = 2, radius = 5,  twist = 0.0,  speed = 1.0 },
+    [2]  = { blades = 3, radius = 6,  twist = 0.1,  speed = 1.2 },
+    [3]  = { blades = 3, radius = 7,  twist = 0.15, speed = 1.4 },
+    [4]  = { blades = 4, radius = 8,  twist = 0.2,  speed = 1.6 },
+    [5]  = { blades = 4, radius = 9,  twist = 0.25, speed = 1.8 },
+    [6]  = { blades = 5, radius = 10, twist = 0.3,  speed = 2.0 },
+    [7]  = { blades = 5, radius = 11, twist = 0.35, speed = 2.2 },
+    [8]  = { blades = 6, radius = 12, twist = 0.4,  speed = 2.5 },
+    [9]  = { blades = 6, radius = 13, twist = 0.45, speed = 2.8 },
+    [10] = { blades = 7, radius = 14, twist = 0.5,  speed = 3.0 },
+}
+
+function page2:updateFanStats()
+    local lv = self.fan.level
+    local p = FAN_PRESETS[lv]
+    self.fanLabel.value = string.format("Air Cooler (Level %d):", lv)
+    self.fanStatsLabel.value = string.format("Blades: %d  Radius: %d  Twist: %.2f  Speed: %.1fx", 
+        p.blades, p.radius, p.twist, p.speed)
+    self.fanLabel:draw()
+    self.fanStatsLabel:draw()
+end
+
 function page2:eventHandler(event)
     if event.type == 'start_fan' then
         self.fan:start()
         return true
     elseif event.type == 'stop_fan' then
         self.fan:stop()
+        return true
+    elseif event.type == 'level_down' then
+        local newLevel = math.max(1, self.fan.level - 1)
+        self.fan:setLevel(newLevel)
+        self:updateFanStats()
+        return true
+    elseif event.type == 'level_up' then
+        local newLevel = math.min(10, self.fan.level + 1)
+        self.fan:setLevel(newLevel)
+        self:updateFanStats()
+        return true
+    elseif event.type == 'level_max' then
+        self.fan:setLevel(10)
+        self:updateFanStats()
+        return true
+    elseif event.type == 'dir_cw' then
+        self.fan:setDirection(1)
+        return true
+    elseif event.type == 'dir_ccw' then
+        self.fan:setDirection(-1)
         return true
     elseif event.type == 'flip_card' then
         self.card:flip()

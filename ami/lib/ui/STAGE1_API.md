@@ -450,7 +450,32 @@ healthBar:setValue(20)  -- Bar turns red (<33%)
 
 ### Fan (`widgets/fan.lua`)
 
-Animated cooling fan using rotating block glyphs.
+**Parametric sine-wave cooling fan** with upgrade level scaling. Replaces simple 4-frame animation with mathematical rendering using blade count, radius, twist (spiral curve), and speed.
+
+#### Core Algorithm
+
+The fan is rendered using a parametric sine-wave equation applied to each cell:
+
+```
+s = sin(BLADES × angle + TWIST × distance + rotation)
+```
+
+Where:
+- **BLADES**: Number of fan blades (controls frequency)
+- **TWIST**: Spiral curve factor (0 = straight spokes, >0 = curved blades)
+- **distance**: Cell's distance from hub `√(dx² + dy²)`
+- **angle**: Direction from hub `atan2(dy, dx)`
+- **rotation**: Current rotation angle (increments each frame)
+
+The sine value `s` maps to shade characters:
+- `s > 0.55`: █ (full block) - solid blade
+- `s > 0.15`: ▓ (dark shade) - blade edge
+- `s > -0.2`: ▒ (medium shade) - blade falloff
+- `s ≤ -0.2`: space - air/gap
+
+Special cases:
+- `distance < 0.1 × RADIUS`: Force solid (█) - hub
+- `distance > RADIUS`: Force blank - outside disc
 
 #### Constructor
 
@@ -458,23 +483,51 @@ Animated cooling fan using rotating block glyphs.
 local fan = UI.Fan {
     x = 10,
     y = 5,
-    width = 3,
-    height = 3,
+    level = 1,         -- Air cooler upgrade level (1-10)
     spinning = false,  -- Start stopped
-    fps = 5,           -- Rotation speed (frames/second)
-    color = colors.lightGray,
+    fps = 30,          -- Animation speed (1-60 FPS)
+    color = colors.lightBlue,
+    direction = 1,     -- +1 = clockwise, -1 = counter-clockwise
 }
 ```
+
+Dimensions are auto-calculated from level preset:
+- `width = radius × 2 × ASPECT + 1` (ASPECT = 2.0 for char cell ratio)
+- `height = radius × 2 + 1`
 
 #### Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `width` | number | 3 | Widget width |
-| `height` | number | 3 | Widget height |
+| `level` | number | 1 | Upgrade level (1-10), sets preset |
 | `spinning` | boolean | false | Is fan spinning |
-| `fps` | number | 5 | Animation speed (1-30 FPS) |
+| `fps` | number | 30 | Animation speed (1-60 FPS) |
 | `color` | color | lightGray | Fan blade color |
+| `direction` | number | 1 | Rotation direction (+1/-1) |
+| `blades` | number | 2 | Blade count (from preset) |
+| `radius` | number | 5 | Fan radius in cells (from preset) |
+| `twist` | number | 0.0 | Spiral factor (from preset) |
+| `speed` | number | 1.0 | Rotation speed multiplier (from preset) |
+| `rotation` | number | 0 | Current angle in radians (internal) |
+
+#### Upgrade Presets
+
+Each level defines blade count, radius, twist, and speed:
+
+| Level | Blades | Radius | Twist | Speed | Size (cols × rows) |
+|-------|--------|--------|-------|-------|-------------------|
+| 1     | 2      | 5      | 0.0   | 1.0x  | 21 × 11           |
+| 2     | 3      | 6      | 0.1   | 1.2x  | 25 × 13           |
+| 3     | 3      | 7      | 0.15  | 1.4x  | 29 × 15           |
+| 4     | 4      | 8      | 0.2   | 1.6x  | 33 × 17           |
+| 5     | 4      | 9      | 0.25  | 1.8x  | 37 × 19           |
+| 6     | 5      | 10     | 0.3   | 2.0x  | 41 × 21           |
+| 7     | 5      | 11     | 0.35  | 2.2x  | 45 × 23           |
+| 8     | 6      | 12     | 0.4   | 2.5x  | 49 × 25           |
+| 9     | 6      | 13     | 0.45  | 2.8x  | 53 × 27           |
+| 10    | 7      | 14     | 0.5   | 3.0x  | 57 × 29           |
+
+Higher levels produce larger, faster, more complex fans with curved blades.
 
 #### Methods
 
@@ -486,18 +539,71 @@ fan:start()
 ```
 
 ##### `fan:stop()`
-Stop the fan animation.
+Stop the fan animation (renders static stopped state).
 
 ```lua
 fan:stop()
 ```
 
 ##### `fan:setSpeed(fps)`
-Change animation speed (clamped 1-30 FPS).
+Change animation speed (clamped 1-60 FPS).
 
 ```lua
-fan:setSpeed(10)  -- 10 frames per second
+fan:setSpeed(45)  -- Smooth 45 FPS
 ```
+
+##### `fan:setLevel(level)`
+Set upgrade level (1-10) and apply preset. Auto-recalculates dimensions and redraws.
+
+```lua
+fan:setLevel(5)  -- 4 blades, radius 9, twisted
+```
+
+**Parameters:**
+- `level` (number): Upgrade level (clamped to 1-10)
+
+**Effect:**
+- Updates `blades`, `radius`, `twist`, `speed` from preset
+- Recalculates `width` and `height`
+- Redraws if spinning
+
+##### `fan:setDirection(dir)`
+Set rotation direction.
+
+```lua
+fan:setDirection(1)   -- Clockwise
+fan:setDirection(-1)  -- Counter-clockwise
+```
+
+**Parameters:**
+- `dir` (number): +1 for clockwise, -1 for counter-clockwise
+
+#### Integration with Node Upgrades
+
+Query `air_cooler` upgrade level and apply to fan:
+
+```lua
+local upgrades = require("upgrades")
+
+-- Get upgrade level (0-10)
+local airCoolerLevel = upgrades.getLevel("air_cooler")
+
+if airCoolerLevel > 0 then
+    fan:setLevel(airCoolerLevel)
+    fan:start()
+else
+    fan:stop()  -- No cooling = no fan
+end
+```
+
+See `ami/lib/ui/widgets/fan_integration_example.lua` for complete examples.
+
+#### Performance Notes
+
+- Uses timer-based rendering (non-blocking, parallel-safe)
+- Only updates its own cells (flicker-free dirty-region rendering)
+- Higher levels render more cells (radius²), may lag on slow computers
+- Default 30 FPS is smooth; reduce to 15-20 FPS if lagging
 
 #### Notes
 

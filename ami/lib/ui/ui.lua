@@ -647,6 +647,7 @@ function UI.Window:clearArea(x, y, width, height, bg)
 		local filler = _rep(' ', width)
 		for i = 0, height - 1 do
 			self:write(x, y + i, filler, bg)
+			if i % 5 == 0 then os.sleep(0) end
 		end
 	end
 end
@@ -763,6 +764,7 @@ function UI.Window:print(text, bg, fg)
 			self.cursorX = marginLeft + 1
 			self.cursorY = self.cursorY + 1
 		end
+		os.sleep(0)
 	end
 
 	return self.cursorX, self.cursorY

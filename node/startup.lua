@@ -40,7 +40,7 @@ Theme.setTheme('demon')
 -- ── Configuration ────────────────────────────────────────────────────────────
 local MESH_CHANNEL    = 1337          -- Ender Router channel all nodes share
 local SHOP_CHANNEL    = 1338          -- Plaintext invoice / PAYMENT_ACK channel
-local NODE_VERSION    = "1.0.0"
+local NODE_VERSION    = "4.3"
 -- nodeFingerprint is declared here so handlePacket, monitorLoop, and main()
 -- all share the same upvalue.  computeNodeFingerprint() sets it at boot.
 local nodeFingerprint = "unknown"

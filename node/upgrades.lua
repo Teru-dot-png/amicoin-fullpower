@@ -1218,4 +1218,93 @@ function upgrades.runAmdMinigame()
     term.setTextColor(colors.white)
 end
 
+-- ── AMIdecode session engine (powers the Opus [T] page) ──────────────────────
+-- Pure, UI-agnostic game logic extracted from runAmdMinigame above (identical
+-- rules/constants). The Opus page calls amdBegin() then amdGuess() per click.
+
+-- amdBegin() -> a status table the UI renders:
+--   { mode='locked' }                                  not purchased
+--   { mode='cooldown', secs=N }                        on cooldown
+--   { mode='boosted', mult=M, secs=N }                 boost already active
+--   { mode='play', session=S, words={...}, guessesLeft, level, wordlen }
+function upgrades.amdBegin()
+    local lv = getLevel("amidecode")
+    if lv == 0 then return { mode = 'locked' } end
+    local br, cd = upgrades.getAmdStatus()
+    if cd > 0 then return { mode = 'cooldown', secs = cd } end
+    if br > 0 then
+        local st = loadAmdState()
+        return { mode = 'boosted', mult = st.boost_mult, secs = br }
+    end
+
+    math.randomseed(os.epoch("utc") + os.getComputerID() * 1337)
+    local secret = mkWord()
+    local words  = { secret }
+    while #words < AMD_WORDS do
+        local w = mkWord()
+        local dup = false
+        for _, x in ipairs(words) do if x == w then dup = true; break end end
+        if not dup then words[#words + 1] = w end
+    end
+    for i = #words, 2, -1 do
+        local j = math.random(i)
+        words[i], words[j] = words[j], words[i]
+    end
+
+    local session = {
+        secret     = secret,
+        words      = words,
+        guessesLeft = AMD_GUESSES,
+        startTime  = os.epoch("utc") / 1000,
+        firstGuess = true,
+        level      = lv,
+        now        = os.epoch("utc") / 1000,
+    }
+    return {
+        mode = 'play', session = session, words = words,
+        guessesLeft = AMD_GUESSES, level = lv, wordlen = AMD_WORDLEN,
+    }
+end
+
+-- amdGuess(session, pick) -> result table for the UI:
+--   { guess, likeness, guessesLeft, outcome='win'|'lose'|'continue',
+--     mult, boostMins, coolMins, secret }
+function upgrades.amdGuess(session, pick)
+    if type(session) ~= 'table' or type(pick) ~= 'number'
+       or pick < 1 or pick > #session.words then return nil end
+
+    local guess = session.words[pick]
+    local lk    = likeness(guess, session.secret)
+    session.guessesLeft = session.guessesLeft - 1
+    local now = session.now
+
+    if guess == session.secret then
+        local elapsed = os.epoch("utc") / 1000 - session.startTime
+        local mult    = AMD_MULT_BASE
+        if session.firstGuess      then mult = mult + AMD_BONUS_1ST  end
+        if elapsed <= AMD_FAST_SEC then mult = mult + AMD_BONUS_FAST end
+        mult = math.min(mult, AMD_MULT_MAX)
+        local boostSecs = session.level * 30 * 60
+        local coolSecs  = boostSecs + AMD_COOLDOWN_EXTRA
+        saveAmdState({ boost_mult = mult, boost_end = now + boostSecs, cooldown_end = now + coolSecs })
+        return {
+            guess = guess, likeness = lk, guessesLeft = session.guessesLeft,
+            outcome = 'win', mult = mult, boostMins = math.floor(boostSecs / 60),
+            coolMins = math.floor(coolSecs / 60), secret = session.secret,
+        }
+    end
+
+    session.firstGuess = false
+    if session.guessesLeft <= 0 then
+        local boostSecs = session.level * 30 * 60
+        local coolSecs  = boostSecs + AMD_COOLDOWN_EXTRA
+        saveAmdState({ boost_mult = 1.0, boost_end = 0, cooldown_end = now + coolSecs })
+        return {
+            guess = guess, likeness = lk, guessesLeft = 0, outcome = 'lose',
+            coolMins = math.floor(coolSecs / 60), secret = session.secret,
+        }
+    end
+    return { guess = guess, likeness = lk, guessesLeft = session.guessesLeft, outcome = 'continue' }
+end
+
 return upgrades

@@ -340,7 +340,7 @@ end
 
 -- ── Command Center ───────────────────────────────────────────────────────────
 -- Single hub for node management, integrity checks, and DNS propagation.
-local function screenCommandCenter(nodes, secretKey, address)
+local function screenCommandCenter(nodes, secretKey, address, perNodeBalances)
     while true do
         banner("Command Center")
         if #nodes == 0 then
@@ -348,12 +348,18 @@ local function screenCommandCenter(nodes, secretKey, address)
         else
             for i, node in ipairs(nodes) do
                 local fp_badge = ""
-                if node.fp_mismatch      then fp_badge = " [FP!]"
+                if node.fp_mismatch      then fp_badge = " [!]"
                 elseif not node.known_fp then fp_badge = " [?]"
                 end
-                local col   = node.fp_mismatch and colors.red or colors.white
-                local label = string.format("  [%d] %s  (%s...)%s",
-                    i, node.name:sub(1,14), node.key:sub(1,8), fp_badge)
+                local col = node.fp_mismatch and colors.red or colors.white
+                -- Show per-node balance if available from last refresh
+                local balStr = ""
+                if perNodeBalances and perNodeBalances[i] then
+                    local bal = perNodeBalances[i].balance or 0
+                    balStr = string.format(" %duAMI", bal)
+                end
+                local label = string.format("[%d] %-9s%s%s",
+                    i, node.name:sub(1, 9), balStr, fp_badge)
                 pmsg(label:sub(1, W), 4 + i, col)
             end
         end
@@ -1013,12 +1019,17 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         for _, n in ipairs(perNode) do
             if not n.err then onlineCount = onlineCount + 1 end
         end
-        WalletUI.updateDashboard(dashboardPage, totalBalance, onlineCount, #nodes, netStats)
+        WalletUI.updateDashboard(dashboardPage, totalBalance, onlineCount, #nodes, netStats, perNode)
     end
     
     -- ── Event handlers ───────────────────────────────────────────────────────
     function dashboardPage:eventHandler(event)
-        if event.type == 'action_send' then
+        if event.type == 'action_refresh' then
+            refreshBalance()
+            updateDashboard()
+            return true
+
+        elseif event.type == 'action_send' then
             -- Send AMI (fallback to text UI)
             term.clear()
             term.setCursorPos(1, 1)
@@ -1150,7 +1161,7 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             
         elseif event.type == 'action_nodes' then
             -- Command Center
-            nodes = screenCommandCenter(nodes, secretKey, address)
+            nodes = screenCommandCenter(nodes, secretKey, address, perNode)
             UI:setPage(dashboardPage)
             updateDashboard()
             return true

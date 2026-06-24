@@ -1,174 +1,254 @@
 -- wallet/wallet_ui.lua
 -- AmiCoin Wallet Dashboard UI (Opus Framework)
--- Demon theme (red/black/gray) with professional layout
+-- Pocket-computer layout: 26 wide x 20 tall
 
-local UI     = require('ami.lib.ui.ui')
-local Event  = require('ami.lib.ui.event')
-local Theme  = require('ami.lib.ui.theme')
+local UI    = require('ami.lib.ui.ui')
+local Theme = require('ami.lib.ui.theme')
 
--- Apply demon theme
 Theme.setTheme('demon')
 
 local WalletUI = {}
 
-function WalletUI.createDashboard(address, amidnsName)
-    local shortAddr = address and (address:sub(1, 8) .. '...' .. address:sub(-4)) or 'Loading...'
-    local displayName = amidnsName or 'Not registered'
-    
-    return UI.Page({
+-- Write a colored AMI/uAMI token at (x, y) in window win.
+-- Returns the x position after the token.
+local function writeToken(win, x, y, bg, kind)
+    if kind == 'uami' then
+        win:write(x,   y, 'u', bg, colors.lime)
+        win:write(x+1, y, 'A', bg, colors.pink)
+        win:write(x+2, y, 'M', bg, colors.red)
+        win:write(x+3, y, 'I', bg, colors.pink)
+        return x + 4
+    else
+        win:write(x,   y, 'A', bg, colors.pink)
+        win:write(x+1, y, 'M', bg, colors.red)
+        win:write(x+2, y, 'I', bg, colors.pink)
+        return x + 3
+    end
+end
+
+local function fillRow(win, x, y, bg)
+    local rem = win.width - x + 1
+    if rem > 0 then win:write(x, y, string.rep(' ', rem), bg, bg) end
+end
+
+function WalletUI.createDashboard(address, playerName)
+    local shortAddr = address
+        and (address:sub(1, 4) .. '..' .. address:sub(-4))
+        or  '???'
+    local titleStr = (playerName and #playerName > 0)
+        and (playerName .. '  Addr:' .. shortAddr)
+        or  ('Wallet  Addr:' .. shortAddr)
+
+    local page = UI.Page({
         backgroundColor = colors.black,
-        
-        -- Title bar
+
         titleBar = UI.TitleBar({
-            title = 'AmiCoin Wallet',
+            title = titleStr,
             backgroundColor = colors.red,
             textColor = colors.white,
         }),
-        
-        -- Balance panel (prominent)
+
+        -- Balance panel (rows 2-5, gray background)
+        -- Custom draw renders colored AMI/uAMI tokens without cutoffs.
         balancePanel = UI.Window({
-            x = 1, y = 2, width = -1, height = 9,
+            x = 1, y = 2, width = -1, height = 4,
             backgroundColor = colors.gray,
-            
-            balanceLabel = UI.Text({
-                x = 1, y = 2, width = 50, align = 'center',
-                value = 'Balance',
-                textColor = colors.white,
-            }),
-            
-            balanceValue = UI.Text({
-                x = 1, y = 4, width = 50, align = 'center',
-                value = '0.000000 AMI',
-                textColor = colors.yellow,
-            }),
-            
-            balanceMicro = UI.Text({
-                x = 1, y = 5, width = 50, align = 'center',
-                value = '(0 uAMI)',
-                textColor = colors.gray,
-            }),
-            
-            addressLabel = UI.Text({
-                x = 2, y = 7,
-                value = 'Addr: ' .. shortAddr,
-                textColor = colors.lightGray,
-            }),
-            
-            nameLabel = UI.Text({
-                x = 2, y = 8,
-                value = 'Name: ' .. displayName,
-                textColor = colors.lightGray,
-            }),
+            _amiFloat = 0.0,
+            _uami     = 0,
+            _nodeStr  = '?/? nodes',
+
+            draw = function(self)
+                local bg = colors.gray
+                self:clear(bg)
+
+                -- Row 1: "Bal:" label
+                self:write(1, 1, ' Bal:', bg, colors.lightGray)
+                fillRow(self, 6, 1, bg)
+
+                -- Row 2: AMI amount + colored AMI token
+                local amiNum = string.format(' %.5f ', self._amiFloat)
+                self:write(1, 2, amiNum, bg, colors.yellow)
+                local ax = #amiNum + 1
+                ax = writeToken(self, ax, 2, bg, 'ami')
+                fillRow(self, ax, 2, bg)
+
+                -- Row 3: uAMI amount + colored uAMI token
+                local uamiNum = string.format(' %d ', self._uami)
+                self:write(1, 3, uamiNum, bg, colors.yellow)
+                local ux = #uamiNum + 1
+                ux = writeToken(self, ux, 3, bg, 'uami')
+                fillRow(self, ux, 3, bg)
+
+                -- Row 4: node summary
+                local nodeLine = ' ' .. self._nodeStr
+                self:write(1, 4, nodeLine, bg, colors.lightGray)
+                fillRow(self, #nodeLine + 1, 4, bg)
+            end,
         }),
-        
-        -- Quick actions (big buttons row 1)
-        actionsPanel = UI.Window({
-            x = 1, y = 11, width = -1, height = 3,
+
+        -- Node list grid (rows 6-17), 12 rows = 1 header + 11 node rows
+        nodeGrid = UI.ScrollingGrid({
+            x = 1, y = 6, width = -1, height = 12,
             backgroundColor = colors.black,
-            
+            textColor = colors.white,
+            textSelectedColor = colors.white,
+            headerBackgroundColor = colors.red,
+            headerTextColor = colors.white,
+            backgroundSelectedColor = colors.gray,
+            unfocusedBackgroundSelectedColor = colors.black,
+            columns = {
+                { heading = 'Node',   key = 'name',   width = 11 },
+                { heading = 'Ping',   key = 'ping',   width = 4, align = 'right' },
+                { heading = 'St',     key = 'status', width = 5 },
+            },
+            values = {},
+
+            -- Color each row by node health
+            getRowTextColor = function(self, row, selected)
+                if selected and self.focused then return self.textSelectedColor end
+                if row._err   then return colors.red    end
+                if row._fpbad then return colors.orange end
+                if row._new   then return colors.yellow end
+                return colors.lime
+            end,
+        }),
+
+        -- Button row 1 (row 18): [S]end [R]ef [E]xp [N]Cmd
+        btnRow1 = UI.Window({
+            x = 1, y = 18, width = -1, height = 1,
+            backgroundColor = colors.black,
+
             sendBtn = UI.Button({
-                x = 2, y = 1,
-                width = 12, height = 3,
-                text = 'Send AMI',
-                event = 'action_send',
+                x = 1, y = 1, width = 7, height = 1,
+                text = '[S]end', event = 'action_send',
                 backgroundColor = colors.red,
-                textColor = colors.white,
+                backgroundFocusColor = colors.orange,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
-            
-            receiveBtn = UI.Button({
-                x = 15, y = 1,
-                width = 11, height = 3,
-                text = 'Receive',
-                event = 'action_receive',
-                backgroundColor = colors.orange,
-                textColor = colors.white,
+            refreshBtn = UI.Button({
+                x = 8, y = 1, width = 5, height = 1,
+                text = '[R]', event = 'action_refresh',
+                backgroundColor = colors.gray,
+                backgroundFocusColor = colors.lightGray,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
-            
             exportBtn = UI.Button({
-                x = 27, y = 1,
-                width = 11, height = 3,
-                text = 'Export',
-                event = 'action_export',
+                x = 13, y = 1, width = 6, height = 1,
+                text = '[E]xp', event = 'action_export',
                 backgroundColor = colors.orange,
-                textColor = colors.white,
+                backgroundFocusColor = colors.yellow,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
-            
             nodesBtn = UI.Button({
-                x = 39, y = 1,
-                width = 12, height = 3,
-                text = 'Nodes',
-                event = 'action_nodes',
+                x = 19, y = 1, width = 8, height = 1,
+                text = '[N]Cmd', event = 'action_nodes',
                 backgroundColor = colors.gray,
-                textColor = colors.white,
+                backgroundFocusColor = colors.lightGray,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
         }),
-        
-        -- Quick actions (big buttons row 2)
-        actionsPanel2 = UI.Window({
-            x = 1, y = 14, width = -1, height = 3,
+
+        -- Button row 2 (row 19): [V]ault [U]pdate [L]ogout
+        btnRow2 = UI.Window({
+            x = 1, y = 19, width = -1, height = 1,
             backgroundColor = colors.black,
-            
+
             vaultBtn = UI.Button({
-                x = 2, y = 1,
-                width = 12, height = 3,
-                text = 'Vault',
-                event = 'action_vault',
+                x = 1, y = 1, width = 9, height = 1,
+                text = '[V]ault', event = 'action_vault',
                 backgroundColor = colors.pink,
-                textColor = colors.white,
+                backgroundFocusColor = colors.red,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
-            
             updateBtn = UI.Button({
-                x = 15, y = 1,
-                width = 11, height = 3,
-                text = 'Update',
-                event = 'action_update',
+                x = 10, y = 1, width = 8, height = 1,
+                text = '[U]pdate', event = 'action_update',
                 backgroundColor = colors.orange,
-                textColor = colors.white,
+                backgroundFocusColor = colors.yellow,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
-            
             logoutBtn = UI.Button({
-                x = 27, y = 1,
-                width = 11, height = 3,
-                text = 'Logout',
-                event = 'action_logout',
+                x = 18, y = 1, width = 9, height = 1,
+                text = '[L]ogout', event = 'action_logout',
                 backgroundColor = colors.gray,
-                textColor = colors.white,
+                backgroundFocusColor = colors.lightGray,
+                textColor = colors.white, textFocusColor = colors.white,
             }),
         }),
-        
-        -- Status bar (node count + sync status)
+
+        -- Status bar (row 20)
         statusBar = UI.StatusBar({
             backgroundColor = colors.red,
             textColor = colors.white,
         }),
     })
+
+    return page
 end
 
--- Update dashboard with current state
-function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netStats)
-    -- Update balance display (Text components expose `.value`; no setValue method)
+-- Update dashboard with latest data and redraw.
+-- perNode: array of { name, balance, err, latency, fp_ok } from main.lua
+function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netStats, perNode)
+    local bp = page.balancePanel
     if balance then
-        local ami = balance / 1000000
-        page.balancePanel.balanceValue.value = string.format("%.6f AMI", ami)
-        page.balancePanel.balanceMicro.value = string.format("(%d uAMI)", balance)
+        bp._amiFloat = balance / 1000000
+        bp._uami     = balance
     else
-        page.balancePanel.balanceValue.value = "Loading..."
-        page.balancePanel.balanceMicro.value = ""
+        bp._amiFloat = 0.0
+        bp._uami     = 0
     end
-    
-    -- Update status bar
-    local statusText = ""
-    if totalNodes and totalNodes > 0 then
-        local online = onlineNodes or 0
-        local netInfo = ""
-        if netStats then
-            local rate = netStats.effective_rate or netStats.current_rate or 0
-            local earnPerHour = rate * 120  -- 120 ticks/hour
-            netInfo = string.format(" | %d uAMI/tk +%d/hr", rate, earnPerHour)
+    local online = onlineNodes or 0
+    local total  = totalNodes  or 0
+    bp._nodeStr = string.format('%d/%d nodes', online, total)
+
+    -- Rebuild node grid rows from perNode
+    local rows = {}
+    if perNode and #perNode > 0 then
+        for i, n in ipairs(perNode) do
+            local ping = n.latency and (n.latency .. 'ms') or '--'
+            local status, _err, _fpbad, _new
+            if n.err then
+                status = '[ERR]'; _err = true
+            elseif n.fp_ok == false then
+                status = '[FP!]'; _fpbad = true
+            elseif n.fp_ok == 'tofc' then
+                status = '[NEW]'; _new = true
+            else
+                status = '[OK]'
+            end
+            rows[i] = {
+                name   = (n.name or '?'):sub(1, 11),
+                ping   = ping,
+                status = status,
+                _err   = _err,
+                _fpbad = _fpbad,
+                _new   = _new,
+            }
         end
-        statusText = string.format("%d/%d nodes online%s", online, totalNodes, netInfo)
+    end
+    page.nodeGrid:setValues(rows)
+
+    -- Update [N]Cmd label with live node count
+    local nBtn = page.btnRow1 and page.btnRow1.nodesBtn
+    if nBtn then
+        nBtn.text = total > 0
+            and string.format('[N](%d)', total)
+            or  '[N]Cmd'
+    end
+
+    -- Status bar
+    local statusText
+    if netStats then
+        local rate    = netStats.effective_rate or netStats.current_rate or 0
+        local perHour = rate * 120
+        statusText = string.format('%duAMI/30s +%d/hr', rate, perHour)
+        if total > 0 then
+            statusText = statusText .. string.format(' (%dn)', total)
+        end
+    elseif total > 0 then
+        statusText = string.format('%d/%d nodes', online, total)
     else
-        statusText = "No nodes configured - press Nodes"
+        statusText = 'No nodes -- press [N]'
     end
     page.statusBar:setStatus(statusText)
 

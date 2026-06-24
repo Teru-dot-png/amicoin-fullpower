@@ -561,14 +561,16 @@ local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpo
 -- tree (ami/lib/ui/**) is appended at update time from the committed manifest, so
 -- pressing [U] now updates the whole UI - not just these service files.
 local UPDATE_FILES = {
-    { src="/shared/xtea.lua",       dst="/shared/xtea.lua"   },
-    { src="/node/startup.lua",      dst="/startup.lua"       },
-    { src="/node/node_ui.lua",      dst="/node_ui.lua"       },
-    { src="/node/upgrade_ui.lua",   dst="/upgrade_ui.lua"    },
-    { src="/node/ledger.lua",       dst="/ledger.lua"        },
-    { src="/node/miner_daemon.lua", dst="/miner_daemon.lua"  },
-    { src="/node/xtea.lua",         dst="/xtea.lua"          },
-    { src="/node/upgrades.lua",     dst="/upgrades.lua"      },
+    { src="/shared/xtea.lua",        dst="/shared/xtea.lua"   },
+    { src="/node/startup.lua",       dst="/startup.lua"       },
+    { src="/node/node_ui.lua",       dst="/node_ui.lua"       },
+    { src="/node/upgrade_ui.lua",    dst="/upgrade_ui.lua"    },
+    { src="/node/amidecode_ui.lua",  dst="/amidecode_ui.lua"  },
+    { src="/node/monitor_ui.lua",    dst="/monitor_ui.lua"    },
+    { src="/node/ledger.lua",        dst="/ledger.lua"        },
+    { src="/node/miner_daemon.lua",  dst="/miner_daemon.lua"  },
+    { src="/node/xtea.lua",          dst="/xtea.lua"          },
+    { src="/node/upgrades.lua",      dst="/upgrades.lua"      },
 }
 
 -- Append the full ami/lib/ui tree from the committed manifest to a file list.
@@ -906,6 +908,8 @@ end
 local function monitorLoop(nodeKey)
     local fanFrames = nil
     pcall(function() fanFrames = require('ami.lib.ui.widgets.fan_frames') end)
+    local MonitorUI = nil
+    pcall(function() MonitorUI = require('monitor_ui') end)
     local fanIdx    = 1
     local lastStats = -1e9
 
@@ -924,110 +928,65 @@ local function monitorLoop(nodeKey)
                 if doStats then
                     lastStats = os.clock()
 
-                    local theme = upgrades.getActiveTheme()
-                    local THEME_COLORS = {
-                        green_phosphor = {fg=colors.lime,       hdr=colors.green},
-                        amber          = {fg=colors.orange,     hdr=colors.brown},
-                        ice_blue       = {fg=colors.cyan,       hdr=colors.lightBlue},
-                        deep_violet    = {fg=colors.purple,     hdr=colors.purple},
-                        neon_pink      = {fg=colors.pink,       hdr=colors.pink},
-                        solar_orange   = {fg=colors.orange,     hdr=colors.red},
-                        arctic_white   = {fg=colors.white,      hdr=colors.lightGray},
-                        spectrum       = {fg=colors.white,      hdr=colors.blue},
-                        void_red       = {fg=colors.red,        hdr=colors.red},
-                        genesis_gold   = {fg=colors.yellow,     hdr=colors.yellow},
-                        crown_gold     = {fg=colors.yellow,     hdr=colors.yellow},
-                    }
-                    local tc = (theme and THEME_COLORS[theme]) or {fg=colors.white, hdr=colors.red}
+                    if MonitorUI then
+                        local active   = miner.getActive()
+                        local snap     = ledger.snapshot()
+                        local total    = 0
+                        for _, v in pairs(snap) do total = total + v end
+                        local baseRate = miner.getCurrentRate()
+                        local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
+                        local netTemp  = upgrades.computeNetTemp(true)
+                        local _, shutoff = upgrades.computeThermalFactor()
+                        local coolLv   = upgrades.getAirCoolerLevel()
+                                       + upgrades.getLiquidCoolingLevel()
+                        local mintProg, mintRem = miner.getMintProgress()
 
-                    mon.setBackgroundColor(colors.black)
-                    mon.clear()
-
-                    -- Header bar
-                    mon.setBackgroundColor(tc.hdr)
-                    mon.setTextColor(colors.white)
-                    mon.setCursorPos(1, 1)
-                    mon.clearLine()
-                    local title = " AmiCoin Node v" .. NODE_VERSION
-                    mon.setCursorPos(math.floor((mw - #title) / 2) + 1, 1)
-                    mon.write(title)
-                    mon.setBackgroundColor(colors.black)
-
-                    mon.setTextColor(colors.gray)
-                    mon.setCursorPos(1, 2)
-                    mon.write(string.rep("-", mw))
-
-                    -- Stats
-                    local active = miner.getActive()
-                    local snap   = ledger.snapshot()
-                    local total  = 0
-                    for _, v in pairs(snap) do total = total + v end
-                    local ami = string.format("%.6f AMI", total / 1000000)
-
-                    mon.setCursorPos(1, 3); mon.setTextColor(tc.fg)
-                    mon.write("Key:    " .. nodeKey:sub(1, 16) .. "...")
-                    mon.setCursorPos(1, 4); mon.setTextColor(tc.fg)
-                    mon.write("Active: " .. #active .. " wallet(s)")
-                    mon.setCursorPos(1, 5); mon.setTextColor(tc.fg)
-                    mon.write("Supply: " .. total .. " uAMI")
-                    mon.setCursorPos(1, 6); mon.setTextColor(tc.fg)
-                    mon.write("      = " .. ami)
-                    mon.setCursorPos(1, 7); mon.setTextColor(tc.fg)
-                    mon.write("Chan:   " .. MESH_CHANNEL)
-
-                    -- Reward rate panel
-                    local baseRate = miner.getCurrentRate()
-                    local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
-                    local amiPerHr = effRate * 120 / 1000000
-
-                    mon.setCursorPos(1, 8); mon.setTextColor(colors.gray)
-                    mon.write(string.rep("-", mw))
-                    mon.setCursorPos(1, 9); mon.setTextColor(tc.fg)
-                    mon.write(string.format("Rate:   %d uAMI/tk", effRate))
-                    mon.setCursorPos(1, 10); mon.setTextColor(tc.fg)
-                    mon.write(string.format("      = %.4f AMI/hr", amiPerHr))
-
-                    mon.setCursorPos(1, 11)
-                    if lag < 0.7 then
-                        mon.setTextColor(colors.red)
-                        mon.write(string.format("LAG:    ~%.0f%% TPS", lag * 100))
-                    else
-                        mon.setTextColor(colors.green)
-                        mon.write("TPS:    OK")
-                    end
-
-                    -- Thermal text
-                    local netTemp = upgrades.computeNetTemp(true)
-                    local _, shutoff, _ = upgrades.computeThermalFactor()
-                    local tempCol, tempLabel
-                    if shutoff then
-                        tempCol, tempLabel = colors.red, string.format("%dC THROTTLED", netTemp)
-                    elseif netTemp >= 200 then
-                        tempCol, tempLabel = colors.orange, string.format("%dC HOT", netTemp)
-                    elseif netTemp >= 100 then
-                        tempCol, tempLabel = colors.yellow, string.format("%dC WARM", netTemp)
-                    else
-                        tempCol, tempLabel = colors.green, string.format("%dC OK", netTemp)
-                    end
-                    mon.setCursorPos(1, 12); mon.setTextColor(colors.gray)
-                    mon.write(string.rep("-", mw))
-                    mon.setCursorPos(1, 13); mon.setTextColor(tempCol)
-                    mon.write(("Temp:   " .. tempLabel):sub(1, mw))
-
-                    -- Active upgrades panel
-                    local upLines = upgrades.getActiveSummary()
-                    if #upLines > 0 then
-                        mon.setCursorPos(1, 14); mon.setTextColor(colors.gray)
-                        mon.write(string.rep("-", mw))
-                        mon.setCursorPos(1, 15); mon.setTextColor(colors.yellow)
-                        mon.write("Upgrades active:")
-                        local ur = 16
-                        for _, line in ipairs(upLines) do
-                            if ur > mh then break end
-                            mon.setCursorPos(1, ur); mon.setTextColor(tc.fg)
-                            mon.write(line:sub(1, mw))
-                            ur = ur + 1
+                        -- Parse upgrade summary into {name, level} pairs
+                        local upgradeData = {}
+                        for _, line in ipairs(upgrades.getActiveSummary()) do
+                            local n, l = line:match("^(%S+)%s+(.+)$")
+                            if n and l then
+                                upgradeData[#upgradeData+1] = {
+                                    name  = n,
+                                    level = l:gsub("%s+$", ""),
+                                }
+                            elseif line:match("%S") then
+                                upgradeData[#upgradeData+1] = {
+                                    name  = line:gsub("%s+$", ""),
+                                    level = '',
+                                }
+                            end
                         end
+
+                        -- Leave room for the fan animation column when it fits
+                        local fcW = (fanFrames and mw >= 26 + fanFrames.cols)
+                                    and fanFrames.cols or 0
+                        local statsW = fcW > 0 and (mw - fcW - 1) or mw
+
+                        mon.setBackgroundColor(colors.black)
+                        mon.clear()
+
+                        MonitorUI.drawStats(mon, statsW, {
+                            version         = NODE_VERSION,
+                            theme           = upgrades.getActiveTheme(),
+                            nodeKey         = nodeKey,
+                            fingerprint     = nodeFingerprint,
+                            channel         = MESH_CHANNEL,
+                            activeWallets   = #active,
+                            totalSupply     = total,
+                            effRate         = effRate,
+                            lagFactor       = lag,
+                            netTemp         = netTemp,
+                            thermalShutoff  = shutoff,
+                            coolingLevel    = coolLv,
+                            mintProgress    = mintProg or 0,
+                            mintRemaining   = mintRem  or 30,
+                            upgrades        = upgradeData,
+                            crownLevel      = upgrades.getCrownLevel(),
+                            casinoRakeLevel = upgrades.getCasinoRakeLevel(),
+                            priorityPing    = upgrades.hasPriorityPing(),
+                            totalTicks      = miner.getTotalTicks(),
+                        })
                     end
                 end
 

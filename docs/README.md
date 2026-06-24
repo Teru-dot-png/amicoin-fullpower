@@ -6,7 +6,8 @@
 
 **A standalone, cross-dimensional cryptocurrency for Minecraft built on CC:Tweaked.**
 
-AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by staying online and keeping the network healthy. No mining puzzles, no energy races — just reliable uptime.
+AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by staying online and keeping the network healthy. No mining puzzles, no energy races just reliable uptime.
+"AMI is the daemon that keeps running economy" 
 
 ---
 

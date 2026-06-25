@@ -4,8 +4,15 @@
 -- Call MonitorUI.drawStats(mon, W, data) on each stats refresh cycle.
 
 local colors = _G.colors
+local math   = _G.math
+
+local FRAMES
+pcall(function() FRAMES = require('ami.lib.ui.widgets.fan_frames') end)
 
 local MonitorUI = {}
+
+-- Columns the fan occupies when the monitor is wide enough; 0 if unavailable.
+MonitorUI.FAN_COLS = FRAMES and FRAMES.cols or 0
 
 local THEME_COLORS = {
     green_phosphor = { fg = colors.lime,     hdr = colors.green     },
@@ -247,6 +254,88 @@ function MonitorUI.drawStats(mon, W, data)
         row0(mon, r, W, colors.black)
         r = r + 1
     end
+end
+
+-- Draw the animated cooling fan frame onto the monitor.
+-- Call this every animation tick (independent of drawStats).
+-- data fields: coolingLevel (int), netTemp (int), thermalShutoff (bool), theme (str|nil)
+-- Returns the next fanIdx to pass on the following call.
+function MonitorUI.drawFan(mon, mw, mh, data, fanIdx)
+    if not FRAMES then return fanIdx end
+    local fCols, fRows = FRAMES.cols, FRAMES.rows
+    local n          = #FRAMES.frames
+    local coolLv     = data.coolingLevel or 0
+    local hasCooling = coolLv > 0
+    local nt         = data.netTemp or 0
+    local shutoff    = data.thermalShutoff or false
+    local tc         = (data.theme and THEME_COLORS[data.theme])
+                       or { fg = colors.white, hdr = colors.red }
+
+    -- Temperature-mapped colour (mirrors the Opus UI.Fan widget palette)
+    local fanCol
+    if not hasCooling then
+        fanCol = colors.gray
+    elseif shutoff or nt >= 280 then
+        fanCol = colors.red
+    elseif nt >= 220 then
+        fanCol = colors.orange
+    elseif nt >= 160 then
+        fanCol = colors.yellow
+    elseif nt >= 110 then
+        fanCol = colors.lime
+    elseif nt >= 70 then
+        fanCol = colors.cyan
+    elseif nt >= 40 then
+        fanCol = colors.lightBlue
+    else
+        fanCol = colors.white
+    end
+
+    -- Position: right column when wide enough, else stack below the stats
+    local ox, oy
+    if mw >= 26 + fCols then
+        ox = mw - fCols + 1
+        oy = 2   -- sits right below the title bar
+    else
+        ox = 1
+        oy = math.max(15, mh - fRows - 1)
+    end
+
+    -- Opus-style header strip (matches the panel headers in drawStats)
+    fill(mon, ox, oy, fCols, tc.hdr)
+    local hdrText = hasCooling and ' COOLING FAN ' or '     FAN     '
+    local hx = ox + math.max(0, math.floor((fCols - #hdrText) / 2))
+    put(mon, hx, oy, hdrText, tc.hdr, colors.white, fCols - (hx - ox))
+    oy = oy + 1
+
+    -- Fan frame (teletext block characters, single foreground colour)
+    local frame = FRAMES.frames[fanIdx]
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(fanCol)
+    for r = 1, #frame do
+        local row = oy + r - 1
+        if row <= mh then
+            mon.setCursorPos(ox, row)
+            mon.write(frame[r])
+        end
+    end
+
+    -- Status badge below the frame
+    local labelY = oy + fRows
+    if labelY <= mh then
+        local badge = hasCooling
+            and string.format(' Lv%-2d SPINNING ', coolLv)
+            or  '      IDLE      '
+        badge = badge:sub(1, fCols)
+        if #badge < fCols then badge = badge .. string.rep(' ', fCols - #badge) end
+        fill(mon, ox, labelY, fCols, colors.gray)
+        put(mon, ox, labelY, badge, colors.gray, fanCol, fCols)
+    end
+
+    if hasCooling then
+        fanIdx = fanIdx % n + 1
+    end
+    return fanIdx
 end
 
 return MonitorUI

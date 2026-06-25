@@ -906,8 +906,6 @@ end
 -- The (expensive) full stats redraw is throttled; the fan animates a few fps.
 -- If no monitor is connected the loop simply sleeps and checks again later.
 local function monitorLoop(nodeKey)
-    local fanFrames = nil
-    pcall(function() fanFrames = require('ami.lib.ui.widgets.fan_frames') end)
     local MonitorUI = nil
     pcall(function() MonitorUI = require('monitor_ui') end)
     local fanIdx    = 1
@@ -959,8 +957,9 @@ local function monitorLoop(nodeKey)
                         end
 
                         -- Leave room for the fan animation column when it fits
-                        local fcW = (fanFrames and mw >= 26 + fanFrames.cols)
-                                    and fanFrames.cols or 0
+                        local fcW = (MonitorUI and MonitorUI.FAN_COLS > 0
+                                     and mw >= 26 + MonitorUI.FAN_COLS)
+                                    and MonitorUI.FAN_COLS or 0
                         local statsW = fcW > 0 and (mw - fcW - 1) or mw
 
                         mon.setBackgroundColor(colors.black)
@@ -990,61 +989,18 @@ local function monitorLoop(nodeKey)
                     end
                 end
 
-                -- ── Big pre-rendered cooling fan (animated, temp-coloured) ──
-                if fanFrames then
+                -- ── Cooling fan (animated, delegated to MonitorUI) ─────────────
+                if MonitorUI then
                     local airLv  = upgrades.getAirCoolerLevel()
                     local liqLv  = upgrades.getLiquidCoolingLevel()
-                    local coolLv = airLv + liqLv
-                    local hasCooling = coolLv > 0
-                    local netTemp = upgrades.computeNetTemp(false)
+                    local netTemp  = upgrades.computeNetTemp(false)
                     local _, shutoff = upgrades.computeThermalFactor()
-
-                    -- Fan colour reflects TEMPERATURE: coolest = white, then blue/
-                    -- cyan, warming to yellow/orange, and red when MELTING/dying.
-                    local fanCol
-                    if not hasCooling then
-                        fanCol = colors.gray                 -- no cooler: idle
-                    elseif shutoff or netTemp >= 280 then
-                        fanCol = colors.red                  -- MELTING / SCREAMING
-                    elseif netTemp >= 220 then
-                        fanCol = colors.orange               -- very hot
-                    elseif netTemp >= 160 then
-                        fanCol = colors.yellow               -- hot
-                    elseif netTemp >= 110 then
-                        fanCol = colors.lime                 -- warm
-                    elseif netTemp >= 70 then
-                        fanCol = colors.cyan                 -- cool
-                    elseif netTemp >= 40 then
-                        fanCol = colors.lightBlue            -- cold
-                    else
-                        fanCol = colors.white                -- coolest
-                    end
-
-                    local frame = fanFrames.frames[fanIdx]
-                    local fcols, frows = fanFrames.cols, fanFrames.rows
-                    local ox, oy
-                    if mw >= 26 + fcols then        -- room to the right of the stats
-                        ox, oy = mw - fcols, 3
-                    else                             -- otherwise stack below the stats
-                        ox, oy = 1, math.max(15, mh - frows)
-                    end
-                    mon.setBackgroundColor(colors.black)
-                    mon.setTextColor(fanCol)
-                    for r = 1, #frame do
-                        if oy + r - 1 <= mh then
-                            mon.setCursorPos(ox, oy + r - 1)
-                            mon.write(frame[r])
-                        end
-                    end
-                    if oy + frows <= mh then
-                        mon.setCursorPos(ox, oy + frows)
-                        mon.setTextColor(fanCol)
-                        mon.write(hasCooling and string.format("  COOLING Lv%d  ", coolLv)
-                                              or  "  IDLE        ")
-                    end
-                    if hasCooling then
-                        fanIdx = fanIdx % #fanFrames.frames + 1
-                    end
+                    fanIdx = MonitorUI.drawFan(mon, mw, mh, {
+                        coolingLevel   = airLv + liqLv,
+                        netTemp        = netTemp,
+                        thermalShutoff = shutoff,
+                        theme          = upgrades.getActiveTheme(),
+                    }, fanIdx)
                 end
             end)
         end

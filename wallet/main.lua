@@ -887,6 +887,11 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         local anyOk    = false
         local cfg      = loadConfig()
         for i, node in ipairs(nodes) do
+            -- Live progress indicator in the status bar
+            dashboardPage.statusBar:setStatus(
+                string.format('Querying %d/%d: %s...', i, #nodes, node.name:sub(1, 9)))
+            dashboardPage:draw(); dashboardPage:sync()
+
             local ok, data, err = comms.getBalance(secretKey, node.key, address)
             local entry = { name=node.name, balance=0, err=nil, latency=nil, stats=nil, fp_ok=nil }
             if ok and data and data.balance then
@@ -1122,14 +1127,17 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- Set UI page
     UI:setPage(dashboardPage)
     
-    -- Initial data fetch
-    refreshBalance()
-    updateDashboard()
-    
+    -- Show dashboard immediately; first fetch happens inside the parallel loop
+    -- so the UI event loop is alive (and shows progress) during load
+    dashboardPage.statusBar:setStatus('Connecting to nodes...')
+    UI:setPage(dashboardPage)
+
     -- Run all coroutines in parallel
     parallel.waitForAll(
-        -- Balance refresh loop
+        -- Balance refresh loop (first fetch runs immediately, no leading sleep)
         function()
+            refreshBalance()
+            updateDashboard()
             while true do
                 sleep(5)
                 refreshBalance()

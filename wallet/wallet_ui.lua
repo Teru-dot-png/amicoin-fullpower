@@ -105,7 +105,6 @@ function WalletUI.createDashboard(address, playerName)
             },
             values = {},
 
-            -
             getRowTextColor = function(self, row, selected)
                 if selected and self.focused then return self.textSelectedColor end
                 if row._err   then return colors.red    end
@@ -115,69 +114,57 @@ function WalletUI.createDashboard(address, playerName)
             end,
         }),
 
-        -- Button row 1 (row 18): [S]end [R] [E]xp [N]Cmd  (1-char gaps)
-        -- Layout: S(6) gap(1) R(4) gap(1) E(5) gap(1) N(8) = 26
-        btnRow1 = UI.Window({
-            x = 1, y = 18, width = -1, height = 1,
-            backgroundColor = colors.black,
-
-            sendBtn = UI.Button({
-                x = 1, y = 1, width = 6, height = 1,
-                text = '[S]end', event = 'action_send',
-                backgroundColor = colors.red,
-                backgroundFocusColor = colors.orange,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
-            refreshBtn = UI.Button({
-                x = 8, y = 1, width = 4, height = 1,
-                text = '[R]', event = 'action_refresh',
-                backgroundColor = colors.gray,
-                backgroundFocusColor = colors.lightGray,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
-            exportBtn = UI.Button({
-                x = 13, y = 1, width = 5, height = 1,
-                text = '[E]xp', event = 'action_export',
-                backgroundColor = colors.orange,
-                backgroundFocusColor = colors.yellow,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
-            nodesBtn = UI.Button({
-                x = 19, y = 1, width = 8, height = 1,
-                text = '[N]Cmd', event = 'action_nodes',
-                backgroundColor = colors.gray,
-                backgroundFocusColor = colors.lightGray,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
+        -- Button row 1 (y=18): S(6) gap R(4) gap E(5) gap N(8) = 26
+        sendBtn = UI.Button({
+            x = 1, y = 18, width = 6, height = 1,
+            text = '[S]end', event = 'action_send',
+            backgroundColor = colors.red,
+            backgroundFocusColor = colors.orange,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        refreshBtn = UI.Button({
+            x = 8, y = 18, width = 4, height = 1,
+            text = '[R]', event = 'action_refresh',
+            backgroundColor = colors.gray,
+            backgroundFocusColor = colors.lightGray,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        exportBtn = UI.Button({
+            x = 13, y = 18, width = 5, height = 1,
+            text = '[E]xp', event = 'action_export',
+            backgroundColor = colors.orange,
+            backgroundFocusColor = colors.yellow,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        nodesBtn = UI.Button({
+            x = 19, y = 18, width = 8, height = 1,
+            text = '[N]Cmd', event = 'action_nodes',
+            backgroundColor = colors.gray,
+            backgroundFocusColor = colors.lightGray,
+            textColor = colors.white, textFocusColor = colors.white,
         }),
 
-        -- Button row 2 (row 19): [V]ault [U]pdate [L]ogout  (1-char gaps)
-        -- Layout: V(8) gap(1) U(8) gap(1) L(8) = 26
-        btnRow2 = UI.Window({
-            x = 1, y = 19, width = -1, height = 1,
-            backgroundColor = colors.black,
-
-            vaultBtn = UI.Button({
-                x = 1, y = 1, width = 8, height = 1,
-                text = '[V]ault', event = 'action_vault',
-                backgroundColor = colors.pink,
-                backgroundFocusColor = colors.red,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
-            updateBtn = UI.Button({
-                x = 10, y = 1, width = 8, height = 1,
-                text = '[U]pdate', event = 'action_update',
-                backgroundColor = colors.orange,
-                backgroundFocusColor = colors.yellow,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
-            logoutBtn = UI.Button({
-                x = 19, y = 1, width = 8, height = 1,
-                text = '[L]ogout', event = 'action_logout',
-                backgroundColor = colors.gray,
-                backgroundFocusColor = colors.lightGray,
-                textColor = colors.white, textFocusColor = colors.white,
-            }),
+        -- Button row 2 (y=19): V(8) gap U(8) gap L(8) = 26
+        vaultBtn = UI.Button({
+            x = 1, y = 19, width = 8, height = 1,
+            text = '[V]ault', event = 'action_vault',
+            backgroundColor = colors.pink,
+            backgroundFocusColor = colors.red,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        updateBtn = UI.Button({
+            x = 10, y = 19, width = 8, height = 1,
+            text = '[U]pdate', event = 'action_update',
+            backgroundColor = colors.orange,
+            backgroundFocusColor = colors.yellow,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        logoutBtn = UI.Button({
+            x = 19, y = 19, width = 8, height = 1,
+            text = '[L]ogout', event = 'action_logout',
+            backgroundColor = colors.gray,
+            backgroundFocusColor = colors.lightGray,
+            textColor = colors.white, textFocusColor = colors.white,
         }),
 
         -- Status bar (row 20)
@@ -233,7 +220,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
     page.nodeGrid:setValues(rows)
 
     -- Update [N]Cmd label with live node count
-    local nBtn = page.btnRow1 and page.btnRow1.nodesBtn
+    local nBtn = page.nodesBtn
     if nBtn then
         nBtn.text = total > 0
             and string.format('[N](%d)', total)

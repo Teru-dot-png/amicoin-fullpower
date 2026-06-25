@@ -99,7 +99,7 @@ function WalletUI.createDashboard(address, playerName)
             backgroundSelectedColor = colors.gray,
             unfocusedBackgroundSelectedColor = colors.black,
             columns = {
-                { heading = 'Node',   key = 'name',   width = 11 },
+                { heading = 'Node',   key = 'name',   width = 13 },
                 { heading = 'Bal',    key = 'bal',    width = 5, align = 'right' },
                 { heading = 'St',     key = 'status', width = 5 },
             },
@@ -221,7 +221,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
                 status = '[OK]'
             end
             rows[i] = {
-                name   = (n.name or '?'):sub(1, 11),
+                name   = (n.name or '?'):sub(1, 13),
                 bal    = bal,
                 status = status,
                 _err   = _err,

@@ -338,198 +338,173 @@ local function screenImport()
     return raw:gsub("%s",""):lower(), addr, playerName
 end
 
--- ── Command Center ───────────────────────────────────────────────────────────
--- Single hub for node management, integrity checks, and DNS propagation.
-local function screenCommandCenter(nodes, secretKey, address, perNodeBalances)
-    while true do
-        banner("Command Center")
-        if #nodes == 0 then
-            pmsg("No nodes configured.", 5, colors.gray)
-        else
-            for i, node in ipairs(nodes) do
-                local fp_badge = ""
-                if node.fp_mismatch      then fp_badge = " [!]"
-                elseif not node.known_fp then fp_badge = " [?]"
-                end
-                local col = node.fp_mismatch and colors.red or colors.white
-                -- Show per-node balance + ping if available from last refresh
-                local balStr, pingStr = "", ""
-                if perNodeBalances and perNodeBalances[i] then
-                    local bal = perNodeBalances[i].balance or 0
-                    balStr = string.format(" %duAMI", bal)
-                    if perNodeBalances[i].latency then
-                        pingStr = string.format(" %dms", perNodeBalances[i].latency)
-                    end
-                end
-                local label = string.format("[%d] %-9s%s%s%s",
-                    i, node.name:sub(1, 9), balStr, pingStr, fp_badge)
-                pmsg(label:sub(1, W), 4 + i, col)
+-- ── Command Center (Opus UI) ─────────────────────────────────────────────────
+local function screenCommandCenter(nodes, secretKey, address, perNodeBalances, dashPage, updateDash)
+    local WalletUI = require('wallet_ui')
+    local cmdPage  = WalletUI.createCmdCtr()
+    WalletUI.updateCmdCtr(cmdPage, nodes, perNodeBalances)
+
+    local function returnToDash()
+        UI:setPage(dashPage)
+        updateDash()
+    end
+
+    local function refreshCmd()
+        WalletUI.updateCmdCtr(cmdPage, nodes, perNodeBalances)
+        UI:setPage(cmdPage)
+    end
+
+    local function rawScreen()
+        term.clear(); term.setCursorPos(1, 1)
+        term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
+    end
+
+    function cmdPage:eventHandler(event)
+        -- Keyboard shortcuts forwarded to action events
+        if event.type == 'key' then
+            local k = event.key
+            if     k == keys.a                       then self:eventHandler({type='action_add'})
+            elseif k == keys.d and #nodes > 0        then self:eventHandler({type='action_del'})
+            elseif k == keys.i and #nodes > 0        then self:eventHandler({type='action_integ'})
+            elseif k == keys.g and #nodes > 0        then self:eventHandler({type='action_gossip'})
+            elseif k == keys.c and #nodes > 1        then self:eventHandler({type='action_consolidate'})
+            elseif k == keys.b                       then self:eventHandler({type='action_back'})
             end
+            return true
         end
-        local base = 6 + #nodes
-        pmsg("  [A] Add node",    base,     colors.orange)
-        if #nodes > 0 then
-            pmsg("  [D] Remove node",           base + 1, colors.red)
-            pmsg("  [I] Integrity Handshake",   base + 2, colors.yellow)
-            pmsg("  [G] Gossip DNS cache",       base + 3, colors.cyan)
-            pmsg("  [C] Consolidate balances",  base + 4, colors.lime)
-        end
-        pmsg("  [B] Back", base + (#nodes > 0 and 5 or 1), colors.gray)
 
-        local _, key = os.pullEvent("key")
+        -- ── Back ──────────────────────────────────────────────────────────────
+        if event.type == 'action_back' then
+            returnToDash(); return true
 
-        if key == keys.a then
-            banner("Add Node")
-            pmsg("Node name (e.g. 'Main Server'):", 5)
+        -- ── Add node ──────────────────────────────────────────────────────────
+        elseif event.type == 'action_add' then
+            rawScreen(); banner("Add Node")
+            pmsg("Node name:", 5, colors.yellow)
             local nodeName = prompt("> ", 7)
             nodeName = nodeName:gsub("^%s*(.-)%s*$", "%1")
             if #nodeName == 0 then nodeName = "Node " .. (#nodes + 1) end
             pmsg("How to add?", 9, colors.yellow)
             pmsg("  [1] Enter 32-char key manually", 10, colors.white)
             pmsg("  [2] Fetch via setup password",   11, colors.orange)
-
             local addKey
             while true do
                 local _, ak = os.pullEvent("key")
                 if ak == keys.one or ak == keys.n1 then
-                    pmsg("32-char XTEA key from node boot:", 13)
+                    pmsg("32-char XTEA key:", 13)
                     local k = prompt("> ", 15)
-                    k = k:gsub("%s",""):lower()
+                    k = k:gsub("%s", ""):lower()
                     if #k == 0 then
                         pmsg("Cancelled.", 17, colors.gray); os.sleep(0.8)
                     elseif #k ~= 32 then
-                        pmsg("Invalid (must be 32 hex chars).", 17, colors.red); waitKey()
+                        pmsg("Invalid (need 32 hex chars).", 17, colors.red); waitKey()
                     else
                         addKey = k
                     end
                     break
                 elseif ak == keys.two or ak == keys.n2 then
-                    pmsg("Setup password for this node:", 13, colors.orange)
+                    pmsg("Setup password:", 13, colors.orange)
                     local pw = prompt("> ", 15, true)
                     if #pw == 0 then
                         pmsg("Cancelled.", 17, colors.gray); os.sleep(0.8)
                     else
                         pmsg("Contacting node...", 17, colors.yellow)
-                        local ok, k, err = comms.fetchNodeKey(secretKey, address, pw)
-                        if ok and k then
-                            addKey = k
-                            pmsg("Got key!", 17, colors.green); os.sleep(0.5)
+                        local ok2, k2, err2 = comms.fetchNodeKey(secretKey, address, pw)
+                        if ok2 and k2 then
+                            addKey = k2; pmsg("Got key!", 17, colors.green); os.sleep(0.5)
                         else
-                            pmsg("Failed: " .. (err or "unknown"), 17, colors.red); waitKey()
+                            pmsg("Failed: " .. (err2 or "unknown"), 17, colors.red); waitKey()
                         end
                     end
                     break
                 end
             end
-
             if addKey then
                 nodes[#nodes + 1] = { name=nodeName, key=addKey }
                 saveNodes(nodes)
-                pmsg("Node '" .. nodeName .. "' added!", 19, colors.green)
-                os.sleep(0.8)
+                pmsg("'" .. nodeName .. "' added!", 19, colors.green); os.sleep(0.8)
             end
+            refreshCmd(); return true
 
-        elseif key == keys.d and #nodes > 0 then
-            banner("Remove Node")
+        -- ── Remove node ───────────────────────────────────────────────────────
+        elseif event.type == 'action_del' then
+            if #nodes == 0 then refreshCmd(); return true end
+            rawScreen(); banner("Remove Node")
             for i, node in ipairs(nodes) do
                 pmsg(string.format("  [%d] %s", i, node.name), 5 + i, colors.white)
             end
-            local promptRow = 6 + #nodes
-            pmsg("Enter number (0=cancel):", promptRow, colors.yellow)
-            local inp = prompt("> ", promptRow + 1)
+            local pr = 6 + #nodes
+            pmsg("Enter number (0=cancel):", pr, colors.yellow)
+            local inp = prompt("> ", pr + 1)
             local idx = tonumber(inp)
             if idx and idx >= 1 and idx <= #nodes then
                 local removed = nodes[idx].name
                 table.remove(nodes, idx)
                 saveNodes(nodes)
                 banner("Remove Node")
-                pmsg("Removed '" .. removed .. "'.", 5, colors.green)
-                os.sleep(0.8)
+                pmsg("Removed '" .. removed .. "'.", 5, colors.green); os.sleep(0.8)
             else
-                pmsg("Cancelled.", promptRow + 2, colors.gray)
-                os.sleep(0.5)
+                pmsg("Cancelled.", pr + 2, colors.gray); os.sleep(0.5)
             end
+            refreshCmd(); return true
 
-        elseif key == keys.i and #nodes > 0 then
-            -- ── Integrity Handshake ─────────────────────────────────────────
-            -- Processes nodes strictly in priority order (list position 1…N).
-            -- send() now ignores replies that don't decrypt with the target
-            -- node's key, so other nodes on the mesh cannot interfere.
-            -- Live [idx/total] progress is shown before each blocking call.
-            local ok_ct  = 0
-            local mis_ct = 0
-            local results = {}   -- accumulate so we can redraw as we go
-
+        -- ── Integrity Handshake ───────────────────────────────────────────────
+        elseif event.type == 'action_integ' then
+            if #nodes == 0 then refreshCmd(); return true end
+            local ok_ct, mis_ct = 0, 0
+            local results = {}
             for idx, node in ipairs(nodes) do
-                -- Show progress header BEFORE the blocking network call
-                banner("Integrity Handshake")
+                rawScreen(); banner("Integrity Handshake")
                 pmsg(string.format("[%d/%d] Querying '%s'...",
-                    idx, #nodes, node.name:sub(1,14)), 5, colors.yellow)
-                -- Re-draw already-completed results above the fold
+                    idx, #nodes, node.name:sub(1, 14)), 5, colors.yellow)
                 local rrow = 7
                 for _, r in ipairs(results) do
                     pmsg(r.line, rrow, r.col); rrow = rrow + 1
-                    if r.sub1 then pmsg(r.sub1, rrow, r.col2);   rrow = rrow + 1 end
-                    if r.sub2 then pmsg(r.sub2, rrow, colors.orange); rrow = rrow + 1 end
+                    if r.sub1 then pmsg(r.sub1, rrow, r.col2);        rrow = rrow + 1 end
+                    if r.sub2 then pmsg(r.sub2, rrow, colors.orange);  rrow = rrow + 1 end
                 end
-
-                -- Blocking call — only accepts a reply encrypted with node.key
-                local ok, data, err = comms.getFingerprint(secretKey, node.key, address)
-
+                local ok2, data, err = comms.getFingerprint(secretKey, node.key, address)
                 local entry = {}
-                if ok and data and data.fingerprint then
+                if ok2 and data and data.fingerprint then
                     local fp = data.fingerprint
                     if not node.known_fp then
-                        node.known_fp    = fp
-                        node.fp_mismatch = false
-                        ok_ct = ok_ct + 1
-                        entry.line = string.format("  [%d] %-12s TOFC  %s",
-                            idx, node.name:sub(1,12), fp)
+                        node.known_fp = fp; node.fp_mismatch = false; ok_ct = ok_ct + 1
+                        entry.line = string.format("  [%d] %-12s TOFC  %s", idx, node.name:sub(1,12), fp)
                         entry.col  = colors.yellow
                     elseif node.known_fp == fp then
-                        node.fp_mismatch = false
-                        ok_ct = ok_ct + 1
-                        entry.line = string.format("  [%d] %-12s OK    %s",
-                            idx, node.name:sub(1,12), fp)
+                        node.fp_mismatch = false; ok_ct = ok_ct + 1
+                        entry.line = string.format("  [%d] %-12s OK    %s", idx, node.name:sub(1,12), fp)
                         entry.col  = colors.green
                     else
-                        node.fp_mismatch = true
-                        mis_ct = mis_ct + 1
-                        entry.line     = string.format("  [%d] %-12s !! MISM",
-                            idx, node.name:sub(1,10))
+                        node.fp_mismatch = true; mis_ct = mis_ct + 1
+                        entry.line     = string.format("  [%d] %-12s !! MISMATCH", idx, node.name:sub(1,10))
                         entry.col      = colors.red
                         entry.sub1     = string.format("       got:  %s", fp)
                         entry.col2     = colors.red
                         entry.sub2     = string.format("       want: %s", node.known_fp)
-                        entry.new_fp   = fp       -- new hash from node
-                        entry.node_idx = idx      -- so Trust can update the right slot
+                        entry.new_fp   = fp
+                        entry.node_idx = idx
                     end
                 else
-                    entry.line = string.format("  [%d] %-12s ERR   %s",
-                        idx, node.name:sub(1,12), err or "?")
+                    entry.line = string.format("  [%d] %-12s ERR  %s", idx, node.name:sub(1,12), err or "?")
                     entry.col  = colors.red
                 end
                 results[#results + 1] = entry
             end
-
-            -- Final full render with summary
-            banner("Integrity Handshake")
+            rawScreen(); banner("Integrity Handshake")
             local rrow = 5
             for _, r in ipairs(results) do
                 pmsg(r.line, rrow, r.col); rrow = rrow + 1
-                if r.sub1 then pmsg(r.sub1, rrow, r.col2);      rrow = rrow + 1 end
+                if r.sub1 then pmsg(r.sub1, rrow, r.col2);       rrow = rrow + 1 end
                 if r.sub2 then pmsg(r.sub2, rrow, colors.orange); rrow = rrow + 1 end
             end
             rrow = rrow + 1
             pmsg(string.format("Done: %d/%d OK  %d mismatch", ok_ct, #nodes, mis_ct),
                 rrow, mis_ct > 0 and colors.red or colors.green)
+            saveNodes(nodes)
             if mis_ct > 0 then
                 rrow = rrow + 1
                 pmsg("[T] Trust new  [any] Back", rrow, colors.yellow)
-            end
-            saveNodes(nodes)
-            if mis_ct > 0 then
-                -- Wait: if user presses T, accept all new fingerprints.
                 local _, tkey = os.pullEvent("key")
                 if tkey == keys.t then
                     for _, r in ipairs(results) do
@@ -540,148 +515,101 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances)
                     end
                     saveNodes(nodes)
                     banner("Integrity Handshake")
-                    pmsg("Fingerprints updated and trusted.", 5, colors.green)
-                    pmsg("Re-run handshake to confirm.", 6, colors.lightGray)
-                    os.sleep(1.5)
+                    pmsg("Fingerprints trusted.", 5, colors.green); os.sleep(1.5)
                 end
             else
                 waitKey()
             end
+            refreshCmd(); return true
 
-        elseif key == keys.g and #nodes > 0 then
-            -- ── Gossip DNS cache ────────────────────────────────────────────
-            -- Propagates every locally-cached name→address pair to all nodes
-            -- so the whole mesh shares the same directory.
-            banner("Gossip DNS")
+        -- ── Gossip DNS ────────────────────────────────────────────────────────
+        elseif event.type == 'action_gossip' then
+            if #nodes == 0 then refreshCmd(); return true end
+            rawScreen(); banner("Gossip DNS")
             local cache = loadNameCache()
             local names = {}
-            for addr, name in pairs(cache) do
-                names[#names + 1] = { addr=addr, name=name }
-            end
+            for addr, name in pairs(cache) do names[#names + 1] = {addr=addr, name=name} end
             if #names == 0 then
                 pmsg("Name cache is empty. Nothing to gossip.", 5, colors.gray)
             else
-                pmsg(string.format("Gossiping %d name(s) to %d node(s)...",
-                    #names, #nodes), 5, colors.yellow)
+                pmsg(string.format("Gossiping %d name(s) to %d node(s)...", #names, #nodes),
+                    5, colors.yellow)
                 for _, entry in ipairs(names) do
                     comms.gossipDnsAll(secretKey, address, nodes, entry.name, entry.addr)
                 end
                 pmsg(string.format("Sent %d entries to all nodes.", #names), 7, colors.green)
             end
-            waitKey()
+            waitKey(); refreshCmd(); return true
 
-        elseif key == keys.c and #nodes > 1 then
-            -- ── Consolidate: sweep all balances into one node ───────────────
-            -- 1. Fetch the live balance from every node.
-            -- 2. Show the per-node breakdown and let the operator pick the
-            --    target node (default = highest-balance node).
-            -- 3. For every other node that has a non-zero balance, issue a
-            --    TRANSFER of its full balance to the target node's address.
-            banner("Consolidate Balances")
-            pmsg("Fetching balances...", 5, colors.yellow)
-
-            -- Build per-node balance table.
+        -- ── Consolidate ───────────────────────────────────────────────────────
+        elseif event.type == 'action_consolidate' then
+            if #nodes < 2 then refreshCmd(); return true end
+            rawScreen(); banner("Consolidate Balances")
+            pmsg("Fetching live balances...", 5, colors.yellow)
             local nodeBalances = {}
-            local highestBal   = 0
-            local defaultIdx   = 1
+            local highestBal, defaultIdx = 0, 1
             for i, node in ipairs(nodes) do
-                local ok, data = comms.getBalance(secretKey, node.key, address)
-                local bal = (ok and data and data.balance) or 0
+                local ok2, data = comms.getBalance(secretKey, node.key, address)
+                local bal = (ok2 and data and data.balance) or 0
                 nodeBalances[i] = bal
                 if bal > highestBal then highestBal = bal; defaultIdx = i end
             end
-
-            -- Show breakdown.
             banner("Consolidate Balances")
             for i, node in ipairs(nodes) do
                 local bstr = string.format("%.4f AMI", nodeBalances[i] / 1000000)
-                pmsg(string.format("  [%d] %-14s %s",
-                    i, node.name:sub(1,14), bstr), 4 + i,
-                    i == defaultIdx and colors.lime or colors.white)
+                pmsg(string.format("  [%d] %-14s %s", i, node.name:sub(1, 14), bstr),
+                    4 + i, i == defaultIdx and colors.lime or colors.white)
             end
-
-            local promptRow = 5 + #nodes
-            pmsg(string.format("Target node? [1-%d] (Enter=%d):",
-                #nodes, defaultIdx), promptRow, colors.yellow)
-            local inp = prompt("> ", promptRow + 1)
-            inp = inp:gsub("%s", "")
-            local targetIdx = (#inp > 0 and tonumber(inp)) or defaultIdx
-            if not targetIdx or targetIdx < 1 or targetIdx > #nodes then
-                targetIdx = defaultIdx
-            end
-
+            local pr2 = 5 + #nodes
+            pmsg(string.format("Target? [1-%d] (Enter=%d):", #nodes, defaultIdx), pr2, colors.yellow)
+            local inp2 = prompt("> ", pr2 + 1); inp2 = inp2:gsub("%s", "")
+            local targetIdx = (#inp2 > 0 and tonumber(inp2)) or defaultIdx
+            if not targetIdx or targetIdx < 1 or targetIdx > #nodes then targetIdx = defaultIdx end
             local targetNode = nodes[targetIdx]
-
-            -- Fetch the target node's registered address (its shop/wallet addr).
-            -- We look up the target node key itself as the recipient address:
-            -- "which address does this node hold coins for this wallet?" = our
-            -- own address.  Consolidate moves OUR balance from each source
-            -- node into the target node by doing a TRANSFER from our wallet
-            -- on the source node TO our own address on the target node.
-            -- Because all nodes share the same ledger mesh, this is a simple
-            -- on-chain transfer — the sending node deducts, the target node
-            -- credits the same address via mesh consensus.
-
             banner("Consolidate Balances")
             pmsg(string.format("Target: %s", targetNode.name), 5, colors.lime)
-            local moved = 0
-            local errs  = 0
-            local row   = 7
+            local moved, errs, row = 0, 0, 7
             for i, node in ipairs(nodes) do
                 if i ~= targetIdx then
-                    -- Dust fix: ensure integer microcoins.
                     local bal = math.floor(nodeBalances[i] or 0)
                     if bal > 0 then
-                        -- ── Step 1: DRAIN source node ────────────────────────
-                        pmsg(string.format("  [1/2] DRAIN  %s  %d uAMI...",
-                            node.name:sub(1, 10), bal), row, colors.yellow)
-                        row = row + 1
-                        local dok, ddata, derr = comms.consolidateOut(
-                            secretKey, node.key, address, bal)
+                        pmsg(string.format("  DRAIN  %-10s %duAMI...", node.name:sub(1,10), bal),
+                            row, colors.yellow); row = row + 1
+                        local dok, ddata, derr = comms.consolidateOut(secretKey, node.key, address, bal)
                         if not dok then
                             errs = errs + 1
-                            pmsg("    DRAIN FAILED: " .. (derr or "?"), row, colors.red)
-                            row = row + 1
+                            pmsg("    DRAIN FAILED: " .. (derr or "?"), row, colors.red); row = row + 1
                         else
                             local actual  = math.floor((ddata and ddata.amount) or bal)
                             local receipt = ddata and ddata.receipt
-                            pmsg(string.format("    drained %d uAMI  [%s]",
-                                actual, tostring(receipt):sub(1, 8)), row, colors.lime)
-                            row = row + 1
-                            -- ── Step 2: CREDIT target node ───────────────────
-                            pmsg(string.format("  [2/2] CREDIT %s  %d uAMI...",
-                                targetNode.name:sub(1, 10), actual), row, colors.yellow)
-                            row = row + 1
+                            pmsg(string.format("    drained %d uAMI", actual), row, colors.lime); row = row + 1
+                            pmsg(string.format("  CREDIT %-10s %duAMI...", targetNode.name:sub(1,10), actual),
+                                row, colors.yellow); row = row + 1
                             local cok, _, cerr = comms.consolidateIn(
                                 secretKey, targetNode.key, address, actual, receipt)
                             if cok then
                                 moved = moved + actual
-                                pmsg(string.format("    credited %d uAMI OK", actual),
-                                    row, colors.green)
+                                pmsg(string.format("    credited %d uAMI OK", actual), row, colors.green)
                             else
                                 errs = errs + 1
-                                pmsg("    CREDIT FAILED: " .. (cerr or "?"),
-                                    row, colors.red)
+                                pmsg("    CREDIT FAILED: " .. (cerr or "?"), row, colors.red)
                             end
                             row = row + 1
                         end
                     else
-                        pmsg(string.format("  %s: 0 balance, skip",
-                            node.name:sub(1, 14)), row, colors.gray)
-                        row = row + 1
+                        pmsg(string.format("  %-14s 0 bal, skip", node.name:sub(1,14)),
+                            row, colors.gray); row = row + 1
                     end
                 end
             end
             row = row + 1
-            pmsg(string.format("Consolidated %d uAMI  (%d error(s))",
-                moved, errs),
+            pmsg(string.format("Consolidated %d uAMI  (%d error(s))", moved, errs),
                 row, errs > 0 and colors.red or colors.green)
-            waitKey()
-
-        elseif key == keys.b then
-            return nodes
+            waitKey(); refreshCmd(); return true
         end
     end
+
+    UI:setPage(cmdPage)
 end
 
 -- ── AmiVault ──────────────────────────────────────────────────────────────────
@@ -1163,10 +1091,9 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             return true
             
         elseif event.type == 'action_nodes' then
-            -- Command Center
-            nodes = screenCommandCenter(nodes, secretKey, address, perNode)
-            UI:setPage(dashboardPage)
-            updateDashboard()
+            -- Command Center (Opus page takes over; back button returns here)
+            screenCommandCenter(nodes, secretKey, address, perNode,
+                dashboardPage, updateDashboard)
             return true
             
         elseif event.type == 'action_vault' then

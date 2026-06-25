@@ -246,4 +246,161 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
     page:sync()
 end
 
+-- ── Command Center page ───────────────────────────────────────────────────────
+
+local function buildCmdRows(nodes, perNode)
+    local rows = {}
+    for i, node in ipairs(nodes) do
+        local pn   = perNode and perNode[i]
+        local bal  = pn and string.format('%.2f', (pn.balance or 0) / 1e6) or '?'
+        local ping = (pn and pn.latency) and string.format('%dms', pn.latency) or '---'
+        local fp, _err, _fpbad, _new
+        if pn and pn.err then
+            fp = '[ERR]'; _err = true
+        elseif node.fp_mismatch then
+            fp = '[!FP]'; _fpbad = true
+        elseif pn and pn.fp_ok == 'tofc' then
+            fp = '[NEW]'; _new = true
+        elseif node.known_fp then
+            fp = '[OK]'
+        else
+            fp = '[?]'; _new = true
+        end
+        rows[i] = {
+            name   = (node.name or '?'):sub(1, 9),
+            bal    = bal:sub(1, 7),
+            ping   = ping:sub(1, 5),
+            fp     = fp,
+            _err   = _err, _fpbad = _fpbad, _new = _new,
+        }
+    end
+    return rows
+end
+
+function WalletUI.createCmdCtr()
+    return UI.Page({
+        backgroundColor = colors.black,
+
+        titleBar = UI.TitleBar({
+            title = 'Command Center',
+            backgroundColor = colors.red,
+            textColor = colors.white,
+        }),
+
+        -- Node grid rows 2-10 (9 rows: 1 header + 8 data)
+        -- Columns: Node(9) Bal(7) Ping(5) FP(5) = 26
+        nodeGrid = UI.ScrollingGrid({
+            x = 1, y = 2, width = -1, height = 9,
+            backgroundColor = colors.black,
+            textColor = colors.white,
+            textSelectedColor = colors.white,
+            headerBackgroundColor = colors.red,
+            headerTextColor = colors.white,
+            backgroundSelectedColor = colors.gray,
+            unfocusedBackgroundSelectedColor = colors.black,
+            columns = {
+                { heading = 'Node', key = 'name', width = 9 },
+                { heading = 'Bal',  key = 'bal',  width = 7, align = 'right' },
+                { heading = 'Ping', key = 'ping', width = 5, align = 'right' },
+                { heading = 'FP',   key = 'fp',   width = 5 },
+            },
+            values = {},
+            getRowTextColor = function(self, row, selected)
+                if selected and self.focused then return self.textSelectedColor end
+                if row._err   then return colors.red    end
+                if row._fpbad then return colors.orange end
+                if row._new   then return colors.yellow end
+                return colors.lime
+            end,
+        }),
+
+        -- Row 11: info strip (online count + total balance)
+        infoBar = UI.Window({
+            x = 1, y = 11, width = -1, height = 1,
+            backgroundColor = colors.gray,
+            _info = 'No nodes configured',
+            draw = function(self)
+                self:clear(colors.gray)
+                self:write(1, 1, (' ' .. self._info):sub(1, self.width),
+                    colors.gray, colors.white)
+            end,
+        }),
+
+        -- Row 12: Add(12) gap(1) Del(13)
+        addBtn = UI.Button({
+            x = 1, y = 12, width = 12, height = 1,
+            text = '[A]dd node', event = 'action_add',
+            backgroundColor = colors.orange, backgroundFocusColor = colors.yellow,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        delBtn = UI.Button({
+            x = 14, y = 12, width = 13, height = 1,
+            text = '[D]el node', event = 'action_del',
+            backgroundColor = colors.red, backgroundFocusColor = colors.orange,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+
+        -- Row 13: Integrity(12) gap(1) Gossip(13)
+        integBtn = UI.Button({
+            x = 1, y = 13, width = 12, height = 1,
+            text = '[I]ntegrity', event = 'action_integ',
+            backgroundColor = colors.yellow, backgroundFocusColor = colors.orange,
+            textColor = colors.black, textFocusColor = colors.black,
+        }),
+        gossipBtn = UI.Button({
+            x = 14, y = 13, width = 13, height = 1,
+            text = '[G]ossip DNS', event = 'action_gossip',
+            backgroundColor = colors.cyan, backgroundFocusColor = colors.lightBlue,
+            textColor = colors.black, textFocusColor = colors.black,
+        }),
+
+        -- Row 14: Consolidate (full width)
+        consolidateBtn = UI.Button({
+            x = 1, y = 14, width = 26, height = 1,
+            text = '[C]onsolidate Balances', event = 'action_consolidate',
+            backgroundColor = colors.lime, backgroundFocusColor = colors.green,
+            textColor = colors.black, textFocusColor = colors.black,
+        }),
+
+        -- Row 15: Back (full width)
+        backBtn = UI.Button({
+            x = 1, y = 15, width = 26, height = 1,
+            text = '[B]ack to Wallet', event = 'action_back',
+            backgroundColor = colors.gray, backgroundFocusColor = colors.lightGray,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+
+        statusBar = UI.StatusBar({
+            backgroundColor = colors.red,
+            textColor = colors.white,
+        }),
+    })
+end
+
+function WalletUI.updateCmdCtr(page, nodes, perNode)
+    page.nodeGrid:setValues(buildCmdRows(nodes, perNode))
+
+    local online, totalBal = 0, 0
+    for i = 1, #nodes do
+        local pn = perNode and perNode[i]
+        if pn and not pn.err then online = online + 1 end
+        if pn then totalBal = totalBal + (pn.balance or 0) end
+    end
+
+    if #nodes == 0 then
+        page.infoBar._info = 'No nodes -- press [A]dd'
+    else
+        page.infoBar._info = string.format('%d/%d online  |  %.4f AMI total',
+            online, #nodes, totalBal / 1e6)
+    end
+
+    page.statusBar:setStatus(
+        #nodes == 0 and 'No nodes configured'
+        or string.format('%d/%d nodes online', online, #nodes)
+    )
+
+    page:draw()
+    page:sync()
+end
+
 return WalletUI

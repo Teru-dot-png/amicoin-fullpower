@@ -73,7 +73,10 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 On the Advanced Computer (with Ender Router attached):
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installnode.lua
+lua
+```
+```lua
+shell.run("rm", "installnode.lua") and shell.run("wget", "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/installnode.lua?" .. os.epoch("utc")) and shell.run("installnode.lua")
 ```
 
 Type `YES` when prompted, then reboot. The node prints its **XTEA Node Key** on first boot — write this down. The installer also prints an **install fingerprint** you can compare against the published checksum on GitHub to verify the files were not tampered with.
@@ -83,7 +86,10 @@ Type `YES` when prompted, then reboot. The node prints its **XTEA Node Key** on 
 On each Ender Router Pad:
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installpad.lua
+lua
+```
+```lua
+shell.run("rm", "installpad.lua") and shell.run("wget", "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/installpad.lua?" .. os.epoch("utc")) and shell.run("installpad.lua")
 ```
 
 Press Enter, then reboot. The Wallet App launches automatically.
@@ -331,7 +337,10 @@ Player Wallet (Pad)              AmiStore (Merchant Node)
 ### Install AmiStore
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installshop.lua
+lua
+```
+```lua
+shell.run("rm", "installshop.lua") and shell.run("wget", "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/installshop.lua?" .. os.epoch("utc")) and shell.run("installshop.lua")
 ```
 
 ## AmiCasino
@@ -341,7 +350,10 @@ AmiCasino is a standalone gamble station that runs on any CC:Tweaked computer wi
 ### Install
 
 ```
-wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main/installcasino.lua
+lua
+```
+```lua
+shell.run("rm", "installcasino.lua") and shell.run("wget", "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/installcasino.lua?" .. os.epoch("utc")) and shell.run("installcasino.lua")
 ```
 
 Choose **[I] Install** on first setup. After installation, run `shell.run("/ami/casino/startup")` (or reboot if `/startup.lua` was written by the installer).

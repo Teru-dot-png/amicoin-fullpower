@@ -100,7 +100,7 @@ function WalletUI.createDashboard(address, playerName)
             unfocusedBackgroundSelectedColor = colors.black,
             columns = {
                 { heading = 'Node',   key = 'name',   width = 11 },
-                { heading = 'Ping',   key = 'ping',   width = 4, align = 'right' },
+                { heading = 'Bal',    key = 'bal',    width = 5, align = 'right' },
                 { heading = 'St',     key = 'status', width = 5 },
             },
             values = {},
@@ -209,7 +209,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
     local rows = {}
     if perNode and #perNode > 0 then
         for i, n in ipairs(perNode) do
-            local ping = n.latency and (n.latency .. 'ms') or '--'
+            local bal = string.format('%.2f', (n.balance or 0) / 1e6):sub(1, 5)
             local status, _err, _fpbad, _new
             if n.err then
                 status = '[ERR]'; _err = true
@@ -222,7 +222,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
             end
             rows[i] = {
                 name   = (n.name or '?'):sub(1, 11),
-                ping   = ping,
+                bal    = bal,
                 status = status,
                 _err   = _err,
                 _fpbad = _fpbad,

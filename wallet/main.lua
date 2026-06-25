@@ -352,14 +352,17 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances)
                 elseif not node.known_fp then fp_badge = " [?]"
                 end
                 local col = node.fp_mismatch and colors.red or colors.white
-                -- Show per-node balance if available from last refresh
-                local balStr = ""
+                -- Show per-node balance + ping if available from last refresh
+                local balStr, pingStr = "", ""
                 if perNodeBalances and perNodeBalances[i] then
                     local bal = perNodeBalances[i].balance or 0
                     balStr = string.format(" %duAMI", bal)
+                    if perNodeBalances[i].latency then
+                        pingStr = string.format(" %dms", perNodeBalances[i].latency)
+                    end
                 end
-                local label = string.format("[%d] %-9s%s%s",
-                    i, node.name:sub(1, 9), balStr, fp_badge)
+                local label = string.format("[%d] %-9s%s%s%s",
+                    i, node.name:sub(1, 9), balStr, pingStr, fp_badge)
                 pmsg(label:sub(1, W), 4 + i, col)
             end
         end

@@ -6,8 +6,8 @@
 
 **A standalone, cross-dimensional cryptocurrency for Minecraft built on CC:Tweaked.**
 
-AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by staying online and keeping the network healthy. No mining puzzles, no energy races just reliable uptime.
-"AMI is the daemon that keeps running economy" 
+AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by staying online and keeping the network healthy. No mining puzzles, no energy races — just reliable uptime.
+"AMI is the daemon that keeps running economy"
 
 ---
 
@@ -107,27 +107,26 @@ Press Enter, then reboot. The Wallet App launches automatically.
 
 ### Glass Cockpit Dashboard
 
-The main screen is a high-density live view:
+The wallet runs on the **Opus UI framework**, purpose-built for the 26×20 Ender Router Pad screen. The interface renders immediately on boot — balances load in the background while you already see the dashboard.
 
-```
-══════════════ AmiCoin ═════════════════
-────────────────────────────────────────
-Steve | 38de02..3e9f
-1.2345 AMI
-                           1234567 uAMI
-────────────────────────────────────────
-Node           Balance   Ping   St
-HomeNode      1.2345    42ms   [OK]
-FarmNode         ---      ---   [!]
-────────────────────────────────────────
-Net 7  50 uAMI/tk (2 nodes)  +6000/hr
-────────────────────────────────────────
-[S]end [R]efresh [E]xport [N] CmdCtr(2)
-[V]ault  [U]pdate  [L]ogout
-```
+<p align="center">
+  <img src="WalletExample.png" alt="AmiCoin Wallet Dashboard" />
+</p>
 
-- **Per-node health table** — balance, round-trip latency, and status badge (`[OK]` / `[FP]` / `[??]`) for every configured node.
-- **Network stats row** — sums the `effective_rate` (base rate × Overclocked Miner multiplier) across every responding node. If you run 5 nodes each giving 10 uAMI/tick the row shows **50 uAMI/tick** and the correct hourly total. The `/hr` figure uses the actual 30-second tick interval (120 ticks/hr).
+**Layout top-to-bottom:**
+
+| Zone | Content |
+|------|---------|
+| Title bar (red) | Player name · truncated wallet address |
+| Balance panel (gray, 4 rows) | AMI float · µAMI integer · node summary |
+| Node grid (12 rows) | Scrollable per-node table: **Node · Balance · Status** |
+| Button row 1 (y=18) | `[S]end` · `[R]efresh` · `[E]xport` · `[N]Cmd` |
+| Button row 2 (y=19) | `[V]ault` · `[U]pdate` · `[L]ogout` |
+| Status bar (red) | Live mining rate · blinking activity pulse |
+
+- **Color-coded node rows** — lime = healthy, orange = fingerprint mismatch, red = unreachable, yellow = new/unverified node.
+- **`[N]Cmd` button** shows the live node count in brackets once connected, e.g. `[N](2)`.
+- **Status bar** shows effective network rate while nodes are responding (`50uAMI/30s +6000/hr`), or a connecting message during the initial fetch.
 
 ### Multi-Node Support
 
@@ -152,7 +151,7 @@ Player names are cached locally in `/wallet_data/names_cache.json`. Addresses ap
 
 ### Command Center (Node Manager)
 
-Press **`[N]`** to open the Command Center. Available actions:
+Press **`[N]`** to open the Command Center — a full Opus UI page with a live node grid showing **Node · Balance · Ping · FP** columns for every configured node, an info strip with total online count and aggregated AMI, and action buttons.
 
 | Key | Action |
 |-----|--------|
@@ -200,29 +199,28 @@ Press **`[U]`** from the Dashboard to pull the latest wallet files from GitHub. 
 
 ### Monitor Display
 
-If an Advanced Monitor is attached, the node renders a live status board every 10–30 seconds:
+If an Advanced Monitor is attached, the node renders a live status board. Stats extend the full monitor width; the animated cooling fan is anchored to the **bottom-right corner**, leaving the left column clear for the scrollable upgrades list.
 
-```
-────────── AmiCoin Node v1.0.0 ──────────
-------------------------------------------
-Key:    a3f1b2c4d5e6f7a8...
-Active: 3 wallet(s)
-Supply: 12345678 uAMI
-      = 12.345678 AMI
-Chan:   1337
-------------------------------------------
-Rate:   10 uAMI/tk
-      = 1.2000 AMI/hr
-TPS:    OK
-------------------------------------------
-Upgrades active:
-OvrclkMiner  Lv2
-HBExtender   Lv1
-```
+<p align="center">
+  <img src="NodeExample.png" alt="AmiCoin Node Monitor" />
+</p>
 
-- Rate rows show the **effective rate** (base × Overclocked Miner multiplier).
-- The upgrades panel only appears when at least one upgrade has been purchased.
-- The colour theme changes when the **Advanced Matrix UI** upgrade is active.
+**Layout (36×24 monitor example):**
+
+| Zone | Rows | Content |
+|------|------|---------|
+| Title bar | 1 | "AmiCoin Node v7.x" — theme-colored, full width |
+| Identity panel (gray) | 2–3 | XTEA key (truncated) · Fingerprint · Channel |
+| Economy panel (black) | 4–7 | Wallets / TPS · Supply (µAMI + AMI) · Rate (µAMI/tk + AMI/hr) · Total ticks |
+| Thermal panel (gray) | 8–9 | Temperature + cooling badge · Mint progress bar + countdown |
+| Feature flags (gray) | 10 | Crown level · Casino rake · Priority Ping — only when active |
+| Active Upgrades (black) | 11–end | Auto-scrolling upgrade list with `[N/total]` counter; rows above the fan use the full width, rows that overlap the fan are clipped to the left column |
+| Cooling Fan (bottom-right) | last 11 rows | Theme-colored header · 9-row animated fan graphic · status badge (`SPINNING` / `IDLE`) |
+
+- **Temperature colour** — lime below 100°C, yellow 100–199°C, orange 200–299°C, red at throttle.
+- **Fan animation speed** scales with cooling level and backs off when TPS lag is detected.
+- **Upgrade list auto-scrolls** every ~1.5 seconds when there are more upgrades than visible rows, so every upgrade is always eventually on screen.
+- **Colour theme** changes per `matrix_ui` level (green phosphor, amber, ice blue, void red, crown gold, and more).
 
 ### Keyboard Shortcuts
 
@@ -292,7 +290,7 @@ Node temperature = `30 + overclock_lv × 28 − air_cooler_lv × 28` °C (±3°C
 | 200–299°C | Yield × (1 − 0.50 × (1 − lc_lv × 0.10)) | Yes — Lv10 removes fully |
 | ≥ 300°C | **MINING HALTED** (no coins minted this tick) | No — only Air Cooler can prevent this |
 
-The monitor shows temperature in colour (green/yellow/orange/red) with an animated 3-blade fan that spins when any cooling upgrade is owned.
+The monitor shows temperature in colour (green/yellow/orange/red) with an animated 3-blade fan in the bottom-right corner that spins when any cooling upgrade is owned.
 
 #### Retired upgrades (grandfathered)
 The following upgrades are no longer sold but **remain active** on nodes that already own them. Their effects are preserved across reboots and self-updates. They do not appear in the shop menu.
@@ -420,6 +418,10 @@ Navigate pages with **`[N]`** / **`[P]`**. Select a game with **`[1–5]`**. Pre
 | `U` | Self-update from GitHub |
 | `Q` | Quit |
 
+---
+
+## Reward Schedule
+
 Rewards are issued in *microcoins* (µAMI). **1 AMI = 1,000,000 µAMI.**
 
 > **Live rate:** The base reward rate is controlled by [`reward_rate.txt`](../reward_rate.txt) in this repository.
@@ -451,10 +453,15 @@ amicoin/
 │   ├── startup.lua           Node entry point; packet dispatcher, monitor, watchdog, key input
 │   ├── ledger.lua            Ledger, name registry, AmiVault, in-memory write cache
 │   ├── miner_daemon.lua      Proof-of-Uptime reward engine (TPS-aware, halving, upgrade-aware)
-│   ├── upgrades.lua          Node Upgrade Engine; 10 upgrades, invoice flow, effect API
+│   ├── upgrades.lua          Node Upgrade Engine; upgrades, invoice flow, effect API
+│   ├── node_ui.lua           Opus UI screens for the node's built-in terminal display
+│   ├── upgrade_ui.lua        Upgrade shop UI (browse, purchase, confirm flow)
+│   ├── amidecode_ui.lua      AmiDecode glyph viewer UI for the node terminal
+│   ├── monitor_ui.lua        Advanced Monitor renderer: full-width stats + bottom-right fan
 │   └── xtea.lua              Thin re-export of shared/xtea.lua
 ├── wallet/
-│   ├── main.lua              Glass Cockpit dashboard, all wallet screens, Ami-DNS cache
+│   ├── main.lua              Dashboard, all wallet screens, Ami-DNS cache, parallel refresh
+│   ├── wallet_ui.lua         Opus UI pages: Dashboard and Command Center
 │   ├── secret_manager.lua    Key generation, import, and 128-char address derivation
 │   ├── session.lua           Hardware-bound encrypted auto-login session
 │   └── comms.lua             Encrypted packet I/O, latency measurement, all node commands
@@ -469,10 +476,12 @@ amicoin/
 │   └── ui.lua                Shared terminal drawing helpers, bet prompt, animations
 ├── docs/
 │   ├── README.md             This file
+│   ├── WalletExample.png     Wallet dashboard screenshot
+│   ├── NodeExample.png       Node monitor screenshot
 │   ├── SHOP.md               AmiStore Merchant Manual
 │   ├── SECURITY.md           XTEA, source verification, and key safety guidelines
 │   └── MIGRATION.md          How to move your wallet to a new Pad
-├── installnode.lua           One-command node installer (includes upgrades.lua)
+├── installnode.lua           One-command node installer (delta-update, force, or clean install)
 ├── installpad.lua            One-command wallet installer
 ├── installshop.lua           One-command AmiStore installer
 └── installcasino.lua         One-command AmiCasino installer

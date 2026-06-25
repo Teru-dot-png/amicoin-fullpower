@@ -906,41 +906,105 @@ end
 -- The (expensive) full stats redraw is throttled; the fan animates a few fps.
 -- If no monitor is connected the loop simply sleeps and checks again later.
 local function monitorLoop(nodeKey)
+    -- Persistent debug log so errors survive reboots for post-mortem inspection.
+    local MON_LOG = "/data/monitor.log"
+    local function monLog(msg)
+        local line = "[" .. os.epoch("utc") .. "] " .. tostring(msg)
+        -- Append to file (creates it on first write)
+        pcall(function()
+            if not fs.exists("/data") then fs.makeDir("/data") end
+            local fh = fs.open(MON_LOG, "a")
+            fh.write(line .. "\n")
+            fh.close()
+        end)
+        -- Also route to the dashboard node-log panel via the global print gate
+        print("[Mon] " .. tostring(msg))
+    end
+
+    -- Helper: paint a simple error banner on the monitor itself so the user
+    -- can see the problem without having to inspect the log file.
+    local function monError(mon, msg)
+        pcall(function()
+            local w = mon.getSize()
+            mon.setBackgroundColor(colors.red)
+            mon.setTextColor(colors.white)
+            mon.setCursorPos(1, 1)
+            mon.write((" MONITOR ERROR "):sub(1, w))
+            mon.setCursorPos(1, 2)
+            mon.write(tostring(msg):sub(1, w))
+            mon.setCursorPos(1, 3)
+            mon.write(("/data/monitor.log"):sub(1, w))
+        end)
+    end
+
+    -- Load MonitorUI once; log outcome either way.
     local MonitorUI = nil
-    pcall(function() MonitorUI = require('monitor_ui') end)
-    local fanIdx    = 1
-    local lastStats = -1e9
+    local muOk, muErr = pcall(function() MonitorUI = require('monitor_ui') end)
+    if not muOk then
+        monLog("LOAD FAIL: monitor_ui require error: " .. tostring(muErr))
+    elseif not MonitorUI then
+        monLog("LOAD FAIL: monitor_ui returned nil")
+    else
+        monLog("monitor_ui loaded OK  FAN_COLS=" .. tostring(MonitorUI.FAN_COLS))
+    end
+
+    local fanIdx      = 1
+    local lastStats   = -1e9
+    local monPresent  = false   -- track connect/disconnect transitions
+    local lastErrMsg  = nil     -- deduplicate repeated identical errors
 
     while true do
         local lag = miner.getLagFactor()
         local mon = peripheral.find("monitor")
-        if mon then
-            pcall(function()
-                pcall(function() mon.setTextScale(0.5) end)
-                local mw, mh = mon.getSize()
 
+        -- Log monitor connect / disconnect transitions
+        if mon and not monPresent then
+            monPresent = true
+            local szOk, sw, sh = pcall(function() return mon.getSize() end)
+            local sizeStr = szOk and (tostring(sw) .. "x" .. tostring(sh)) or "unknown"
+            monLog("monitor connected  size=" .. sizeStr)
+        elseif not mon and monPresent then
+            monPresent = false
+            monLog("monitor disconnected")
+        end
+
+        if mon then
+            -- setTextScale wrapped separately — a failure here is non-fatal
+            local scaleOk, scaleErr = pcall(function() mon.setTextScale(0.5) end)
+            if not scaleOk then
+                monLog("setTextScale failed: " .. tostring(scaleErr))
+            end
+
+            local mw, mh
+            local sizeOk, sizeErr = pcall(function() mw, mh = mon.getSize() end)
+            if not sizeOk then
+                monLog("getSize failed: " .. tostring(sizeErr))
+            else
                 -- Throttle the full stats redraw; the fan animates much faster.
                 local statsInterval = (lag < 0.7) and 5 or 15
                 local doStats = (os.clock() - lastStats) >= statsInterval
 
-                if doStats then
+                if doStats and MonitorUI then
                     lastStats = os.clock()
 
-                    if MonitorUI then
-                        local active   = miner.getActive()
-                        local snap     = ledger.snapshot()
-                        local total    = 0
+                    -- Gather all data BEFORE touching the monitor so a nil error
+                    -- doesn't leave the screen half-cleared.
+                    local active, snap, total, effRate, netTemp, shutoff, coolLv,
+                          mintProg, mintRem, upgradeData
+                    local dataOk, dataErr = pcall(function()
+                        active   = miner.getActive()
+                        snap     = ledger.snapshot()
+                        total    = 0
                         for _, v in pairs(snap) do total = total + v end
-                        local baseRate = miner.getCurrentRate()
-                        local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
-                        local netTemp  = upgrades.computeNetTemp(true)
-                        local _, shutoff = upgrades.computeThermalFactor()
-                        local coolLv   = upgrades.getAirCoolerLevel()
-                                       + upgrades.getLiquidCoolingLevel()
-                        local mintProg, mintRem = miner.getMintProgress()
+                        effRate  = math.floor(miner.getCurrentRate()
+                                              * upgrades.getMinerMultiplier())
+                        netTemp  = upgrades.computeNetTemp(true)
+                        local _dummy; _dummy, shutoff = upgrades.computeThermalFactor()
+                        coolLv   = upgrades.getAirCoolerLevel()
+                                 + upgrades.getLiquidCoolingLevel()
+                        mintProg, mintRem = miner.getMintProgress()
 
-                        -- Parse upgrade summary into {name, level} pairs
-                        local upgradeData = {}
+                        upgradeData = {}
                         for _, line in ipairs(upgrades.getActiveSummary()) do
                             local n, l = line:match("^(%S+)%s+(.+)$")
                             if n and l then
@@ -955,17 +1019,21 @@ local function monitorLoop(nodeKey)
                                 }
                             end
                         end
+                    end)
 
-                        -- Leave room for the fan animation column when it fits
-                        local fanCols = (MonitorUI and MonitorUI.FAN_COLS) or 0
-                        local fcW = (fanCols > 0 and mw >= 26 + fanCols)
-                                    and fanCols or 0
-                        local statsW = fcW > 0 and (mw - fcW - 1) or mw
+                    if not dataOk then
+                        local msg = "data gather error: " .. tostring(dataErr)
+                        if msg ~= lastErrMsg then monLog(msg); lastErrMsg = msg end
+                        monError(mon, dataErr)
+                    else
+                        local fanCols = (MonitorUI.FAN_COLS) or 0
+                        local fcW     = (fanCols > 0 and mw >= 26 + fanCols) and fanCols or 0
+                        local statsW  = fcW > 0 and (mw - fcW - 1) or mw
 
                         mon.setBackgroundColor(colors.black)
                         mon.clear()
 
-                        MonitorUI.drawStats(mon, statsW, {
+                        local drawOk, drawErr = pcall(MonitorUI.drawStats, mon, statsW, {
                             version         = NODE_VERSION,
                             theme           = upgrades.getActiveTheme(),
                             nodeKey         = nodeKey,
@@ -986,27 +1054,40 @@ local function monitorLoop(nodeKey)
                             priorityPing    = upgrades.hasPriorityPing(),
                             totalTicks      = miner.getTotalTicks(),
                         })
+
+                        if not drawOk then
+                            local msg = "drawStats error: " .. tostring(drawErr)
+                            if msg ~= lastErrMsg then monLog(msg); lastErrMsg = msg end
+                            monError(mon, drawErr)
+                        else
+                            lastErrMsg = nil  -- clear error dedup after a clean draw
+                        end
                     end
                 end
 
-                -- ── Cooling fan (animated, delegated to MonitorUI) ─────────────
+                -- ── Cooling fan (animated) ────────────────────────────────────
                 if MonitorUI and MonitorUI.drawFan then
-                    local airLv  = upgrades.getAirCoolerLevel()
-                    local liqLv  = upgrades.getLiquidCoolingLevel()
-                    local netTemp  = upgrades.computeNetTemp(false)
-                    local _, shutoff = upgrades.computeThermalFactor()
-                    fanIdx = MonitorUI.drawFan(mon, mw, mh, {
-                        coolingLevel   = airLv + liqLv,
-                        netTemp        = netTemp,
-                        thermalShutoff = shutoff,
-                        theme          = upgrades.getActiveTheme(),
-                    }, fanIdx)
+                    local fanOk, fanErr = pcall(function()
+                        local airLv    = upgrades.getAirCoolerLevel()
+                        local liqLv    = upgrades.getLiquidCoolingLevel()
+                        local fNetT    = upgrades.computeNetTemp(false)
+                        local _dummy2, fShut = upgrades.computeThermalFactor()
+                        fanIdx = MonitorUI.drawFan(mon, mw, mh, {
+                            coolingLevel   = airLv + liqLv,
+                            netTemp        = fNetT,
+                            thermalShutoff = fShut,
+                            theme          = upgrades.getActiveTheme(),
+                        }, fanIdx)
+                    end)
+                    if not fanOk then
+                        local msg = "drawFan error: " .. tostring(fanErr)
+                        if msg ~= lastErrMsg then monLog(msg); lastErrMsg = msg end
+                    end
                 end
-            end)
-        end
-        -- Fan playback speed scales with COOLING LEVEL: more cooling power = a
-        -- faster spin. No cooler => idle (slow poll). Each level shaves the frame
-        -- interval; clamped so it never thrashes the monitor. Backs off on lag.
+            end  -- sizeOk
+        end  -- mon
+
+        -- Fan playback speed scales with cooling level; backs off on lag.
         local coolLv = upgrades.getAirCoolerLevel() + upgrades.getLiquidCoolingLevel()
         local fanSleep
         if coolLv <= 0 then

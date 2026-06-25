@@ -957,9 +957,9 @@ local function monitorLoop(nodeKey)
                         end
 
                         -- Leave room for the fan animation column when it fits
-                        local fcW = (MonitorUI and MonitorUI.FAN_COLS > 0
-                                     and mw >= 26 + MonitorUI.FAN_COLS)
-                                    and MonitorUI.FAN_COLS or 0
+                        local fanCols = (MonitorUI and MonitorUI.FAN_COLS) or 0
+                        local fcW = (fanCols > 0 and mw >= 26 + fanCols)
+                                    and fanCols or 0
                         local statsW = fcW > 0 and (mw - fcW - 1) or mw
 
                         mon.setBackgroundColor(colors.black)
@@ -990,7 +990,7 @@ local function monitorLoop(nodeKey)
                 end
 
                 -- ── Cooling fan (animated, delegated to MonitorUI) ─────────────
-                if MonitorUI then
+                if MonitorUI and MonitorUI.drawFan then
                     local airLv  = upgrades.getAirCoolerLevel()
                     local liqLv  = upgrades.getLiquidCoolingLevel()
                     local netTemp  = upgrades.computeNetTemp(false)

@@ -205,6 +205,10 @@ If an Advanced Monitor is attached, the node renders a live status board. Stats 
   <img src="NodeExample.png" alt="AmiCoin Node Monitor" />
 </p>
 
+<p align="center">
+  <img src="NodeTopMonitorExample.png" alt="AmiCoin Node Monitor — top panel detail" />
+</p>
+
 **Layout (36×24 monitor example):**
 
 | Zone | Rows | Content |
@@ -478,6 +482,7 @@ amicoin/
 │   ├── README.md             This file
 │   ├── WalletExample.png     Wallet dashboard screenshot
 │   ├── NodeExample.png       Node monitor screenshot
+│   ├── NodeTopMonitorExample.png  Node monitor top-panel detail screenshot
 │   ├── SHOP.md               AmiStore Merchant Manual
 │   ├── SECURITY.md           XTEA, source verification, and key safety guidelines
 │   └── MIGRATION.md          How to move your wallet to a new Pad

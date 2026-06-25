@@ -70,8 +70,10 @@ end
 --   upgrades: { {name, level}, ... },
 --   crownLevel, casinoRakeLevel, priorityPing (bool), totalTicks,
 -- }
-function MonitorUI.drawStats(mon, W, data)
-    local _, mh = mon.getSize()
+function MonitorUI.drawStats(mon, _callerW, data)
+    -- Always use the real monitor dimensions regardless of what the caller passes.
+    -- This makes drawStats self-sufficient even when startup.lua passes a pre-narrowed width.
+    local W, mh = mon.getSize()
     local tc  = (data.theme and THEME_COLORS[data.theme])
                 or { fg = colors.white, hdr = colors.red }
     local bBg = colors.black

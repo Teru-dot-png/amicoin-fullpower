@@ -1027,8 +1027,8 @@ local function monitorLoop(nodeKey)
                         monError(mon, dataErr)
                     else
                         local fanCols = (MonitorUI.FAN_COLS) or 0
-                        local fcW     = (fanCols > 0 and mw >= 26 + fanCols) and fanCols or 0
-                        local statsW  = fcW > 0 and (mw - fcW - 1) or mw
+                        local fcW     = (fanCols > 0 and mw > fanCols + 6) and fanCols or 0
+                        local statsW  = fcW > 0 and (mw - fcW) or mw
 
                         mon.setBackgroundColor(colors.black)
                         mon.clear()

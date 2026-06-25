@@ -14,6 +14,8 @@ local MonitorUI = {}
 -- Columns the fan occupies when the monitor is wide enough; 0 if unavailable.
 MonitorUI.FAN_COLS = FRAMES and FRAMES.cols or 0
 
+local _upgTick = 0  -- auto-scroll counter for upgrades list
+
 local THEME_COLORS = {
     green_phosphor = { fg = colors.lime,     hdr = colors.green     },
     amber          = { fg = colors.orange,   hdr = colors.brown     },
@@ -209,43 +211,55 @@ function MonitorUI.drawStats(mon, W, data)
     end
 
     -- ── Upgrades panel (black) ────────────────────────────────────────────────
-    if r <= mh then
-        row0(mon, r, W, bBg)
-        put(mon, 1, r, ' Active Upgrades', bBg, colors.yellow, W)
-        r = r + 1
-    end
-
+    _upgTick = _upgTick + 1
     local upgs = data.upgrades or {}
-    if #upgs == 0 and r <= mh then
+
+    if r <= mh then
+        -- compute scroll window before drawing header
+        local availRows = mh - r        -- rows available for entries (excludes header)
+        local scrollOff = 0
+        if #upgs > availRows and availRows > 0 then
+            scrollOff = math.floor(_upgTick / 30) % (#upgs - availRows + 1)
+        end
+
+        local hdrSuffix = (#upgs > availRows)
+            and string.format(' [%d/%d]', scrollOff + 1, #upgs)
+            or ''
         row0(mon, r, W, bBg)
-        put(mon, 2, r, '(none)', bBg, colors.gray)
+        put(mon, 1, r, ' Active Upgrades' .. hdrSuffix, bBg, colors.yellow, W)
         r = r + 1
-    else
-        local twoCol = W >= 38
-        local colW   = twoCol and math.floor(W / 2) or W
-        local i = 1
-        while i <= #upgs and r <= mh do
+
+        if #upgs == 0 and r <= mh then
             row0(mon, r, W, bBg)
-            local u1 = upgs[i]
-            local n1 = tostring(u1.name  or '?'):sub(1, colW - 5)
-            local l1 = tostring(u1.level or '')
-            put(mon, 1, r, ' ' .. n1, bBg, tc.fg)
-            if #l1 > 0 then
-                put(mon, colW - #l1, r, l1, bBg, colors.yellow)
-            end
-            if twoCol and upgs[i + 1] then
-                local u2 = upgs[i + 1]
-                local n2 = tostring(u2.name  or '?'):sub(1, colW - 5)
-                local l2 = tostring(u2.level or '')
-                put(mon, colW + 1, r, ' ' .. n2, bBg, tc.fg)
-                if #l2 > 0 then
-                    put(mon, W - #l2 + 1, r, l2, bBg, colors.yellow)
-                end
-                i = i + 2
-            else
-                i = i + 1
-            end
+            put(mon, 2, r, '(none)', bBg, colors.gray)
             r = r + 1
+        else
+            local twoCol = W >= 38
+            local colW   = twoCol and math.floor(W / 2) or W
+            local i = scrollOff + 1
+            while i <= #upgs and r <= mh do
+                row0(mon, r, W, bBg)
+                local u1 = upgs[i]
+                local n1 = tostring(u1.name  or '?'):sub(1, colW - 5)
+                local l1 = tostring(u1.level or '')
+                put(mon, 1, r, ' ' .. n1, bBg, tc.fg)
+                if #l1 > 0 then
+                    put(mon, colW - #l1, r, l1, bBg, colors.yellow)
+                end
+                if twoCol and upgs[i + 1] then
+                    local u2 = upgs[i + 1]
+                    local n2 = tostring(u2.name  or '?'):sub(1, colW - 5)
+                    local l2 = tostring(u2.level or '')
+                    put(mon, colW + 1, r, ' ' .. n2, bBg, tc.fg)
+                    if #l2 > 0 then
+                        put(mon, W - #l2 + 1, r, l2, bBg, colors.yellow)
+                    end
+                    i = i + 2
+                else
+                    i = i + 1
+                end
+                r = r + 1
+            end
         end
     end
 
@@ -291,15 +305,10 @@ function MonitorUI.drawFan(mon, mw, mh, data, fanIdx)
         fanCol = colors.white
     end
 
-    -- Position: right column when wide enough, else stack below the stats
-    local ox, oy
-    if mw >= 26 + fCols then
-        ox = mw - fCols + 1
-        oy = 2   -- sits right below the title bar
-    else
-        ox = 1
-        oy = math.max(15, mh - fRows - 1)
-    end
+    -- Always bottom-right corner; bail if monitor too narrow to fit side-by-side
+    if mw <= fCols + 6 then return fanIdx end
+    local ox = mw - fCols + 1
+    local oy = mh - fRows - 1  -- header at oy, frames oy+1..oy+fRows, badge oy+fRows+1
 
     -- Opus-style header strip (matches the panel headers in drawStats)
     fill(mon, ox, oy, fCols, tc.hdr)

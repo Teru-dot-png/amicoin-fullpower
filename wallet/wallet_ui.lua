@@ -9,6 +9,8 @@ Theme.setTheme('demon')
 
 local WalletUI = {}
 
+local _blinkState = false
+
 -- Write a colored AMI/uAMI token at (x, y) in window win.
 -- Returns the x position after the token.
 local function writeToken(win, x, y, bg, kind)
@@ -113,27 +115,28 @@ function WalletUI.createDashboard(address, playerName)
             end,
         }),
 
-        -- Button row 1 (row 18): [S]end [R]ef [E]xp [N]Cmd
+        -- Button row 1 (row 18): [S]end [R] [E]xp [N]Cmd  (1-char gaps)
+        -- Layout: S(6) gap(1) R(4) gap(1) E(5) gap(1) N(8) = 26
         btnRow1 = UI.Window({
             x = 1, y = 18, width = -1, height = 1,
             backgroundColor = colors.black,
 
             sendBtn = UI.Button({
-                x = 1, y = 1, width = 7, height = 1,
+                x = 1, y = 1, width = 6, height = 1,
                 text = '[S]end', event = 'action_send',
                 backgroundColor = colors.red,
                 backgroundFocusColor = colors.orange,
                 textColor = colors.white, textFocusColor = colors.white,
             }),
             refreshBtn = UI.Button({
-                x = 8, y = 1, width = 5, height = 1,
+                x = 8, y = 1, width = 4, height = 1,
                 text = '[R]', event = 'action_refresh',
                 backgroundColor = colors.gray,
                 backgroundFocusColor = colors.lightGray,
                 textColor = colors.white, textFocusColor = colors.white,
             }),
             exportBtn = UI.Button({
-                x = 13, y = 1, width = 6, height = 1,
+                x = 13, y = 1, width = 5, height = 1,
                 text = '[E]xp', event = 'action_export',
                 backgroundColor = colors.orange,
                 backgroundFocusColor = colors.yellow,
@@ -148,13 +151,14 @@ function WalletUI.createDashboard(address, playerName)
             }),
         }),
 
-        -- Button row 2 (row 19): [V]ault [U]pdate [L]ogout
+        -- Button row 2 (row 19): [V]ault [U]pdate [L]ogout  (1-char gaps)
+        -- Layout: V(8) gap(1) U(8) gap(1) L(8) = 26
         btnRow2 = UI.Window({
             x = 1, y = 19, width = -1, height = 1,
             backgroundColor = colors.black,
 
             vaultBtn = UI.Button({
-                x = 1, y = 1, width = 9, height = 1,
+                x = 1, y = 1, width = 8, height = 1,
                 text = '[V]ault', event = 'action_vault',
                 backgroundColor = colors.pink,
                 backgroundFocusColor = colors.red,
@@ -168,7 +172,7 @@ function WalletUI.createDashboard(address, playerName)
                 textColor = colors.white, textFocusColor = colors.white,
             }),
             logoutBtn = UI.Button({
-                x = 18, y = 1, width = 9, height = 1,
+                x = 19, y = 1, width = 8, height = 1,
                 text = '[L]ogout', event = 'action_logout',
                 backgroundColor = colors.gray,
                 backgroundFocusColor = colors.lightGray,
@@ -236,17 +240,16 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
             or  '[N]Cmd'
     end
 
-    -- Status bar
+    -- Status bar (no node count; blinking # as activity pulse)
+    _blinkState = not _blinkState
+    local blink = _blinkState and '#' or ' '
     local statusText
     if netStats then
         local rate    = netStats.effective_rate or netStats.current_rate or 0
         local perHour = rate * 120
-        statusText = string.format('%duAMI/30s +%d/hr', rate, perHour)
-        if total > 0 then
-            statusText = statusText .. string.format(' (%dn)', total)
-        end
+        statusText = string.format('%duAMI/30s +%d/hr %s', rate, perHour, blink)
     elseif total > 0 then
-        statusText = string.format('%d/%d nodes', online, total)
+        statusText = string.format('%d/%d nodes %s', online, total, blink)
     else
         statusText = 'No nodes -- press [N]'
     end

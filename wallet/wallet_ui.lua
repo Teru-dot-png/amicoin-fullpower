@@ -99,13 +99,13 @@ function WalletUI.createDashboard(address, playerName)
             backgroundSelectedColor = colors.gray,
             unfocusedBackgroundSelectedColor = colors.black,
             columns = {
-                { heading = 'Node',   key = 'name',   width = 13 },
-                { heading = 'Bal',    key = 'bal',    width = 5, align = 'right' },
+                { heading = 'Node',   key = 'name',   width = 10 },
+                { heading = 'Bal',    key = 'bal',    width = 7, align = 'right' },
                 { heading = 'St',     key = 'status', width = 5 },
             },
             values = {},
 
-            -- Color each row by node health
+            -
             getRowTextColor = function(self, row, selected)
                 if selected and self.focused then return self.textSelectedColor end
                 if row._err   then return colors.red    end
@@ -209,7 +209,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
     local rows = {}
     if perNode and #perNode > 0 then
         for i, n in ipairs(perNode) do
-            local bal = string.format('%.2f', (n.balance or 0) / 1e6):sub(1, 5)
+            local bal = string.format('%.2f', (n.balance or 0) / 1e6):sub(1, 7)
             local status, _err, _fpbad, _new
             if n.err then
                 status = '[ERR]'; _err = true
@@ -221,7 +221,7 @@ function WalletUI.updateDashboard(page, balance, onlineNodes, totalNodes, netSta
                 status = '[OK]'
             end
             rows[i] = {
-                name   = (n.name or '?'):sub(1, 13),
+                name   = (n.name or '?'):sub(1, 10),
                 bal    = bal,
                 status = status,
                 _err   = _err,

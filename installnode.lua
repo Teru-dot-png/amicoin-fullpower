@@ -18,14 +18,16 @@ local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpo
 -- never hand-maintain a UI file list again.
 local FILES = {
     -- === Node Service Files ===
-    { src = "/shared/xtea.lua",       dst = "/shared/xtea.lua"   },
-    { src = "/node/startup.lua",      dst = "/startup.lua"       },
-    { src = "/node/node_ui.lua",      dst = "/node_ui.lua"       },
-    { src = "/node/upgrade_ui.lua",   dst = "/upgrade_ui.lua"    },
-    { src = "/node/ledger.lua",       dst = "/ledger.lua"        },
-    { src = "/node/miner_daemon.lua", dst = "/miner_daemon.lua"  },
-    { src = "/node/xtea.lua",         dst = "/xtea.lua"          },
-    { src = "/node/upgrades.lua",     dst = "/upgrades.lua"      },
+    { src = "/shared/xtea.lua",          dst = "/shared/xtea.lua"   },
+    { src = "/node/startup.lua",         dst = "/startup.lua"       },
+    { src = "/node/node_ui.lua",         dst = "/node_ui.lua"       },
+    { src = "/node/upgrade_ui.lua",      dst = "/upgrade_ui.lua"    },
+    { src = "/node/amidecode_ui.lua",    dst = "/amidecode_ui.lua"  },
+    { src = "/node/monitor_ui.lua",      dst = "/monitor_ui.lua"    },
+    { src = "/node/ledger.lua",          dst = "/ledger.lua"        },
+    { src = "/node/miner_daemon.lua",    dst = "/miner_daemon.lua"  },
+    { src = "/node/xtea.lua",            dst = "/xtea.lua"          },
+    { src = "/node/upgrades.lua",        dst = "/upgrades.lua"      },
 
     -- === Dev tool: on-computer glyph explorer (run `glyphexplorer`) ===
     { src = "/ami/tools/glyph_explorer.lua", dst = "/glyphexplorer.lua" },
@@ -54,6 +56,7 @@ end
 local CLEAN_LUAS = {
     "/startup.lua", "/ledger.lua", "/miner_daemon.lua", "/xtea.lua",
     "/shared/xtea.lua", "/upgrades.lua", "/node_ui.lua",
+    "/upgrade_ui.lua", "/amidecode_ui.lua", "/monitor_ui.lua",
 }
 local CLEAN_DIRS = { "/data", "/ami/lib/ui" }
 

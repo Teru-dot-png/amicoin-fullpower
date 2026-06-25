@@ -78,6 +78,12 @@ function MonitorUI.drawStats(mon, W, data)
     local gBg = colors.gray
     local r   = 1
 
+    -- Fan geometry: stats rows above the fan use full W; rows that overlap the
+    -- fan area (bottom-right) are clipped to fanX-1 so they don't stomp on it.
+    local fanCols = MonitorUI.FAN_COLS
+    local fanX   = (FRAMES and fanCols > 0 and W > fanCols + 6) and (W - fanCols + 1) or (W + 1)
+    local fanTop = FRAMES and (mh - FRAMES.rows - 1) or (mh + 1)
+
     -- ── TitleBar ──────────────────────────────────────────────────────────────
     local title = 'AmiCoin Node v' .. tostring(data.version or '?')
     local tx = math.max(1, math.floor((W - #title) / 2) + 1)
@@ -215,6 +221,9 @@ function MonitorUI.drawStats(mon, W, data)
     local upgs = data.upgrades or {}
 
     if r <= mh then
+        -- Per-row effective width: narrow only when this row overlaps the fan area
+        local function rW(rr) return (rr >= fanTop) and (fanX - 1) or W end
+
         -- compute scroll window before drawing header
         local availRows = mh - r        -- rows available for entries (excludes header)
         local scrollOff = 0
@@ -225,20 +234,23 @@ function MonitorUI.drawStats(mon, W, data)
         local hdrSuffix = (#upgs > availRows)
             and string.format(' [%d/%d]', scrollOff + 1, #upgs)
             or ''
-        row0(mon, r, W, bBg)
-        put(mon, 1, r, ' Active Upgrades' .. hdrSuffix, bBg, colors.yellow, W)
+        local hw = rW(r)
+        row0(mon, r, hw, bBg)
+        put(mon, 1, r, ' Active Upgrades' .. hdrSuffix, bBg, colors.yellow, hw)
         r = r + 1
 
         if #upgs == 0 and r <= mh then
-            row0(mon, r, W, bBg)
+            local nw = rW(r)
+            row0(mon, r, nw, bBg)
             put(mon, 2, r, '(none)', bBg, colors.gray)
             r = r + 1
         else
-            local twoCol = W >= 38
-            local colW   = twoCol and math.floor(W / 2) or W
             local i = scrollOff + 1
             while i <= #upgs and r <= mh do
-                row0(mon, r, W, bBg)
+                local cw     = rW(r)
+                local twoCol = cw >= 38
+                local colW   = twoCol and math.floor(cw / 2) or cw
+                row0(mon, r, cw, bBg)
                 local u1 = upgs[i]
                 local n1 = tostring(u1.name  or '?'):sub(1, colW - 5)
                 local l1 = tostring(u1.level or '')
@@ -252,7 +264,7 @@ function MonitorUI.drawStats(mon, W, data)
                     local l2 = tostring(u2.level or '')
                     put(mon, colW + 1, r, ' ' .. n2, bBg, tc.fg)
                     if #l2 > 0 then
-                        put(mon, W - #l2 + 1, r, l2, bBg, colors.yellow)
+                        put(mon, cw - #l2 + 1, r, l2, bBg, colors.yellow)
                     end
                     i = i + 2
                 else

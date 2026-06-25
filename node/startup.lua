@@ -1026,14 +1026,10 @@ local function monitorLoop(nodeKey)
                         if msg ~= lastErrMsg then monLog(msg); lastErrMsg = msg end
                         monError(mon, dataErr)
                     else
-                        local fanCols = (MonitorUI.FAN_COLS) or 0
-                        local fcW     = (fanCols > 0 and mw > fanCols + 6) and fanCols or 0
-                        local statsW  = fcW > 0 and (mw - fcW) or mw
-
                         mon.setBackgroundColor(colors.black)
                         mon.clear()
 
-                        local drawOk, drawErr = pcall(MonitorUI.drawStats, mon, statsW, {
+                        local drawOk, drawErr = pcall(MonitorUI.drawStats, mon, mw, {
                             version         = NODE_VERSION,
                             theme           = upgrades.getActiveTheme(),
                             nodeKey         = nodeKey,

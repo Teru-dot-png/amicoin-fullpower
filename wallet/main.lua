@@ -960,7 +960,31 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     
     -- ── Event handlers ───────────────────────────────────────────────────────
     function dashboardPage:eventHandler(event)
-        if event.type == 'action_refresh' then
+        if event.type == 'key' then
+            if not _popupActive then
+                local k = event.key
+                if     k == keys.r then self:eventHandler({type='action_refresh'})
+                elseif k == keys.s then self:eventHandler({type='action_send'})
+                elseif k == keys.e then self:eventHandler({type='action_export'})
+                elseif k == keys.n then self:eventHandler({type='action_nodes'})
+                elseif k == keys.v then self:eventHandler({type='action_vault'})
+                elseif k == keys.u then self:eventHandler({type='action_update'})
+                elseif k == keys.l then self:eventHandler({type='action_logout'})
+                end
+            end
+            return true
+        elseif event.type == 'ami_invoice' then
+            if pendingInvoice then
+                local pkt = pendingInvoice
+                pendingInvoice = nil
+                _popupActive = true
+                invoicePopup(pkt, secretKey, address, nodes)
+                _popupActive = false
+                UI:setPage(dashboardPage)
+                updateDashboard()
+            end
+            return true
+        elseif event.type == 'action_refresh' then
             refreshBalance()
             updateDashboard()
             return true
@@ -1132,16 +1156,19 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     dashboardPage.statusBar:setStatus('Connecting to nodes...')
     UI:setPage(dashboardPage)
 
+    local pendingInvoice = nil
+    local _popupActive   = false
+
     -- Run all coroutines in parallel
     parallel.waitForAll(
         -- Balance refresh loop (first fetch runs immediately, no leading sleep)
         function()
             refreshBalance()
-            updateDashboard()
+            if not _popupActive then updateDashboard() end
             while true do
                 sleep(5)
                 refreshBalance()
-                updateDashboard()
+                if not _popupActive then updateDashboard() end
             end
         end,
         
@@ -1163,40 +1190,16 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                     if ok2 and type(pkt) == "table"
                         and pkt.type == "INVOICE"
                         and pkt.to   == address then
-                        invoicePopup(pkt, secretKey, address, nodes)
-                        UI:setPage(dashboardPage)
-                        updateDashboard()
+                        pendingInvoice = pkt
+                        os.queueEvent('ami_invoice')
                     end
                 end
             end
         end,
         
-        -- UI event loop
+        -- UI event loop (also handles 'key' and 'ami_invoice' via dashboardPage:eventHandler)
         function()
             UI:pullEvents()
-        end,
-        
-        -- Keyboard shortcuts (legacy support)
-        function()
-            while true do
-                local _, key = os.pullEvent("key")
-                if key == keys.r then
-                    refreshBalance()
-                    updateDashboard()
-                elseif key == keys.s then
-                    dashboardPage:eventHandler({type = 'action_send'})
-                elseif key == keys.e then
-                    dashboardPage:eventHandler({type = 'action_export'})
-                elseif key == keys.n then
-                    dashboardPage:eventHandler({type = 'action_nodes'})
-                elseif key == keys.v then
-                    dashboardPage:eventHandler({type = 'action_vault'})
-                elseif key == keys.u then
-                    dashboardPage:eventHandler({type = 'action_update'})
-                elseif key == keys.l then
-                    dashboardPage:eventHandler({type = 'action_logout'})
-                end
-            end
         end
     )
 end

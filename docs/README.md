@@ -11,6 +11,12 @@ AmiCoin runs on a *Proof-of-Uptime* consensus: nodes earn coins simply by stayin
 
 ---
 
+# ATTENTION
+this project is finished not maintained anymore by Me but ill read and accept any commits the community may create
+but im not coding for AMIcoin anymore, it was fun!
+
+---
+
 ## Table of Contents
 
 1. [How It Works](#how-it-works)

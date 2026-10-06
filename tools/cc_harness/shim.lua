@@ -34,7 +34,7 @@ _G.keys = keys
 ----------------------------------------------------------------------
 -- Virtual screen buffer + term/device
 ----------------------------------------------------------------------
-local W, H = 51, 19
+local W, H = tonumber(os.getenv("CC_W")) or 51, tonumber(os.getenv("CC_H")) or 19
 local screen = { text={}, fg={}, bg={} }
 local function blankScreen()
   for y=1,H do

@@ -4,6 +4,7 @@
 
 local UI    = require('ami.lib.ui.ui')
 local Theme = require('ami.lib.ui.theme')
+local Util  = require('ami.lib.ui.util')
 
 Theme.setTheme('demon')
 
@@ -31,6 +32,60 @@ end
 local function fillRow(win, x, y, bg)
     local rem = win.width - x + 1
     if rem > 0 then win:write(x, y, string.rep(' ', rem), bg, bg) end
+end
+
+-- Write text at (x, y) in window win with inline AMI/uAMI token coloring.
+-- Everything else is rendered in fg. Clipped to the window width.
+local function writeAmiText(win, x, y, text, bg, fg)
+    text = text:sub(1, win.width - x + 1)
+    local i, run = 1, 1
+    local function flush(upto)
+        if upto >= run then
+            win:write(x + run - 1, y, text:sub(run, upto), bg, fg)
+        end
+    end
+    while i <= #text do
+        local kind, len
+        if     text:sub(i, i + 3) == 'uAMI' then kind, len = 'uami', 4
+        elseif text:sub(i, i + 2) == 'AMI'  then kind, len = 'ami',  3
+        end
+        if kind then
+            flush(i - 1)
+            writeToken(win, x + i - 1, y, bg, kind)
+            i = i + len
+            run = i
+        else
+            i = i + 1
+        end
+    end
+    flush(#text)
+end
+
+-- Word-wrapped message area shared by the Send and Invoice pages.
+-- Set its text with WalletUI.setMessage().
+local function messagePanel(y, height)
+    return UI.Window({
+        x = 1, y = y, width = -1, height = height,
+        backgroundColor = colors.black,
+        _text  = '',
+        _color = colors.white,
+        draw = function(self)
+            local bg = colors.black
+            self:clear(bg)
+            local lines = Util.wordWrap(self._text, self.width - 2)
+            for i = 1, math.min(#lines, self.height) do
+                writeAmiText(self, 2, i, lines[i], bg, self._color)
+            end
+        end,
+    })
+end
+
+-- Show a message on a Send/Invoice page and repaint it.
+function WalletUI.setMessage(page, text, color)
+    page.message._text  = text or ''
+    page.message._color = color or colors.white
+    page:draw()
+    page:sync()
 end
 
 function WalletUI.createDashboard(address, playerName)
@@ -401,6 +456,171 @@ function WalletUI.updateCmdCtr(page, nodes, perNode)
 
     page:draw()
     page:sync()
+end
+
+-- ── Send page ─────────────────────────────────────────────────────────────────
+
+-- nodes:   wallet node list ({ name, key }); balance: total uAMI or nil.
+-- Emits 'send_submit' (Send/Confirm/Done button) and 'send_cancel' (Back).
+function WalletUI.createSend(nodes, balance)
+    local nodeChoices = {}
+    for i, node in ipairs(nodes) do
+        nodeChoices[i] = { name = (node.name or '?'):sub(1, 20), value = i }
+    end
+
+    local function label(y, text)
+        return UI.Text({
+            x = 2, y = y, value = text,
+            backgroundColor = colors.black, textColor = colors.lightGray,
+        })
+    end
+
+    return UI.Page({
+        backgroundColor = colors.black,
+
+        titleBar = UI.TitleBar({
+            title = 'Send AMI', event = 'send_cancel',
+            backgroundColor = colors.red,
+            textColor = colors.white,
+        }),
+
+        -- Rows 3-4: recipient
+        toLabel = label(3, 'To (name or address):'),
+        toEntry = UI.TextEntry({
+            x = 1, y = 4, width = -1, limit = 128,
+            shadowText = 'Ami-DNS name / 128-hex',
+            backgroundColor = colors.gray, backgroundFocusColor = colors.gray,
+            textColor = colors.white, shadowTextColor = colors.lightGray,
+        }),
+
+        -- Rows 6-7: amount(15) gap(1) unit(10)
+        amountLabel = label(6, 'Amount:'),
+        amountEntry = UI.TextEntry({
+            x = 1, y = 7, width = 15, limit = 20,
+            shadowText = '0.0',
+            backgroundColor = colors.gray, backgroundFocusColor = colors.gray,
+            textColor = colors.white, shadowTextColor = colors.lightGray,
+        }),
+        unitChooser = UI.Chooser({
+            x = 17, y = 7, width = 10,
+            choices = {
+                { name = 'AMI',  value = 'ami'  },
+                { name = 'uAMI', value = 'uami' },
+            },
+            value = 'ami',
+            backgroundColor = colors.lightGray, backgroundFocusColor = colors.white,
+            textColor = colors.black,
+        }),
+
+        -- Rows 9-10: node to send through (fixed when there is only one)
+        nodeLabel = label(9, 'Via node:'),
+        nodeChooser = UI.Chooser({
+            x = 1, y = 10, width = -1,
+            choices = nodeChoices,
+            value = nodeChoices[1] and 1 or nil,
+            nochoice = 'No nodes',
+            inactive = #nodes < 2,
+            backgroundColor = colors.lightGray, backgroundFocusColor = colors.white,
+            textColor = colors.black,
+        }),
+
+        -- Rows 12-16: lookup / confirmation / result text
+        message = messagePanel(12, 5),
+
+        -- Row 18: Send(12) gap(1) Back(13)
+        sendBtn = UI.Button({
+            x = 1, y = 18, width = 12, height = 1,
+            text = 'Send', event = 'send_submit',
+            inactive = #nodes == 0,
+            backgroundColor = colors.red, backgroundFocusColor = colors.orange,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+        backBtn = UI.Button({
+            x = 14, y = 18, width = 13, height = 1,
+            text = 'Back', event = 'send_cancel',
+            backgroundColor = colors.gray, backgroundFocusColor = colors.lightGray,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+
+        statusBar = UI.StatusBar({
+            backgroundColor = colors.red,
+            textColor = colors.white,
+            values = balance
+                and string.format('Bal: %.5f AMI', balance / 1e6)
+                or  'Balance unknown',
+        }),
+    })
+end
+
+-- ── Invoice page ──────────────────────────────────────────────────────────────
+
+-- info: { shop, item, qty, total (uAMI), txId, via (node name or nil) }
+-- Emits 'invoice_pay' and 'invoice_decline'.
+function WalletUI.createInvoice(info)
+    local page = UI.Page({
+        backgroundColor = colors.black,
+
+        titleBar = UI.TitleBar({
+            title = 'Incoming Invoice',
+            backgroundColor = colors.red,
+            textColor = colors.white,
+        }),
+
+        -- Invoice details (rows 3-9, gray background)
+        infoPanel = UI.Window({
+            x = 1, y = 3, width = -1, height = 7,
+            backgroundColor = colors.gray,
+
+            draw = function(self)
+                local bg = colors.gray
+                self:clear(bg)
+                self:write(1, 1, (' Shop : ' .. info.shop):sub(1, self.width), bg, colors.orange)
+                self:write(1, 2, (' Item : ' .. info.item):sub(1, self.width), bg, colors.white)
+                self:write(1, 3, (' Qty  : ' .. info.qty):sub(1, self.width),  bg, colors.white)
+                writeAmiText(self, 1, 4,
+                    string.format(' Total: %.6f AMI', info.total / 1e6), bg, colors.yellow)
+                writeAmiText(self, 1, 5,
+                    string.format('        %d uAMI', info.total), bg, colors.yellow)
+                self:write(1, 7, (' TX: ' .. info.txId):sub(1, self.width), bg, colors.lightGray)
+            end,
+        }),
+
+        -- Rows 11-15: payment progress / result text
+        message = messagePanel(11, 5),
+
+        -- Row 18: Pay(12) gap(1) Decline(13)
+        payBtn = UI.Button({
+            x = 1, y = 18, width = 12, height = 1,
+            text = '[Y] Pay', event = 'invoice_pay',
+            backgroundColor = colors.lime, backgroundFocusColor = colors.green,
+            textColor = colors.black, textFocusColor = colors.black,
+        }),
+        declineBtn = UI.Button({
+            x = 14, y = 18, width = 13, height = 1,
+            text = '[N] Decline', event = 'invoice_decline',
+            backgroundColor = colors.red, backgroundFocusColor = colors.orange,
+            textColor = colors.white, textFocusColor = colors.white,
+        }),
+
+        statusBar = UI.StatusBar({
+            backgroundColor = colors.red,
+            textColor = colors.white,
+            values = info.via and ('Pay via ' .. info.via) or 'No nodes configured',
+        }),
+    })
+
+    -- Start on Decline so a stray Enter can never pay.
+    page.focused = page.declineBtn
+    return page
+end
+
+-- Invoice is settled (paid, failed or expired): show the outcome and leave
+-- only a Back button.
+function WalletUI.finishInvoice(page, text, color)
+    page.payBtn:disable()
+    page.declineBtn.text = '[B]ack'
+    page:setFocus(page.declineBtn)
+    WalletUI.setMessage(page, text, color)
 end
 
 return WalletUI

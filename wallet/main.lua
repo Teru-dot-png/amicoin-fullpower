@@ -215,6 +215,7 @@ local RATE_URL  = "https://dumpcafe.amie-whoogle.app/DUMP/reward_rate.txt"
 local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"    },
     { src="/wallet/main.lua",       dst="/startup.lua"        },
+    { src="/wallet/wallet_ui.lua",  dst="/wallet_ui.lua"      },
     { src="/wallet/secret_manager.lua", dst="/secret_manager.lua" },
     { src="/wallet/session.lua",    dst="/session.lua"        },
     { src="/wallet/comms.lua",      dst="/comms.lua"          },
@@ -273,6 +274,33 @@ local function screenUpdate()
     end
 end
 
+
+-- ── Invoice hand-off ──────────────────────────────────────────────────────────
+-- An incoming invoice opens its own page. It must not take over while the
+-- player is typing in the Send form or sitting in a raw-terminal screen (those
+-- block the UI event coroutine, so the invoice page could not receive input).
+-- _uiBusy counts such holds; the invoice waits in _pendingInvoice until zero.
+local _pendingInvoice = nil
+local _uiBusy = 0
+
+local function holdUi()
+    _uiBusy = _uiBusy + 1
+end
+
+local function releaseUi()
+    _uiBusy = _uiBusy - 1
+    if _uiBusy == 0 and _pendingInvoice then os.queueEvent('ami_invoice') end
+end
+
+-- Wrap a page eventHandler that can run raw-terminal screens.
+local function holdWhile(handler)
+    return function(self, event)
+        holdUi()
+        local handled = handler(self, event)
+        releaseUi()
+        return handled
+    end
+end
 
 -- ── Screens ───────────────────────────────────────────────────────────────────
 
@@ -608,8 +636,136 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances, d
             waitKey(); refreshCmd(); return true
         end
     end
+    cmdPage.eventHandler = holdWhile(cmdPage.eventHandler)
 
     UI:setPage(cmdPage)
+end
+
+-- ── Send AMI (Opus UI) ───────────────────────────────────────────────────────
+-- onClose(sent) runs when the player leaves the page; sent is true if a
+-- transfer went through.
+local function screenSend(nodes, secretKey, address, balance, onClose)
+    local WalletUI = require('wallet_ui')
+    local page     = WalletUI.createSend(nodes, balance)
+    local stage    = 'edit'   -- 'edit' -> 'confirm' -> 'done'
+    local pending  = nil      -- resolved transfer awaiting confirmation
+    local sent     = false
+
+    local function say(text, color)
+        WalletUI.setMessage(page, text, color)
+    end
+
+    local function setStage(s)
+        stage = s
+        page.sendBtn.text = (s == 'confirm' and 'Confirm')
+            or (s == 'done' and 'Done') or 'Send'
+        if s ~= 'confirm' then pending = nil end
+    end
+
+    local function close()
+        releaseUi()
+        onClose(sent)
+    end
+
+    -- Turn the recipient field into a 128-hex address. Returns addr, or nil + err.
+    local function resolveRecipient(raw)
+        if #raw == 128 and raw:match("^[0-9a-fA-F]+$") then
+            return raw:lower()
+        end
+        -- 1. Check local Ami-DNS cache first (instant, works offline)
+        local cached = reverseResolve(raw)
+        if cached then return cached end
+        -- 2. Fall back to querying all nodes
+        say("Looking up '" .. raw .. "'...", colors.yellow)
+        local ok, data, err = comms.lookupAll(secretKey, address, raw, nodes)
+        if ok and data and data.address then
+            cacheName(data.address, raw)
+            comms.gossipDnsAll(secretKey, address, nodes, raw, data.address)
+            return data.address
+        end
+        return nil, err or "unknown"
+    end
+
+    -- Validate the form and ask for confirmation.
+    local function review()
+        local toRaw = tostring(page.toEntry.value or ""):gsub("^%s*(.-)%s*$", "%1")
+        if #toRaw == 0 then
+            page:setFocus(page.toEntry)
+            say("Enter a recipient.", colors.red)
+            return
+        end
+        local amt     = tonumber(page.amountEntry.value)
+        local useUAMI = page.unitChooser.value == 'uami'
+        local microAmt = amt and (useUAMI
+            and math.floor(amt)
+            or  math.floor(amt * 1000000))
+        if not microAmt or not (microAmt >= 1) then
+            page:setFocus(page.amountEntry)
+            say("Invalid amount.", colors.red)
+            return
+        end
+
+        local toAddr, err = resolveRecipient(toRaw)
+        if not toAddr then
+            page:setFocus(page.toEntry)
+            say(err .. ". Try the 128-hex address.", colors.red)
+            return
+        end
+
+        local node = nodes[page.nodeChooser.value] or nodes[1]
+        local display = useUAMI
+            and string.format("%d uAMI", microAmt)
+            or  string.format("%.6f AMI", microAmt / 1000000)
+        local short = toAddr:sub(1, 8) .. "..." .. toAddr:sub(-4)
+        local who   = resolveAddr(toAddr)
+        if who ~= short then who = who .. " (" .. short .. ")" end
+
+        pending = { toAddr=toAddr, microAmt=microAmt, node=node, display=display }
+        setStage('confirm')
+        say("Send " .. display .. " to " .. who .. " via " .. node.name .. "?", colors.yellow)
+    end
+
+    local function transfer()
+        local p = pending
+        say("Sending via " .. p.node.name .. "...", colors.yellow)
+        local ok, _, err = comms.transfer(secretKey, p.node.key, address, p.toAddr, p.microAmt)
+        if ok then
+            sent = true
+            setStage('done')
+            say("Sent " .. p.display .. " to " .. resolveAddr(p.toAddr), colors.green)
+        else
+            setStage('edit')
+            say("Failed: " .. (err or "unknown"), colors.red)
+        end
+    end
+
+    function page:eventHandler(event)
+        if event.type == 'send_cancel' then
+            close(); return true
+
+        elseif event.type == 'send_submit' then
+            if     stage == 'done'    then close()
+            elseif stage == 'confirm' then transfer()
+            else                           review()
+            end
+            return true
+
+        -- Any edit invalidates a pending confirmation.
+        elseif event.type == 'text_change' or event.type == 'choice_change' then
+            if stage ~= 'edit' then
+                setStage('edit')
+                say("", colors.white)
+            end
+            return true
+        end
+        return UI.Page.eventHandler(self, event)
+    end
+
+    holdUi()
+    UI:setPage(page)
+    if #nodes == 0 then
+        say("No nodes configured. Add a node first with Nodes.", colors.red)
+    end
 end
 
 -- ── AmiVault ──────────────────────────────────────────────────────────────────
@@ -763,80 +919,91 @@ local function screenVault(secretKey, address, nodes)
     end
 end
 
--- ── AmiStore invoice popup ───────────────────────────────────────────────────
--- Called when a plaintext INVOICE packet arrives on channel 1338 addressed
--- to this wallet's address. Returns after the player accepts or declines.
-local function invoicePopup(pkt, secretKey, address, nodes)
+-- ── AmiStore invoice page (Opus UI) ──────────────────────────────────────────
+-- Shown when a plaintext INVOICE packet arrives on channel 1338 addressed
+-- to this wallet's address. onClose() runs once the player accepts, declines
+-- or dismisses it. Returns false (page not shown) for a bad or expired packet.
+local function screenInvoice(pkt, secretKey, address, nodes, onClose)
     -- Validate required fields before displaying anything.
     if type(pkt) ~= "table"
         or type(pkt.tx_id)     ~= "string"
         or type(pkt.shop_addr) ~= "string"
         or type(pkt.total)     ~= "number"
         or type(pkt.item)      ~= "string" then
-        return  -- malformed packet — silently ignore
+        return false  -- malformed packet — silently ignore
     end
 
-    local shopName  = tostring(pkt.shop_name or "Unknown Shop")
-    local itemShort = (pkt.item:match(":(.+)$") or pkt.item)
-    local qty       = math.max(1, math.floor(tonumber(pkt.qty) or 1))
-    local total     = pkt.total
-    local amiStr    = string.format("%.4f AMI", total / 1000000)
+    local function expired()
+        return type(pkt.expires) == "number" and os.epoch("utc") > pkt.expires
+    end
+    -- The invoice may have waited behind another screen; the shop drops it
+    -- after its TTL, so paying a stale one would dispense nothing.
+    if expired() then return false end
 
-    -- Draw the interrupt screen.
-    cls()
-    banner("Incoming Invoice")
-    term.setCursorPos(1, 4); term.setTextColor(colors.gray)
-    term.write(string.rep("-", W))
+    local total    = pkt.total
+    local WalletUI = require('wallet_ui')
+    local page     = WalletUI.createInvoice({
+        shop  = tostring(pkt.shop_name or "Unknown Shop"),
+        item  = (pkt.item:match(":(.+)$") or pkt.item),
+        qty   = math.max(1, math.floor(tonumber(pkt.qty) or 1)),
+        total = total,
+        txId  = pkt.tx_id,
+        via   = nodes[1] and nodes[1].name,
+    })
+    local settled = false   -- paid / failed / expired: only Back remains
 
-    term.setCursorPos(1, 5); term.setTextColor(colors.orange)
-    term.write(("Shop : " .. shopName):sub(1, W))
-    term.setCursorPos(1, 6); term.setTextColor(colors.white)
-    term.write(("Item : " .. itemShort):sub(1, W))
-    term.setCursorPos(1, 7)
-    term.write(("Qty  : " .. qty):sub(1, W))
-    term.setCursorPos(1, 8); term.setTextColor(colors.yellow)
-    term.write(("Total: " .. total .. " uAMI  (" .. amiStr .. ")"):sub(1, W))
+    local function finish(text, color)
+        settled = true
+        WalletUI.finishInvoice(page, text, color)
+    end
 
-    term.setCursorPos(1, 9); term.setTextColor(colors.gray)
-    term.write(string.rep("-", W))
-    term.setCursorPos(1, 10); term.setTextColor(colors.lime)
-    term.write("[Y] Accept & pay")
-    term.setCursorPos(1, 11); term.setTextColor(colors.red)
-    term.write("[N] Decline")
-    term.setCursorPos(1, 13); term.setTextColor(colors.gray)
-    term.write(("TX: " .. pkt.tx_id:sub(1, W - 4)):sub(1, W))
-
-    -- Wait for Y or N key.
-    while true do
-        local _, k = os.pullEvent("key")
-        if k == keys.y then
-            if #nodes == 0 then
-                cls(); banner("Invoice Error")
-                pmsg("No nodes configured -- cannot pay.", 5, colors.red)
-                os.sleep(2)
-                return
-            end
-            cls(); banner("Paying...")
-            term.setCursorPos(1, 5); term.setTextColor(colors.yellow)
-            term.write("Sending " .. total .. " uAMI to shop...")
-            local ok, result, err = comms.transfer(
-                secretKey, nodes[1].key, address, pkt.shop_addr, total)
-            if ok then
-                -- Notify the shop so it can dispense immediately.
-                comms.sendPaymentAck(address, pkt.tx_id)
-                term.setCursorPos(1, 7); term.setTextColor(colors.lime)
-                term.write("Payment sent! Awaiting item dispensing.")
-            else
-                term.setCursorPos(1, 7); term.setTextColor(colors.red)
-                term.write(("Failed: " .. (err or "unknown")):sub(1, W))
-            end
-            os.sleep(2)
-            return
-        elseif k == keys.n then
-            -- Decline -- let the invoice expire naturally on the shop side.
+    local function pay()
+        if #nodes == 0 then
+            finish("No nodes configured -- cannot pay.", colors.red)
             return
         end
+        if expired() then
+            finish("Invoice expired. Nothing was paid.", colors.red)
+            return
+        end
+        WalletUI.setMessage(page, "Sending " .. total .. " uAMI to shop...", colors.yellow)
+        local ok, result, err = comms.transfer(
+            secretKey, nodes[1].key, address, pkt.shop_addr, total)
+        if ok then
+            -- Notify the shop so it can dispense immediately.
+            comms.sendPaymentAck(address, pkt.tx_id)
+            finish("Payment sent! Awaiting item dispensing.", colors.lime)
+        else
+            finish("Failed: " .. (err or "unknown"), colors.red)
+        end
     end
+
+    function page:eventHandler(event)
+        -- Keyboard shortcuts forwarded to action events
+        if event.type == 'key' then
+            local k = tostring(event.key):lower()
+            if settled then
+                if k == 'b' or k == 'y' or k == 'n' then
+                    self:eventHandler({type='invoice_decline'})
+                end
+            elseif k == 'y' then self:eventHandler({type='invoice_pay'})
+            elseif k == 'n' then self:eventHandler({type='invoice_decline'})
+            end
+            return true
+
+        elseif event.type == 'invoice_pay' then
+            if not settled then pay() end
+            return true
+
+        elseif event.type == 'invoice_decline' then
+            -- Decline -- let the invoice expire naturally on the shop side.
+            onClose(); return true
+        end
+        return UI.Page.eventHandler(self, event)
+    end
+
+    UI:setPage(page)
+    return true
 end
 
 -- ── Dashboard (Glass Cockpit) ─────────────────────────────────────────────────
@@ -961,27 +1128,14 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- ── Event handlers ───────────────────────────────────────────────────────
     function dashboardPage:eventHandler(event)
         if event.type == 'key' then
-            if not _popupActive then
-                local k = event.key
-                if     k == keys.r then self:eventHandler({type='action_refresh'})
-                elseif k == keys.s then self:eventHandler({type='action_send'})
-                elseif k == keys.e then self:eventHandler({type='action_export'})
-                elseif k == keys.n then self:eventHandler({type='action_nodes'})
-                elseif k == keys.v then self:eventHandler({type='action_vault'})
-                elseif k == keys.u then self:eventHandler({type='action_update'})
-                elseif k == keys.l then self:eventHandler({type='action_logout'})
-                end
-            end
-            return true
-        elseif event.type == 'ami_invoice' then
-            if pendingInvoice then
-                local pkt = pendingInvoice
-                pendingInvoice = nil
-                _popupActive = true
-                invoicePopup(pkt, secretKey, address, nodes)
-                _popupActive = false
-                UI:setPage(dashboardPage)
-                updateDashboard()
+            local k = event.key
+            if     k == keys.r then self:eventHandler({type='action_refresh'})
+            elseif k == keys.s then self:eventHandler({type='action_send'})
+            elseif k == keys.e then self:eventHandler({type='action_export'})
+            elseif k == keys.n then self:eventHandler({type='action_nodes'})
+            elseif k == keys.v then self:eventHandler({type='action_vault'})
+            elseif k == keys.u then self:eventHandler({type='action_update'})
+            elseif k == keys.l then self:eventHandler({type='action_logout'})
             end
             return true
         elseif event.type == 'action_refresh' then
@@ -990,95 +1144,12 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             return true
 
         elseif event.type == 'action_send' then
-            -- Send AMI (fallback to text UI)
-            term.clear()
-            term.setCursorPos(1, 1)
-            term.setBackgroundColor(colors.black)
-            term.setTextColor(colors.white)
-            banner("Send AMI")
-            if #nodes == 0 then
-                pmsg("No nodes configured.", 5, colors.red)
-                pmsg("Add a node first with Nodes.", 6)
-                waitKey()
-            else
-                pmsg("Recipient (player name or address):", 5)
-                local toRaw = prompt("> ", 7)
-                toRaw = toRaw:gsub("^%s*(.-)%s*$", "%1")
-                local toAddr = nil
-
-                if #toRaw == 128 and toRaw:match("^[0-9a-fA-F]+$") then
-                    toAddr = toRaw:lower()
-                else
-                    -- 1. Check local Ami-DNS cache first (instant, works offline)
-                    local cached = reverseResolve(toRaw)
-                    if cached then
-                        toAddr = cached
-                        pmsg("Found (local): " .. resolveAddr(toAddr), 9, colors.lime)
-                    else
-                        -- 2. Fall back to querying all nodes
-                        pmsg("Looking up '" .. toRaw .. "'...", 9, colors.yellow)
-                        local ok, data, err = comms.lookupAll(secretKey, address, toRaw, nodes)
-                        if ok and data and data.address then
-                            toAddr = data.address
-                            cacheName(toAddr, toRaw)
-                            comms.gossipDnsAll(secretKey, address, nodes, toRaw, toAddr)
-                            pmsg("Found: " .. resolveAddr(toAddr), 10, colors.green)
-                        else
-                            pmsg("Not found: " .. (err or "unknown"), 9, colors.red)
-                            pmsg("Enter 128-hex address (blank=cancel):", 10, colors.yellow)
-                            local raw2 = (prompt("> ", 11) or ""):gsub("%s", ""):lower()
-                            if #raw2 == 128 and raw2:match("^[0-9a-fA-F]+$") then
-                                toAddr = raw2
-                                pmsg("Using raw address.", 12, colors.lime)
-                            end
-                        end
-                    end
-                end
-
-                if toAddr then
-                    local chosenNode = nodes[1]
-                    if #nodes > 1 then
-                        pmsg("Send via which node?", 11, colors.yellow)
-                        for i, n in ipairs(nodes) do
-                            pmsg(string.format("  [%d] %s", i, n.name), 11 + i, colors.white)
-                        end
-                        local inp = prompt("> ", 12 + #nodes)
-                        local idx = tonumber(inp)
-                        if idx and idx >= 1 and idx <= #nodes then
-                            chosenNode = nodes[idx]
-                        end
-                    end
-                    local amtRow = (#nodes > 1) and (14 + #nodes) or 12
-                    -- Unit selection
-                    pmsg("Unit? [A]MI or [U]uAMI:", amtRow, colors.white)
-                    local unitIn = prompt("> ", amtRow + 1)
-                    local useUAMI = (unitIn:lower():sub(1,1) == "u")
-                    local unitLabel = useUAMI and "uAMI" or "AMI"
-                    pmsg("Amount (" .. unitLabel .. "):", amtRow + 3)
-                    local rawAmt = prompt("> ", amtRow + 4)
-                    local amt = tonumber(rawAmt)
-                    if not amt or amt <= 0 then
-                        pmsg("Invalid amount.", amtRow + 6, colors.red); waitKey()
-                    else
-                        local microAmt = useUAMI
-                            and math.floor(amt)
-                            or  math.floor(amt * 1000000)
-                        pmsg("Sending via " .. chosenNode.name .. "...", amtRow + 6, colors.yellow)
-                        local ok, _, err = comms.transfer(secretKey, chosenNode.key, address, toAddr, microAmt)
-                        if ok then
-                            local display = useUAMI
-                                and string.format("%d uAMI", microAmt)
-                                or  string.format("%.4f AMI", amt)
-                            pmsg("Sent " .. display .. " to " .. resolveAddr(toAddr), amtRow + 6, colors.green)
-                        else
-                            pmsg("Failed: " .. (err or "unknown"), amtRow + 6, colors.red)
-                        end
-                        waitKey(); refreshBalance()
-                    end
-                end
-            end
-            UI:setPage(dashboardPage)
-            updateDashboard()
+            -- Send page (Opus page takes over; its Back button returns here)
+            screenSend(nodes, secretKey, address, totalBalance, function(sent)
+                UI:setPage(dashboardPage)
+                if sent then refreshBalance() end
+                updateDashboard()
+            end)
             return true
             
         elseif event.type == 'action_receive' then
@@ -1144,7 +1215,25 @@ local function screenDashboard(secretKey, address, nodes, playerName)
             return true
         end
     end
-    
+    dashboardPage.eventHandler = holdWhile(dashboardPage.eventHandler)
+
+    -- ── Invoices ─────────────────────────────────────────────────────────────
+    -- Opens the waiting invoice over whichever page is showing, then returns
+    -- to that page. Re-queued by releaseUi() if a screen was in the way.
+    local invoiceOpen = false
+    Event.on('ami_invoice', function()
+        if invoiceOpen or _uiBusy > 0 or not _pendingInvoice then return end
+        local pkt = _pendingInvoice
+        _pendingInvoice = nil
+        local prevPage = UI:getActivePage()
+        invoiceOpen = screenInvoice(pkt, secretKey, address, nodes, function()
+            invoiceOpen = false
+            UI:setPage(prevPage)
+            if prevPage == dashboardPage then updateDashboard() end
+            if _pendingInvoice then os.queueEvent('ami_invoice') end
+        end)
+    end)
+
     -- Open the AmiStore broadcast channel so we receive INVOICE packets.
     comms.openShopChannel()
     
@@ -1156,19 +1245,16 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     dashboardPage.statusBar:setStatus('Connecting to nodes...')
     UI:setPage(dashboardPage)
 
-    local pendingInvoice = nil
-    local _popupActive   = false
-
     -- Run all coroutines in parallel
     parallel.waitForAll(
         -- Balance refresh loop (first fetch runs immediately, no leading sleep)
         function()
             refreshBalance()
-            if not _popupActive then updateDashboard() end
+            updateDashboard()
             while true do
                 sleep(5)
                 refreshBalance()
-                if not _popupActive then updateDashboard() end
+                updateDashboard()
             end
         end,
         
@@ -1190,14 +1276,14 @@ local function screenDashboard(secretKey, address, nodes, playerName)
                     if ok2 and type(pkt) == "table"
                         and pkt.type == "INVOICE"
                         and pkt.to   == address then
-                        pendingInvoice = pkt
+                        _pendingInvoice = pkt
                         os.queueEvent('ami_invoice')
                     end
                 end
             end
         end,
         
-        -- UI event loop (also handles 'key' and 'ami_invoice' via dashboardPage:eventHandler)
+        -- UI event loop (page eventHandlers and the 'ami_invoice' handler above)
         function()
             UI:pullEvents()
         end

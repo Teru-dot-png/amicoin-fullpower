@@ -1096,8 +1096,9 @@ local function monitorLoop(nodeKey)
 end
 
 -- ── Admin recovery menu ([A] key) ───────────────────────────────────────────
--- Provides operator tools for wallet recovery: balance inquiry, force-credit,
--- force-transfer, re-register, and ledger flush.  All actions are logged.
+-- Provides operator tools for wallet recovery: balance inquiry, force-transfer,
+-- re-register, ledger flush, and minting new AMI into a wallet (used to fund
+-- The Great Ami Exchange's reserve).  All actions are logged.
 -- Password-protected using the same setup password file.
 local ADMIN_LOG = "/data/admin.log"
 local function adminLog(msg)
@@ -1156,6 +1157,7 @@ local function adminMenu(setupPassword)
         print("  [3] Re-register wallet  (create zero-balance entry)")
         print("  [4] Flush ledger        (force write cached ledger)")
         print("  [5] List all balances   (snapshot dump)")
+        print("  [6] Mint new AMI        (create coins in a wallet)")
         print("  [B] Exit admin menu")
         term.setTextColor(colors.gray)
         print("")
@@ -1263,6 +1265,37 @@ local function adminMenu(setupPassword)
                 end
             end
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+
+        elseif choice == "6" then
+            -- Mint: creates NEW coins on this node's ledger (no sender is debited).
+            -- Local, password-gated operator action only -- there is no network
+            -- command for this, so nothing on the mesh can trigger it.
+            local inp = adminRead("  Mint TO name/address > ")
+            local to, err = adminResolve(inp)
+            if not to then
+                term.setTextColor(colors.red); print("  " .. err); os.sleep(1)
+            else
+                local n = tonumber((adminRead("  Amount (AMI) > ")))   -- parens: adminRead returns gsub's 2 values
+                local uami = (n and n == n and n < math.huge) and math.floor(n * 1e6) or 0
+                if uami <= 0 then
+                    term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
+                else
+                    local name = ledger.getNameByAddress(to) or "(unregistered)"
+                    term.setTextColor(colors.yellow)
+                    print(string.format("  Create %d uAMI (%.6f AMI) of NEW coins", uami, uami / 1e6))
+                    print(string.format("  for %s  %s...", name, to:sub(1, 16)))
+                    if adminRead("  Type YES to mint > ") == "YES" then
+                        ledger.credit(to, uami)
+                        local bal = ledger.getBalance(to)
+                        term.setTextColor(colors.lime)
+                        print(string.format("  Minted. New balance: %d uAMI  (%.6f AMI)", bal, bal / 1e6))
+                        adminLog(string.format("MINT to=%s name=%s amount=%d", to:sub(1,16), name, uami))
+                    else
+                        term.setTextColor(colors.gray); print("  Cancelled -- nothing minted.")
+                    end
+                    term.setTextColor(colors.gray); print("  [Enter] continue"); read()
+                end
+            end
         end
     end
 

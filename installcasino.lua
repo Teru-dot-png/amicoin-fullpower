@@ -10,7 +10,8 @@
 --   Clean Install: Wipes /ami/casino/ then fresh install.
 
 local VERSION   = "1.0"
-local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+-- latest.lua sets AMI_REPO_BASE to a commit URL, which GitHub never serves stale.
+local REPO_BASE = _G.AMI_REPO_BASE or "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
 local FILES = {
     { src = "/shared/xtea.lua",        dst = "/shared/xtea.lua"        },

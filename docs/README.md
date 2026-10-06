@@ -351,6 +351,30 @@ lua
 shell.run("rm", "installshop.lua") and shell.run("wget", "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/installshop.lua?" .. os.epoch("utc")) and shell.run("installshop.lua")
 ```
 
+### Getting the latest version right after a push
+
+GitHub's raw file server caches the `main` URLs above for about five minutes, and
+the `?` cache-buster on the end does not get around it. To install or update from
+the newest commit straight away, use `latest.lua`, which asks the GitHub API for
+the current commit and downloads everything from that exact commit:
+
+```
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/latest.lua exchange
+```
+
+Replace `exchange` with `node`, `pad`, `shop` or `casino`. Choose `[U]` Update in
+the installer to keep your data. The wallet's and the exchange's own `[U]pdate`
+do the same lookup themselves.
+
+### Install The Great Ami Exchange
+
+Swaps FTB quest coins (`/coins`) for AMI and back. See [EXCHANGE.md](EXCHANGE.md)
+for the build, the server settings and the safety test.
+
+```
+wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/main/latest.lua exchange
+```
+
 ## AmiCasino
 
 AmiCasino is a standalone gamble station that runs on any CC:Tweaked computer with an Ender Router or modem. Players bet AmiCoin on 9 different games. Winnings are credited and losses are collected through the same INVOICE / PAYMENT_ACK flow used by AmiStore — no special trust required on the node side.
@@ -497,6 +521,7 @@ amicoin/
 │   ├── EXCHANGE.md           The Great Ami Exchange (FTB coins <-> AMI) setup and safety
 │   ├── SECURITY.md           XTEA, source verification, and key safety guidelines
 │   └── MIGRATION.md          How to move your wallet to a new Pad
+├── latest.lua                Runs any installer from the newest commit (skips GitHub's cache)
 ├── installnode.lua           One-command node installer (delta-update, force, or clean install)
 ├── installpad.lua            One-command wallet installer
 ├── installshop.lua           One-command AmiStore installer

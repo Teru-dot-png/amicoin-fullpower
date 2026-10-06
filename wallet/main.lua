@@ -211,6 +211,22 @@ end
 
 -- ── Self-update ──────────────────────────────────────────────────────────────
 local REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
+
+-- raw.githubusercontent.com caches the "main" URL for about five minutes and
+-- ignores "?123" cache-busters, so an update right after a push can fetch the
+-- previous files. Commit-hash URLs are never stale: ask the GitHub API which
+-- commit main is on and download from that. Falls back to "main" if the API
+-- cannot be reached. Returns the short commit hash, or nil.
+local function useLatestCommit()
+    local ok, res = pcall(http.get,
+        "https://api.github.com/repos/Teru-dot-png/amicoin-fullpower/commits/main",
+        { Accept = "application/vnd.github.sha" })
+    if not ok or not res then return nil end
+    local sha = res.readAll():gsub("%s", ""); res.close()
+    if #sha ~= 40 or not sha:match("^%x+$") then return nil end
+    REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/" .. sha
+    return sha:sub(1, 7)
+end
 local RATE_URL  = "https://dumpcafe.amie-whoogle.app/DUMP/reward_rate.txt"
 local UPDATE_FILES = {
     { src="/shared/xtea.lua",       dst="/shared/xtea.lua"    },
@@ -232,14 +248,15 @@ end
 
 local function screenUpdate()
     banner("Software Update")
-    pmsg("Downloading latest from GitHub...", 5, colors.yellow)
+    local commit = useLatestCommit()
+    pmsg(commit and ("Downloading commit " .. commit .. "...")
+        or "Downloading latest from GitHub...", 5, colors.yellow)
     local failed = false
     local hashes = {}
     local row = 7
     for _, entry in ipairs(UPDATE_FILES) do
         pmsg(entry.dst .. "...", row, colors.white)
-        -- Cache-buster: raw.githubusercontent serves stale files for minutes
-        local ok, res = pcall(http.get, REPO_BASE .. entry.src .. "?" .. os.epoch("utc"))
+        local ok, res = pcall(http.get, REPO_BASE .. entry.src)
         if ok and res then
             local content = res.readAll()
             res.close()

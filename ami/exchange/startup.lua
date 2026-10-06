@@ -28,6 +28,22 @@ local POLL_INTERVAL = 4    -- seconds between payment checks while waiting
 local SHOP_CHANNEL  = 1338
 local REPO_BASE     = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/heads/main"
 
+-- raw.githubusercontent.com caches the "main" URL for about five minutes and
+-- ignores "?123" cache-busters, so an update right after a push can fetch the
+-- previous files. Commit-hash URLs are never stale: ask the GitHub API which
+-- commit main is on and download from that. Falls back to "main" if the API
+-- cannot be reached. Returns the short commit hash, or nil.
+local function useLatestCommit()
+    local ok, res = pcall(http.get,
+        "https://api.github.com/repos/Teru-dot-png/amicoin-fullpower/commits/main",
+        { Accept = "application/vnd.github.sha" })
+    if not ok or not res then return nil end
+    local sha = res.readAll():gsub("%s", ""); res.close()
+    if #sha ~= 40 or not sha:match("^%x+$") then return nil end
+    REPO_BASE = "https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/" .. sha
+    return sha:sub(1, 7)
+end
+
 local UPDATE_FILES = {
     { src = "/shared/xtea.lua",                dst = "/shared/xtea.lua"                },
     { src = "/ami/exchange/exchange_api.lua",  dst = "/ami/exchange/exchange_api.lua"  },
@@ -68,7 +84,8 @@ local function selfUpdate()
     term.clear(); term.setCursorPos(1, 1)
     term.setTextColor(colors.yellow)
     print("Ami Exchange Self-Update")
-    print("Downloading from GitHub...")
+    local commit = useLatestCommit()
+    print(commit and ("Downloading commit " .. commit .. "...") or "Downloading from GitHub...")
     print("")
     term.setTextColor(colors.white)
 

@@ -113,6 +113,7 @@ for _, n in ipairs({ "heartbeat", "heartbeatAll", "register", "registerAll",
                      "gossipDns", "gossipDnsAll", "openShopChannel", "closeShopChannel",
                      "vaultLock" }) do comms[n] = noop end
 comms.getBalance = function() os.sleep(0.2); return true, { balance = 12500000, _latency = 7 } end
+comms.listVaults = function() os.sleep(0.2); return true, { vaults = {} } end
 comms.getStats   = function() return true, { effective_rate = 50, fingerprint = "f00d" } end
 comms.lookupAll  = function(_, _, name)
   os.sleep(0.5)
@@ -365,5 +366,32 @@ invoice(); pump(1)
 check(screenHas("Incoming Invoice"), "invoice opens over the Command Center")
 inject("char", "n"); pump(1)
 check(screenHas("Command Center"), "declining returns to the Command Center")
+
+print("== keyboard shortcuts ==")
+typeText("b"); pump(1)
+check(onDashboard(), "[B] leaves the Command Center")
+typeText("n"); pump(1)
+check(screenHas("Command Center"), "[N] opens the Command Center")
+typeText("B"); pump(1)
+check(onDashboard(), "shortcuts ignore case")
+typeText("e"); pump(1)
+check(screenHas("Export Secret Key"), "[E] opens Export")
+pump(12)
+check(screenHas("Export Secret Key") and not onDashboard(), "raw Export screen survives the balance refresh")
+press("x", 2)
+check(onDashboard(), "any key leaves Export")
+typeText("v"); pump(2)
+check(screenHas("AmiVault"), "[V] opens the Vault")
+pump(12)
+check(screenHas("AmiVault") and not onDashboard(), "raw Vault screen survives the balance refresh")
+press("b", 2)
+check(onDashboard(), "[B] leaves the Vault")
+typeText("s"); pump(1)
+check(screenHas("Send AMI") and screenHas("Ami-DNS name / 128-hex"),
+  "[S] opens Send without typing the 's' into the form")
+typeText("sergeluv")
+check(screenHas("sergeluv") and screenHas("Send AMI"), "letters typed in the Send form are not shortcuts")
+click(16, 18, 2)
+check(onDashboard() and #transfers == 4, "Back leaves Send, nothing was sent")
 
 print(string.format("\nPASS: %d checks", passed))

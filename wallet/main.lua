@@ -238,7 +238,8 @@ local function screenUpdate()
     local row = 7
     for _, entry in ipairs(UPDATE_FILES) do
         pmsg(entry.dst .. "...", row, colors.white)
-        local ok, res = pcall(http.get, REPO_BASE .. entry.src)
+        -- Cache-buster: raw.githubusercontent serves stale files for minutes
+        local ok, res = pcall(http.get, REPO_BASE .. entry.src .. "?" .. os.epoch("utc"))
         if ok and res then
             local content = res.readAll()
             res.close()
@@ -390,13 +391,14 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances, d
     function cmdPage:eventHandler(event)
         -- Keyboard shortcuts forwarded to action events
         if event.type == 'key' then
-            local k = event.key
-            if     k == keys.a                       then self:eventHandler({type='action_add'})
-            elseif k == keys.d and #nodes > 0        then self:eventHandler({type='action_del'})
-            elseif k == keys.i and #nodes > 0        then self:eventHandler({type='action_integ'})
-            elseif k == keys.g and #nodes > 0        then self:eventHandler({type='action_gossip'})
-            elseif k == keys.c and #nodes > 1        then self:eventHandler({type='action_consolidate'})
-            elseif k == keys.b                       then self:eventHandler({type='action_back'})
+            -- Opus delivers keys as strings ('a'), not keys.* codes
+            local k = tostring(event.key):lower()
+            if     k == 'a'                          then self:eventHandler({type='action_add'})
+            elseif k == 'd' and #nodes > 0           then self:eventHandler({type='action_del'})
+            elseif k == 'i' and #nodes > 0           then self:eventHandler({type='action_integ'})
+            elseif k == 'g' and #nodes > 0           then self:eventHandler({type='action_gossip'})
+            elseif k == 'c' and #nodes > 1           then self:eventHandler({type='action_consolidate'})
+            elseif k == 'b'                          then self:eventHandler({type='action_back'})
             end
             return true
         end
@@ -1013,6 +1015,10 @@ local function screenDashboard(secretKey, address, nodes, playerName)
 
     -- Load wallet UI module
     local WalletUI = require("wallet_ui")
+    -- Wallets before the Send/Invoice pages did not self-update wallet_ui.lua,
+    -- so their [U]pdate leaves a new startup.lua beside the old UI file.
+    -- Finish that update here instead of crashing when Send is opened.
+    if not WalletUI.createSend then screenUpdate() end
     
     -- ── State ────────────────────────────────────────────────────────────────
     local totalBalance  = nil
@@ -1044,7 +1050,10 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         end
     end
 
-    local function refreshBalance()
+    -- background=true is the 5s refresh loop. It must not paint while a page
+    -- handler is mid-flight: that is when a raw-terminal screen (Export, Vault,
+    -- Update...) owns the display, and the dashboard would be drawn over it.
+    local function refreshBalance(background)
         if #nodes == 0 then
             totalBalance = nil; balErr = "No nodes - press [N]"; return
         end
@@ -1055,9 +1064,11 @@ local function screenDashboard(secretKey, address, nodes, playerName)
         local cfg      = loadConfig()
         for i, node in ipairs(nodes) do
             -- Live progress indicator in the status bar
-            dashboardPage.statusBar:setStatus(
-                string.format('Querying %d/%d: %s...', i, #nodes, node.name:sub(1, 9)))
-            dashboardPage:draw(); dashboardPage:sync()
+            if not (background and _uiBusy > 0) then
+                dashboardPage.statusBar:setStatus(
+                    string.format('Querying %d/%d: %s...', i, #nodes, node.name:sub(1, 9)))
+                dashboardPage:draw(); dashboardPage:sync()
+            end
 
             local ok, data, err = comms.getBalance(secretKey, node.key, address)
             local entry = { name=node.name, balance=0, err=nil, latency=nil, stats=nil, fp_ok=nil }
@@ -1117,7 +1128,8 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     end
     
     -- ── Update UI ────────────────────────────────────────────────────────────
-    local function updateDashboard()
+    local function updateDashboard(background)
+        if background and _uiBusy > 0 then return end
         local onlineCount = 0
         for _, n in ipairs(perNode) do
             if not n.err then onlineCount = onlineCount + 1 end
@@ -1128,14 +1140,15 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     -- ── Event handlers ───────────────────────────────────────────────────────
     function dashboardPage:eventHandler(event)
         if event.type == 'key' then
-            local k = event.key
-            if     k == keys.r then self:eventHandler({type='action_refresh'})
-            elseif k == keys.s then self:eventHandler({type='action_send'})
-            elseif k == keys.e then self:eventHandler({type='action_export'})
-            elseif k == keys.n then self:eventHandler({type='action_nodes'})
-            elseif k == keys.v then self:eventHandler({type='action_vault'})
-            elseif k == keys.u then self:eventHandler({type='action_update'})
-            elseif k == keys.l then self:eventHandler({type='action_logout'})
+            -- Opus delivers keys as strings ('r'), not keys.* codes
+            local k = tostring(event.key):lower()
+            if     k == 'r' then self:eventHandler({type='action_refresh'})
+            elseif k == 's' then self:eventHandler({type='action_send'})
+            elseif k == 'e' then self:eventHandler({type='action_export'})
+            elseif k == 'n' then self:eventHandler({type='action_nodes'})
+            elseif k == 'v' then self:eventHandler({type='action_vault'})
+            elseif k == 'u' then self:eventHandler({type='action_update'})
+            elseif k == 'l' then self:eventHandler({type='action_logout'})
             end
             return true
         elseif event.type == 'action_refresh' then
@@ -1249,12 +1262,12 @@ local function screenDashboard(secretKey, address, nodes, playerName)
     parallel.waitForAll(
         -- Balance refresh loop (first fetch runs immediately, no leading sleep)
         function()
-            refreshBalance()
-            updateDashboard()
+            refreshBalance(true)
+            updateDashboard(true)
             while true do
                 sleep(5)
-                refreshBalance()
-                updateDashboard()
+                refreshBalance(true)
+                updateDashboard(true)
             end
         end,
         

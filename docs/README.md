@@ -479,6 +479,10 @@ amicoin/
 │   ├── startup.lua           AmiStore entry point; parallel network/sync/input loops
 │   ├── shop_api.lua          AE2, listings, pipeline, structured logging
 │   └── shop_ui.lua           Glass Cockpit monitor UI
+├── ami/exchange/
+│   ├── startup.lua           The Great Ami Exchange entry point; buy/sell terminal, admin
+│   ├── exchange_api.lua      Mesh, invoices, /coins via command block, safety test
+│   └── exchange_ui.lua       Monitor status board
 ├── ami/casino/
 │   ├── startup.lua           AmiCasino entry point; lobby, login, admin, money flow
 │   ├── games.lua             All 9 games (Mines, Crash, Slots, Blackjack, Roulette,
@@ -490,11 +494,13 @@ amicoin/
 │   ├── NodeExample.png       Node monitor screenshot
 │   ├── NodeTopMonitorExample.png  Node monitor top-panel detail screenshot
 │   ├── SHOP.md               AmiStore Merchant Manual
+│   ├── EXCHANGE.md           The Great Ami Exchange (FTB coins <-> AMI) setup and safety
 │   ├── SECURITY.md           XTEA, source verification, and key safety guidelines
 │   └── MIGRATION.md          How to move your wallet to a new Pad
 ├── installnode.lua           One-command node installer (delta-update, force, or clean install)
 ├── installpad.lua            One-command wallet installer
 ├── installshop.lua           One-command AmiStore installer
+├── installexchange.lua       One-command Ami Exchange installer
 └── installcasino.lua         One-command AmiCasino installer
 ```
 

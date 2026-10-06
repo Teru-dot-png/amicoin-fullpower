@@ -17,10 +17,11 @@
 --   * Ami-DNS names are NOT proof of identity: any wallet can register any
 --     name. So coins are only ever taken from a player who is standing at the
 --     exchange, alone, and the payout address is shown for them to check.
---   * The computer cannot read a player's coin balance. It relies on the
---     /coins command FAILING when a player has too few coins. The admin
---     safety test proves that on this server; trading stays closed until it
---     passes.
+--   * The computer cannot read a player's coin balance, and a command block
+--     reports "success" even when /coins remove refuses for lack of coins. So
+--     each /coins command's result is stored in a scoreboard and checked (see
+--     coinsChanged). The admin safety test proves that works on this server;
+--     trading stays closed until it passes.
 
 local xtea = dofile("/shared/xtea.lua")
 
@@ -450,30 +451,52 @@ function api.playerAlone(name)
         .. " unless entity " .. selOthers(name))
 end
 
--- Give coins to a player. Returns true if the command succeeded.
+-- A command block only reports whether a command ran without an error, and
+-- `/coins remove` does NOT error when the player has too few coins: it prints
+-- "insufficient funds", changes nothing and still counts as a success. What
+-- tells the two apart is the command's result value (the number of players it
+-- actually changed), so every /coins command is run through
+-- `execute store result score` and the score is checked afterwards.
+local SCORE_OBJ = "amiex"
+
+-- Run a /coins command. `guard` is an optional "if entity ... " prefix.
+-- Returns true only if the command really changed the player's balance.
+local function coinsChanged(guard, coinCmd)
+    local holder = "#ex" .. os.getComputerID()
+    runCommand("scoreboard objectives add " .. SCORE_OBJ .. " dummy")   -- errors if it exists: fine
+    -- Start from 0 so a skipped command cannot leave an old 1 behind.
+    if not runCommand(string.format("scoreboard players set %s %s 0", holder, SCORE_OBJ)) then
+        return false
+    end
+    runCommand(string.format("execute %sstore result score %s %s run %s",
+        guard or "", holder, SCORE_OBJ, coinCmd))
+    return runCommand(string.format("execute if score %s %s matches 1", holder, SCORE_OBJ))
+end
+
+-- Give coins to a player. Returns true if the coins were really added.
 local function giveCoins(name, coins)
     if not api.validName(name) then return false end
-    return runCommand(string.format(api.loadConfig().cmd_add, name, coins))
+    return coinsChanged(nil, string.format(api.loadConfig().cmd_add, name, coins))
 end
 
 -- Take coins from a player. The presence check and the removal are ONE
 -- command, so the player cannot be swapped between the check and the take.
--- Fails (takes nothing) if they are not alone at the exchange, or — on a
--- server that passed the safety test — if they hold fewer coins than asked.
+-- Returns true only if the coins were really removed: false if they are not
+-- alone at the exchange or hold fewer coins than asked.
 local function takeCoins(name, coins)
     if not api.validName(name) then return false end
-    return runCommand("execute if entity " .. selHere(name)
-        .. " unless entity " .. selOthers(name)
-        .. " run " .. string.format(api.loadConfig().cmd_remove, name, coins))
+    return coinsChanged("if entity " .. selHere(name)
+        .. " unless entity " .. selOthers(name) .. " ",
+        string.format(api.loadConfig().cmd_remove, name, coins))
 end
 
 -- ── Admin safety test ─────────────────────────────────────────────────────────
 -- Proves the three things trading depends on, using the admin's own coins:
---   1. /coins add reports success            (else paid buys would be refunded
---                                             even though coins were given)
---   2. /coins remove reports success
---   3. /coins remove FAILS on too few coins  (else selling coins you do not
---                                             have would still pay out AMI)
+--   1. adding a coin is seen as a change       (else paid buys would be
+--                                               refunded although coins came)
+--   2. removing a coin is seen as a change
+--   3. removing more than the player holds is seen as NO change (else selling
+--      coins you do not have would still pay out AMI)
 -- balance = the coins the admin holds right now (from /coins get).
 -- Returns ok (bool), report (array of {text, ok}).
 function api.safetyTest(name, balance)
@@ -489,21 +512,24 @@ function api.safetyTest(name, balance)
     if not step("Find " .. name .. " alone at the exchange", api.playerAlone(name)) then
         return false, report
     end
-    if not step("coins add 1 reports success", giveCoins(name, 1)) then
+    if not step("Adding 1 coin is detected", giveCoins(name, 1)) then
         return false, report
     end
-    if not step("coins remove 1 reports success", takeCoins(name, 1)) then
+    if not step("Removing 1 coin is detected", takeCoins(name, 1)) then
         return false, report
     end
     local over = balance + 1
     if takeCoins(name, over) then
-        -- It took coins the player does not have (or the balance was mistyped).
+        -- The coins really were removed, so the player held more than they
+        -- typed. Put them back; this is a wrong number, not a broken server.
         giveCoins(name, over)
-        step(string.format("coins remove %d must FAIL (you hold %d)", over, balance), false)
-        log("ERROR", "safety", "remove did not fail on insufficient coins for " .. name)
+        step(string.format("Removing %d coins must be refused (you said you hold %d)",
+            over, balance), false)
+        log("WARN", "safety", "remove of balance+1 went through for " .. name
+            .. " -- balance was entered too low")
         return false, report
     end
-    step(string.format("coins remove %d fails (you hold %d)", over, balance), true)
+    step(string.format("Removing %d coins is refused (you hold %d)", over, balance), true)
 
     cfg.verified = true
     api.saveConfig(cfg)

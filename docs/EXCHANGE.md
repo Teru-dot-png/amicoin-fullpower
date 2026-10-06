@@ -66,13 +66,21 @@ If the payout fails, the coins are given back.
 
 ## Why the safety test exists
 
-The computer cannot read a coin balance. Selling relies on `coins remove`
-**failing** when the player has too few coins. If the mod instead clamped the
-balance to zero and reported success, anyone could sell coins they do not have.
+The computer cannot read a coin balance, and a command block only reports
+whether a command ran without an error. `/coins remove` does **not** error when
+a player has too few coins: it prints "insufficient funds", changes nothing and
+still counts as a success. Trusting that would let anyone sell coins they do
+not have.
+
+So every `/coins` command is run through `execute store result score`, which
+records how many players the command actually changed (1 or 0) in a scoreboard
+objective called `amiex`, and the exchange checks that score.
 
 The test adds and removes one coin on the admin's account, then tries to remove
-one more coin than the admin holds. It passes only if that last removal fails.
-Re-run it after updating the modpack.
+one more coin than the admin holds. It passes only if the first two are seen as
+changes and the last one is seen as no change. Enter your exact balance from
+`/coins get`; a number that is too low makes the last step fail. Re-run the
+test after updating the modpack.
 
 ## Other safeguards
 

@@ -538,8 +538,8 @@ end
 -- ── Safety test (admin) ───────────────────────────────────────────────────────
 local function safetyTest()
     header("Safety test")
-    print("  Checks that /coins works from the command block")
-    print("  and REFUSES to take coins a player does not have.")
+    print("  Checks that the exchange can tell when /coins")
+    print("  REFUSES to take coins a player does not have.")
     print("  Trading stays closed until this passes.")
     print("")
     print("  Stand alone next to the exchange. It adds and")
@@ -566,8 +566,9 @@ local function safetyTest()
         say(colors.green, "  Passed. The exchange is open.")
     else
         say(colors.red, "  FAILED. The exchange stays closed.")
-        print("  If the last line failed, re-check your balance")
-        print("  with /coins get -- coins were put back.")
+        print("  If only the last line failed, the number you")
+        print("  typed was lower than your real balance. Check")
+        print("  /coins get and run the test again.")
     end
     drawBoard()
     anyKey()

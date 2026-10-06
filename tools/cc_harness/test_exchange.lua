@@ -170,47 +170,84 @@ modem.transmit = function(ch, replyCh, msg)
 end
 
 -- players: coins + distance from the command block (nil = offline)
+--
+-- The command block behaves like Minecraft 1.21 with SG-Economy 1.0.5 (read
+-- from the mod's EconomyCommand.java), which is what bit the first version:
+--   * runCommand() is true whenever the command ran WITHOUT AN ERROR;
+--   * `coins remove` on too few coins prints a message, changes nothing and
+--     returns result 0 -- no error, so runCommand() is still true;
+--   * `coins add/remove` for a player who is not online IS an error;
+--   * `execute if ...` with nothing after it errors when the test is false,
+--     and a false test in front of `run` silently skips the command.
 local players = {}
-local world = { clampRemove = false, addBroken = false }
+local world = { addBroken = false }
+local scores, objectives = {}, {}
 local function near(name, r) return players[name] and players[name].dist and players[name].dist <= r end
-local function coinCommand(cmd)
+
+-- Returns ran-without-error (bool), result (int).
+local function exec(cmd)
+  local obj = cmd:match("^scoreboard objectives add ([%w_]+) dummy$")
+  if obj then
+    if objectives[obj] then return false end
+    objectives[obj] = true; return true, 1
+  end
+  local holder, o, v = cmd:match("^scoreboard players set (%S+) ([%w_]+) (%-?%d+)$")
+  if holder then
+    if not objectives[o] then return false end
+    scores[holder .. "/" .. o] = tonumber(v); return true, tonumber(v)
+  end
   local who, n = cmd:match("^coins add ([%w_]+) (%d+)$")
   if who then
-    if world.addBroken or not players[who] then return false end
-    players[who].coins = players[who].coins + tonumber(n); return true
+    if not (players[who] and players[who].dist) then return false end   -- "No player was found"
+    if world.addBroken then return false end
+    players[who].coins = players[who].coins + tonumber(n); return true, 1
   end
   who, n = cmd:match("^coins remove ([%w_]+) (%d+)$")
   if who then
     n = tonumber(n)
-    if not players[who] then return false end
-    if players[who].coins < n then
-      if world.clampRemove then players[who].coins = 0; return true end
-      return false
-    end
-    players[who].coins = players[who].coins - n; return true
+    if not (players[who] and players[who].dist) then return false end
+    if players[who].coins < n then return true, 0 end                    -- insufficient funds
+    players[who].coins = players[who].coins - n; return true, 1
   end
-  error("command block got an unexpected command: " .. cmd)
+
+  local rest = cmd:match("^execute (.+)$")
+  assert(rest, "command block got an unexpected command: " .. cmd)
+  local store
+  while true do
+    local name, r, tail = rest:match("^if entity @a%[name=([%w_]+),distance=%.%.(%d+)%]%s?(.*)$")
+    local other, r2, tail2 = rest:match("^unless entity @a%[name=!([%w_]+),distance=%.%.(%d+)%]%s?(.*)$")
+    local sh, so, tail3 = rest:match("^store result score (%S+) ([%w_]+) (.*)$")
+    local ch, co, cv = rest:match("^if score (%S+) ([%w_]+) matches (%d+)$")
+    local run = rest:match("^run (.+)$")
+    if name then
+      if not near(name, tonumber(r)) then return false end
+      rest = tail
+    elseif other then
+      for pn in pairs(players) do
+        if pn ~= other and near(pn, tonumber(r2)) then return false end
+      end
+      rest = tail2
+    elseif sh then
+      assert(objectives[so], "store into a missing objective")
+      store = sh .. "/" .. so; rest = tail3
+    elseif ch then
+      return scores[ch .. "/" .. co] == tonumber(cv), 1
+    elseif run then
+      local ok, result = exec(run)
+      if store then scores[store] = ok and result or 0 end
+      return ok, result
+    else
+      error("unparsed execute tail: [" .. rest .. "] in: " .. cmd)
+    end
+    if rest == "" then return true, 1 end
+  end
 end
+
 local cmdBlock = { cmd = "" }
 cmdBlock.setCommand = function(c) cmdBlock.cmd = c end
 cmdBlock.runCommand = function()
-  local cmd = cmdBlock.cmd
-  commandsRun[#commandsRun + 1] = cmd
-  local name, r, rest = cmd:match("^execute if entity @a%[name=([%w_]+),distance=%.%.(%d+)%](.*)$")
-  if not name then return coinCommand(cmd) end
-  if not near(name, tonumber(r)) then return false, "Command failed" end
-  local other, r2, rest2 = rest:match("^ unless entity @a%[name=!([%w_]+),distance=%.%.(%d+)%](.*)$")
-  if other then
-    assert(other == name, "others-selector must exclude the same player")
-    for n in pairs(players) do
-      if n ~= name and near(n, tonumber(r2)) then return false, "Command failed" end
-    end
-    rest = rest2
-  end
-  if rest == "" then return true end
-  local run = rest:match("^ run (.+)$")
-  assert(run, "unparsed command tail: " .. rest)
-  if coinCommand(run) then return true end
+  commandsRun[#commandsRun + 1] = cmdBlock.cmd
+  if exec(cmdBlock.cmd) then return true end
   return false, "Command failed"
 end
 
@@ -320,18 +357,15 @@ char("b"); pump(1)
 char("b"); pump(1)
 check(has("EXCHANGE CLOSED") and has("Safety test not passed yet"), "still closed until the safety test passes")
 
--- a server whose /coins remove clamps instead of failing must NOT pass
-world.clampRemove = true
-char("`"); line("hunter2"); char("t"); line("Felix"); line("50", 5)
-dump("safety test (clamping server)")
-check(has("[FAIL]") and has("must FAIL") and has("stays closed"), "safety test fails when remove does not fail on too few coins")
-check(players.Felix.coins == 51, "coins taken by the failed test were put back (51 = clamped to 0, then +51)")
-players.Felix.coins = 50
-world.clampRemove = false
+-- typing a balance lower than the real one must not pass (and must not mint coins)
+char("`"); line("hunter2"); char("t"); line("Felix"); line("20", 5)
+dump("safety test (balance typed too low)")
+check(has("[FAIL]") and has("must be refused") and has("stays closed"), "safety test fails if the typed balance is too low")
+check(players.Felix.coins == 50, "the failed test leaves the coins exactly as they were")
 key("x"); char("t"); line("Felix"); line("50", 5)
 dump("safety test")
-check(has("Passed. The exchange is open.") and not has("[FAIL]"), "safety test passes on a strict server")
-check(players.Felix.coins == 50, "safety test leaves the admin's coins unchanged")
+check(has("Passed. The exchange is open.") and not has("[FAIL]"), "safety test passes with the real balance")
+check(players.Felix.coins == 50, "the safety test neither adds nor removes coins (the in-game bug)")
 key("x"); char("b"); pump(1)
 check(has("[B]  Buy coins") and has("[S]  Sell coins"), "exchange is open")
 ledger.balances[EXCHANGE] = 100000               -- 0.1 AMI reserve
@@ -464,11 +498,24 @@ queue[#queue + 1] = table.pack("terminate"); pump(1)
 check(coroutine.status(main) ~= "dead" and has("Buy coins"), "Ctrl+T does not drop to a shell")
 char("q")
 check(coroutine.status(main) ~= "dead", "there is no public quit key")
+local SEL  = "@a%[name=!?[%w_]+,distance=%.%.%d+%]"
+local HOLD = "#ex%d+ amiex"
+local ALLOWED = {
+  "^scoreboard objectives add amiex dummy$",
+  "^scoreboard players set " .. HOLD .. " 0$",
+  "^execute if score " .. HOLD .. " matches 1$",
+  "^execute if entity " .. SEL .. "$",
+  "^execute if entity " .. SEL .. " unless entity " .. SEL .. "$",
+  "^execute store result score " .. HOLD .. " run coins add [%w_]+ %d+$",
+  "^execute if entity " .. SEL .. " unless entity " .. SEL
+    .. " store result score " .. HOLD .. " run coins remove [%w_]+ %d+$",
+}
 for _, c in ipairs(commandsRun) do
-  assert(c:match("^execute if entity @a%[name=[%w_]+,distance=%.%.%d+%]") or c:match("^coins add [%w_]+ %d+$"),
-    "unexpected command reached the command block: " .. c)
+  local ok = false
+  for _, pat in ipairs(ALLOWED) do if c:match(pat) then ok = true end end
+  assert(ok, "unexpected command reached the command block: " .. c)
 end
-check(true, "only presence checks and well-formed /coins commands ever ran (" .. #commandsRun .. " commands)")
+check(true, "only the 7 fixed command shapes ever reached the command block (" .. #commandsRun .. " commands)")
 check(not rebooted, "no crash/reboot during the run")
 
 io.stdout:write(string.format("\nPASS: %d checks\n", passed))

@@ -24,24 +24,32 @@ local env = setmetatable({
   read = function() return table.remove(input, 1) or "b" end,
 }, { __index = _G })
 local adminMenu = assert(load(chunk, "adminMenu", "t", env))()
-local function run(lines) input = lines; out = {}; adminMenu("pw"); return table.concat(out, "\n") end
+local PW = "booboohappend"
+local function run(lines) input = lines; out = {}; adminMenu(); return table.concat(out, "\n") end
 local function check(c, what) assert(c, "FAIL: " .. what); print("  ok  " .. what) end
 
 local o = run({ "wrong" })
 check(bal[EX] == 5 and o:find("Wrong password"), "wrong password cannot reach the menu")
-o = run({ "pw", "6", "The Great Ami Exchange", "2.5", "YES", "", "b" })
+o = run({ "pw", "b" })
+check(bal[EX] == 5 and o:find("Wrong password"), "node setup password cannot reach the menu")
+o = run({ PW, "6", "The Great Ami Exchange", "2.5", "YES", "", "b" })
 check(bal[EX] == 2500005, "minting 2.5 AMI by name credits 2500000 uAMI")
 check(o:find("Minted. New balance: 2500005 uAMI", 1, true), "new balance is shown")
-check(#logLines == 1 and logLines[1]:find("MINT to=eeeeeeeeeeeeeeee name=the great ami exchange amount=2500000", 1, true), "mint is written to the admin log")
-run({ "pw", "6", "The Great Ami Exchange", "1", "yes", "", "b" })
+check(logLines[#logLines]:find("MINT to=eeeeeeeeeeeeeeee name=the great ami exchange amount=2500000", 1, true), "mint is written to the admin log")
+local mintLogCount = 0
+for _, l in ipairs(logLines) do if l:find("MINT ", 1, true) then mintLogCount = mintLogCount + 1 end end
+check(mintLogCount == 1, "exactly one mint logged so far")
+run({ PW, "6", "The Great Ami Exchange", "1", "yes", "", "b" })
 check(bal[EX] == 2500005, "anything but an exact YES mints nothing")
 for _, bad in ipairs({ "0", "-5", "abc", "", "nan", "inf", "1e400" }) do
-  run({ "pw", "6", "The Great Ami Exchange", bad, "YES", "", "b" })
+  run({ PW, "6", "The Great Ami Exchange", bad, "YES", "", "b" })
   check(bal[EX] == 2500005, "amount '" .. bad .. "' mints nothing")
 end
-o = run({ "pw", "6", "Nobody", "b" })
+o = run({ PW, "6", "Nobody", "b" })
 check(bal[EX] == 2500005 and o:find("not found"), "unknown name mints nothing")
-run({ "pw", "6", EX, "0.000001", "YES", "", "b" })
+run({ PW, "6", EX, "0.000001", "YES", "", "b" })
 check(bal[EX] == 2500006, "minting by 128-hex address works (1 uAMI)")
-check(#logLines == 2, "only real mints are logged")
+mintLogCount = 0
+for _, l in ipairs(logLines) do if l:find("MINT ", 1, true) then mintLogCount = mintLogCount + 1 end end
+check(mintLogCount == 2, "only real mints are logged")
 print("PASS")

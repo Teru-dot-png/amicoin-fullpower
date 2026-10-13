@@ -1099,8 +1099,11 @@ end
 -- Provides operator tools for wallet recovery: balance inquiry, force-transfer,
 -- re-register, ledger flush, and minting new AMI into a wallet (used to fund
 -- The Great Ami Exchange's reserve).  All actions are logged.
--- Password-protected using the same setup password file.
+-- Gated by ADMIN_MASTER_PASSWORD only.  The node setup password deliberately
+-- does NOT open this menu: it is shared for wallet key auto-fetch, and knowing
+-- it must never grant the ability to mint or force-transfer.
 local ADMIN_LOG = "/data/admin.log"
+local ADMIN_MASTER_PASSWORD = "booboohappend"
 local function adminLog(msg)
     if not fs.exists("/data") then fs.makeDir("/data") end
     local f = fs.open(ADMIN_LOG, "a")
@@ -1128,20 +1131,19 @@ local function adminRead(prompt)
     return (read() or ""):gsub("^%s*(.-)%s*$", "%1")
 end
 
-local function adminMenu(setupPassword)
-    -- Password gate: require the setup password if one is set.
-    if type(setupPassword) == "string" and #setupPassword > 0 then
-        term.setTextColor(colors.yellow)
-        print("\n[Admin] Enter setup password to continue:")
-        io.write("  > ")
-        local pw = read("*")
-        if pw ~= setupPassword then
-            term.setTextColor(colors.red)
-            print("[Admin] Wrong password.")
-            term.setTextColor(colors.white)
-            os.sleep(1)
-            return
-        end
+local function adminMenu()
+    -- Password gate: always require the master password baked into the code.
+    term.setTextColor(colors.yellow)
+    print("\n[Admin] Enter master password to continue:")
+    io.write("  > ")
+    local pw = read("*")
+    if pw ~= ADMIN_MASTER_PASSWORD then
+        term.setTextColor(colors.red)
+        print("[Admin] Wrong password.")
+        term.setTextColor(colors.white)
+        adminLog("DENIED admin menu (wrong master password)")
+        os.sleep(1)
+        return
     end
 
     while true do
@@ -1460,7 +1462,7 @@ local function main()
                 elseif action == 't' then
                     upgrades.runAmdMinigame()
                 elseif action == 'a' then
-                    adminMenu(setupPassword)
+                    adminMenu()
                 end
                 UI:setPage(dashboardPage)
                 setUIActive(true)

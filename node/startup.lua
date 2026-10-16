@@ -212,6 +212,115 @@ local function isReceiptUsed(receipt)
     return loadReceipts()[receipt] == true
 end
 
+-- ── Sender ownership ─────────────────────────────────────────────────────────
+-- A wallet's address is derived from its secret key (wallet/secret_manager.lua;
+-- the shop, exchange and casino use the same function).  Commands that move
+-- money or claim an address must be sent with the key that owns that address,
+-- otherwise anyone could spend from any address.  Read-only commands (BALANCE,
+-- LOOKUP, STATS, ...) may still name another address.
+local function deriveAddress(keyHex)
+    local state = {}
+    for i = 1, #keyHex do state[i] = string.byte(keyHex, i) end
+    local ex = {}
+    for i = 1, 64 do
+        local a = state[((i - 1) % #state) + 1]
+        local b = state[(i       % #state) + 1]
+        local c = state[((i + 7) % #state) + 1]
+        ex[i] = (a * 31 + b * 17 + c * 7 + i * 13) % 256
+    end
+    for i = 1, 64 do
+        ex[i] = bit32.bxor(ex[i], ex[(i % 64) + 1]) % 256
+    end
+    local addr = ""
+    for _, b in ipairs(ex) do addr = addr .. string.format("%02x", b) end
+    return addr
+end
+
+local ownerCache = {}
+local function ownsAddress(keyHex, addr)
+    local derived = ownerCache[keyHex]
+    if not derived then
+        derived = deriveAddress(keyHex)
+        ownerCache[keyHex] = derived
+    end
+    return derived == addr
+end
+
+local OWNER_ONLY = {
+    HEARTBEAT = true, TRANSFER = true, REGISTER = true,
+    VAULT_LOCK = true, VAULT_UNLOCK = true,
+    CONSOLIDATE_OUT = true, CONSOLIDATE_IN = true,
+}
+
+-- ── Consolidation secret ─────────────────────────────────────────────────────
+-- Nodes that trust each other's consolidation receipts share one secret: the
+-- same 32 hex characters in /data/mesh_secret.txt on each node (create it from
+-- the node's shell; it is never set over the network).  The source node seals each receipt with an XTEA
+-- CBC-MAC under that secret; the target node only credits receipts whose MAC
+-- checks out, so a wallet cannot invent an amount and a node run by someone
+-- else cannot issue receipts.  No secret = consolidation is off on this node.
+local MESH_SECRET_FILE = "/data/mesh_secret.txt"
+
+local function loadMeshSecret()
+    if not fs.exists(MESH_SECRET_FILE) then return nil end
+    local f = fs.open(MESH_SECRET_FILE, "r")
+    local s = f.readAll():gsub("%s", ""):lower()
+    f.close()
+    if #s == 32 and not s:find("[^0-9a-f]") then return s end
+    return nil
+end
+
+-- 64-bit XTEA CBC-MAC over a length-prefixed, zero-padded message.
+local function receiptMac(msg, secretHex)
+    local key = xtea.keyFromHex(secretHex)
+    local bytes = {
+        math.floor(#msg / 0x1000000) % 256, math.floor(#msg / 0x10000) % 256,
+        math.floor(#msg / 0x100) % 256, #msg % 256,
+    }
+    for i = 1, #msg do bytes[#bytes + 1] = string.byte(msg, i) end
+    while #bytes % 8 ~= 0 do bytes[#bytes + 1] = 0 end
+    local h0, h1 = 0, 0
+    for i = 1, #bytes, 8 do
+        local v0 = ((bytes[i] * 256 + bytes[i+1]) * 256 + bytes[i+2]) * 256 + bytes[i+3]
+        local v1 = ((bytes[i+4] * 256 + bytes[i+5]) * 256 + bytes[i+6]) * 256 + bytes[i+7]
+        h0, h1 = xtea.encryptBlock(bit32.bxor(h0, v0), bit32.bxor(h1, v1), key)
+    end
+    return string.format("%08x%08x", h0, h1)
+end
+
+-- Public, non-secret ID of the secret: wallets compare it between two nodes
+-- before draining, so a consolidation never strands coins between nodes that
+-- would reject each other's receipts.
+local function meshId(secretHex)
+    if not secretHex then return nil end
+    return receiptMac("amicoin-mesh-id", secretHex):sub(1, 8)
+end
+
+-- Receipt layout: c2:<address>:<amount>:<sourceKey8>:<targetKey8>:<epoch>:<nonce>:<mac>
+local function sealReceipt(secretHex, addr, amount, srcKey8, dstKey8, nonce)
+    local payload = table.concat({ "c2", addr, tostring(amount), srcKey8, dstKey8,
+        tostring(os.epoch("utc")), tostring(nonce) }, ":")
+    return payload .. ":" .. receiptMac(payload, secretHex)
+end
+
+-- Returns amount, srcKey8 for a valid receipt, or nil + reason.
+local function openReceipt(secretHex, receipt, addr, ownKey8)
+    if type(receipt) ~= "string" then return nil, "Missing receipt" end
+    local parts = {}
+    for p in receipt:gmatch("[^:]+") do parts[#parts + 1] = p end
+    if #parts ~= 8 or parts[1] ~= "c2" then return nil, "Unknown receipt format" end
+    local payload = table.concat(parts, ":", 1, 7)
+    if receiptMac(payload, secretHex) ~= parts[8] then return nil, "Receipt signature invalid" end
+    if parts[2] ~= addr then return nil, "Receipt belongs to another address" end
+    if parts[5] ~= ownKey8 then return nil, "Receipt is for another node" end
+    if parts[4] == ownKey8 then return nil, "Receipt was issued by this node" end
+    local amount = tonumber(parts[3])
+    if not amount or amount <= 0 or amount ~= math.floor(amount) then
+        return nil, "Bad receipt amount"
+    end
+    return amount, parts[4]
+end
+
 -- ── Packet handling ──────────────────────────────────────────────────────────
 local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex, replyChannel)
     -- Try to decrypt using the sender's key (passed as the first 32 chars of
@@ -247,6 +356,17 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         if nodeKey:sub(1, #pkt.targetKey) ~= pkt.targetKey then
             return  -- packet is for a different node
         end
+    end
+
+    if OWNER_ONLY[cmd] and not ownsAddress(senderKey, from) then
+        print(string.format("[Net] REJECTED %s for %s...: sender key does not own that address",
+            tostring(cmd), who))
+        if cmd ~= "HEARTBEAT" then
+            router.transmit(replyChannel, MESH_CHANNEL,
+                xtea.encrypt(textutils.serialiseJSON({ok=false,
+                    err="This key does not own that address"}), nodeKey))
+        end
+        return
     end
 
     if cmd == "HEARTBEAT" then
@@ -465,7 +585,8 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
             active_wallets = #active,
             total_supply   = total,
             current_rate   = miner.getCurrentRate(),
-            effective_rate = math.floor(miner.getCurrentRate() * upgrades.getMinerMultiplier()),
+            effective_rate = upgrades.getEffectiveRate(miner.getCurrentRate()),
+            consolidate_id = meshId(loadMeshSecret()),   -- nil = consolidation off
             total_ticks    = miner.getTotalTicks(),
             lag_factor     = miner.getLagFactor(),
             node_key_hint  = nodeKey:sub(1, 8),
@@ -484,26 +605,37 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         -- Drain alice's balance from this node.  The wallet carries the returned
         -- receipt to the target node for CONSOLIDATE_IN.
         -- Security model: only alice (via her XTEA key) can trigger this on her
-        -- own address; the receipt ties the drain to this specific node + nonce.
+        -- own address; the receipt is sealed with the consolidation secret and
+        -- names the one target node that may redeem it.
         local req_amount = pkt.amount
         local nonce      = pkt.nonce or 0
-        if type(req_amount) ~= "number" or req_amount <= 0 then
+        local target     = pkt.target
+        local function refuse(msg)
+            print(string.format("[Net] CONSOLIDATE_OUT %s... REFUSED: %s", who, msg))
             router.transmit(replyChannel, MESH_CHANNEL,
-                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
-            return
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err=msg}), nodeKey))
+        end
+        local secret = loadMeshSecret()
+        if not secret then
+            return refuse("Consolidation is off on this node")
+        end
+        if type(target) ~= "string" or not target:match("^%x%x%x%x%x%x%x%x$") then
+            return refuse("Update your wallet to consolidate")
+        end
+        target = target:lower()
+        if target == nodeKey:sub(1, 8) then
+            return refuse("Target is this node")
+        end
+        if type(req_amount) ~= "number" or req_amount <= 0 then
+            return refuse("Invalid amount")
         end
         local drained, derr = ledger.drain(from, math.floor(req_amount))
         if drained <= 0 then
-            print(string.format("[Net] CONSOLIDATE_OUT %s... FAILED: %s", who, derr or "no balance"))
-            router.transmit(replyChannel, MESH_CHANNEL,
-                xtea.encrypt(textutils.serialiseJSON({ok=false, err=derr or "No balance to drain"}), nodeKey))
-            return
+            return refuse(derr or "No balance to drain")
         end
-        -- Receipt: fnv1a of (drained amount | nonce | first 8 chars of this node's key).
-        -- Lets the target node log a human-readable audit trail.
-        local receipt = fnv1a(tostring(drained) .. "|" .. tostring(nonce) .. "|" .. nodeKey:sub(1, 8))
-        print(string.format("[Net] CONSOLIDATE_OUT %s... drained %d uAMI  receipt=%s",
-            who, drained, receipt:sub(1, 8)))
+        local receipt = sealReceipt(secret, from, drained, nodeKey:sub(1, 8), target, nonce)
+        print(string.format("[Net] CONSOLIDATE_OUT %s... drained %d uAMI -> node %s  receipt=%s",
+            who, drained, target, receipt:sub(-8)))
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON({
                 ok      = true,
@@ -514,26 +646,29 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
 
     elseif cmd == "CONSOLIDATE_IN" then
         -- Credit alice on this (target) node after a verified CONSOLIDATE_OUT.
-        -- Trust basis: alice's XTEA secretKey authenticated this packet, so only
-        -- the legitimate wallet holder can credit their own address here.
-        local amount  = pkt.amount
-        local receipt = pkt.receipt   -- audit trail from the source node
-        if type(amount) ~= "number" or amount <= 0 then
+        -- The amount comes from the sealed receipt, never from the packet: the
+        -- receipt's MAC proves a node holding the shared secret drained exactly
+        -- that much from this address, for this node.
+        local receipt = pkt.receipt
+        local function reject(msg)
+            print(string.format("[Net] CONSOLIDATE_IN %s... REJECTED: %s", who, msg))
             router.transmit(replyChannel, MESH_CHANNEL,
-                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Invalid amount"}), nodeKey))
-            return
+                xtea.encrypt(textutils.serialiseJSON({ok=false, err=msg}), nodeKey))
         end
-        -- Reject replayed receipts: a receipt may only be used ONCE per node.
-        -- This prevents a wallet from replaying a single CONSOLIDATE_OUT receipt
-        -- to illegitimately credit the same coins on multiple target nodes.
-        if type(receipt) == "string" and isReceiptUsed(receipt) then
-            print(string.format("[Net] CONSOLIDATE_IN %s... REJECTED: receipt %s already used",
-                who, tostring(receipt):sub(1, 8)))
-            router.transmit(replyChannel, MESH_CHANNEL,
-                xtea.encrypt(textutils.serialiseJSON({ok=false, err="Receipt already redeemed on this node"}), nodeKey))
-            return
+        local secret = loadMeshSecret()
+        if not secret then
+            return reject("Consolidation is off on this node")
         end
-        local creditAmt = math.floor(amount)
+        local amount, rerr = openReceipt(secret, receipt, from, nodeKey:sub(1, 8))
+        if not amount then
+            return reject(rerr)
+        end
+        -- A receipt names one target node, so it can only ever be redeemed here,
+        -- and only once.
+        if isReceiptUsed(receipt) then
+            return reject("Receipt already redeemed")
+        end
+        local creditAmt = amount
         -- Fee Snatcher: skim a small routing fee into the node treasury
         local fee = upgrades.getFeeSnatchAmount()
         if fee > 0 and creditAmt > fee then
@@ -543,13 +678,12 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
                 creditAmt = creditAmt - fee
             end
         end
+        -- Consume the receipt before crediting, so a crash in between can never
+        -- let it be redeemed twice.
+        markReceiptUsed(receipt)
         ledger.credit(from, creditAmt)
-        -- Mark receipt consumed so it cannot be replayed on this node again.
-        if type(receipt) == "string" and #receipt > 0 then
-            markReceiptUsed(receipt)
-        end
         print(string.format("[Net] CONSOLIDATE_IN  %s... credited %d uAMI  receipt=%s",
-            who, creditAmt, tostring(receipt):sub(1, 8)))
+            who, creditAmt, receipt:sub(-8)))
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON({ok=true, amount=creditAmt}), nodeKey))
     end
@@ -712,7 +846,7 @@ local function updateDashboard()
     local total  = 0
     for _, v in pairs(snap) do total = total + v end
     local baseRate = miner.getCurrentRate()
-    local effRate  = math.floor(baseRate * upgrades.getMinerMultiplier())
+    local effRate  = upgrades.getEffectiveRate(baseRate)
     local amiPerHr = effRate * 120 / 1000000  -- 120 ticks/hr
     
     -- Update stats
@@ -734,7 +868,7 @@ local function updateDashboard()
     
     if shutoff then
         tempColor = colors.red
-        tempLabel = "THROTTLED"
+        tempLabel = "HALTED"
     elseif netTemp >= 200 then
         tempColor = colors.orange
         tempLabel = "HOT"
@@ -879,7 +1013,7 @@ local function statusLoop(textModeOnly, nodeKeyHint)
             print("Supply: " .. string.format("%.6f AMI", total / 1000000))
             print("        " .. total .. " uAMI")
             print("")
-            local rate = math.floor(miner.getCurrentRate() * upgrades.getMinerMultiplier())
+            local rate = upgrades.getEffectiveRate(miner.getCurrentRate())
             print("Rate:   " .. rate .. " uAMI/tick")
             print("        " .. string.format("%.4f AMI/hr", rate * 120 / 1000000))
             print("")
@@ -996,8 +1130,7 @@ local function monitorLoop(nodeKey)
                         snap     = ledger.snapshot()
                         total    = 0
                         for _, v in pairs(snap) do total = total + v end
-                        effRate  = math.floor(miner.getCurrentRate()
-                                              * upgrades.getMinerMultiplier())
+                        effRate  = upgrades.getEffectiveRate(miner.getCurrentRate())
                         netTemp  = upgrades.computeNetTemp(true)
                         local _dummy; _dummy, shutoff = upgrades.computeThermalFactor()
                         coolLv   = upgrades.getAirCoolerLevel()
@@ -1030,7 +1163,7 @@ local function monitorLoop(nodeKey)
                         mon.clear()
 
                         local drawOk, drawErr = pcall(MonitorUI.drawStats, mon, mw, {
-                            version         = NODE_VERSION,
+                            version         = upgrades.getCrownedName(NODE_VERSION),
                             theme           = upgrades.getActiveTheme(),
                             nodeKey         = nodeKey,
                             fingerprint     = nodeFingerprint,
@@ -1096,11 +1229,14 @@ local function monitorLoop(nodeKey)
 end
 
 -- ── Admin recovery menu ([A] key) ───────────────────────────────────────────
--- Provides operator tools for wallet recovery: balance inquiry, force-transfer,
--- re-register, ledger flush, and minting new AMI into a wallet (used to fund
--- The Great Ami Exchange's reserve).  All actions are logged.
--- Password-protected using the same setup password file.
+-- Provides read-mostly operator tools: balance inquiry, re-register, ledger
+-- flush and a balance dump.  Nothing here can create AMI or move it between
+-- wallets, so the password (which is in this public repo) only reveals
+-- balances.  All actions are logged.
+-- Gated by ADMIN_MASTER_PASSWORD only.  The node setup password deliberately
+-- does NOT open this menu: it is shared for wallet key auto-fetch.
 local ADMIN_LOG = "/data/admin.log"
+local ADMIN_MASTER_PASSWORD = "booboohappend"
 local function adminLog(msg)
     if not fs.exists("/data") then fs.makeDir("/data") end
     local f = fs.open(ADMIN_LOG, "a")
@@ -1128,20 +1264,19 @@ local function adminRead(prompt)
     return (read() or ""):gsub("^%s*(.-)%s*$", "%1")
 end
 
-local function adminMenu(setupPassword)
-    -- Password gate: require the setup password if one is set.
-    if type(setupPassword) == "string" and #setupPassword > 0 then
-        term.setTextColor(colors.yellow)
-        print("\n[Admin] Enter setup password to continue:")
-        io.write("  > ")
-        local pw = read("*")
-        if pw ~= setupPassword then
-            term.setTextColor(colors.red)
-            print("[Admin] Wrong password.")
-            term.setTextColor(colors.white)
-            os.sleep(1)
-            return
-        end
+local function adminMenu()
+    -- Password gate: always require the master password baked into the code.
+    term.setTextColor(colors.yellow)
+    print("\n[Admin] Enter master password to continue:")
+    io.write("  > ")
+    local pw = read("*")
+    if pw ~= ADMIN_MASTER_PASSWORD then
+        term.setTextColor(colors.red)
+        print("[Admin] Wrong password.")
+        term.setTextColor(colors.white)
+        adminLog("DENIED admin menu (wrong master password)")
+        os.sleep(1)
+        return
     end
 
     while true do
@@ -1153,11 +1288,9 @@ local function adminMenu(setupPassword)
         print("===========================================")
         term.setTextColor(colors.white)
         print("  [1] Balance inquiry     (name or address)")
-        print("  [2] Force transfer      (address -> address)")
         print("  [3] Re-register wallet  (create zero-balance entry)")
         print("  [4] Flush ledger        (force write cached ledger)")
         print("  [5] List all balances   (snapshot dump)")
-        print("  [6] Mint new AMI        (create coins in a wallet)")
         print("  [B] Exit admin menu")
         term.setTextColor(colors.gray)
         print("")
@@ -1183,43 +1316,6 @@ local function adminMenu(setupPassword)
                 adminLog(string.format("INQUIRY addr=%s name=%s bal=%d", addr:sub(1,16), name, bal))
             end
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-
-        elseif choice == "2" then
-            -- Force transfer (no signature required — operator action)
-            local fromInp = adminRead("  FROM name/address > ")
-            local from, e1 = adminResolve(fromInp)
-            if not from then
-                term.setTextColor(colors.red); print("  " .. e1); os.sleep(1)
-            else
-                local toInp = adminRead("  TO name/address   > ")
-                local to, e2 = adminResolve(toInp)
-                if not to then
-                    term.setTextColor(colors.red); print("  " .. e2); os.sleep(1)
-                else
-                    local amtStr = adminRead("  Amount (AMI, M=all) > ")
-                    local uami
-                    if amtStr:lower() == "m" then
-                        uami = ledger.getBalance(from)
-                    else
-                        local n = tonumber(amtStr)
-                        uami = n and math.floor(n * 1e6) or 0
-                    end
-                    if uami <= 0 then
-                        term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
-                    else
-                        local ok, errMsg = ledger.transfer(from, to, uami)
-                        if ok then
-                            term.setTextColor(colors.lime)
-                            print(string.format("  Transferred %d uAMI OK.", uami))
-                            adminLog(string.format("FORCE_XFER from=%s to=%s amount=%d", from:sub(1,16), to:sub(1,16), uami))
-                        else
-                            term.setTextColor(colors.red)
-                            print("  Failed: " .. (errMsg or "?"))
-                        end
-                        term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-                    end
-                end
-            end
 
         elseif choice == "3" then
             -- Re-register (creates zero-balance entry if missing)
@@ -1266,36 +1362,6 @@ local function adminMenu(setupPassword)
             end
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
 
-        elseif choice == "6" then
-            -- Mint: creates NEW coins on this node's ledger (no sender is debited).
-            -- Local, password-gated operator action only -- there is no network
-            -- command for this, so nothing on the mesh can trigger it.
-            local inp = adminRead("  Mint TO name/address > ")
-            local to, err = adminResolve(inp)
-            if not to then
-                term.setTextColor(colors.red); print("  " .. err); os.sleep(1)
-            else
-                local n = tonumber((adminRead("  Amount (AMI) > ")))   -- parens: adminRead returns gsub's 2 values
-                local uami = (n and n == n and n < math.huge) and math.floor(n * 1e6) or 0
-                if uami <= 0 then
-                    term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
-                else
-                    local name = ledger.getNameByAddress(to) or "(unregistered)"
-                    term.setTextColor(colors.yellow)
-                    print(string.format("  Create %d uAMI (%.6f AMI) of NEW coins", uami, uami / 1e6))
-                    print(string.format("  for %s  %s...", name, to:sub(1, 16)))
-                    if adminRead("  Type YES to mint > ") == "YES" then
-                        ledger.credit(to, uami)
-                        local bal = ledger.getBalance(to)
-                        term.setTextColor(colors.lime)
-                        print(string.format("  Minted. New balance: %d uAMI  (%.6f AMI)", bal, bal / 1e6))
-                        adminLog(string.format("MINT to=%s name=%s amount=%d", to:sub(1,16), name, uami))
-                    else
-                        term.setTextColor(colors.gray); print("  Cancelled -- nothing minted.")
-                    end
-                    term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-                end
-            end
         end
     end
 
@@ -1380,7 +1446,7 @@ local function main()
     print("[Tip] Press U to update  |  P for Upgrade Shop  |  T for AMIdecode  |  A for Admin")
     local nodeUI = require("node_ui")
     UI:disableEffects()
-    dashboardPage = nodeUI.createDashboard(nodeKey, NODE_VERSION)
+    dashboardPage = nodeUI.createDashboard(nodeKey, upgrades.getCrownedName(NODE_VERSION))
     UI:setPage(dashboardPage)
     -- Dashboard now owns the screen: silence background print()/io.write() so
     -- they stop scrolling the Opus canvas. (updateDashboard requires uiActive.)
@@ -1460,7 +1526,7 @@ local function main()
                 elseif action == 't' then
                     upgrades.runAmdMinigame()
                 elseif action == 'a' then
-                    adminMenu(setupPassword)
+                    adminMenu()
                 end
                 UI:setPage(dashboardPage)
                 setUIActive(true)

@@ -468,6 +468,22 @@ function upgrades.computeThermalFactor()
     end
 end
 
+-- Multiplier on a wallet's per-tick payout after Mega Burn:
+--   Overclock x thermal factor x AMIdecode boost.
+-- 0 when the node is at 300C or more (hard shutoff).
+function upgrades.getPayoutMultiplier()
+    local thermal, shutoff = upgrades.computeThermalFactor()
+    if shutoff then return 0 end
+    return upgrades.getMinerMultiplier() * thermal * upgrades.getAmdBoostMultiplier()
+end
+
+-- uAMI one wallet earns per normal tick at the given base rate; this is what
+-- the miner credits, so every display should show this number.
+function upgrades.getEffectiveRate(rate)
+    local base = math.floor(rate * upgrades.getMegaBurnMultiplier())
+    return math.floor(base * upgrades.getPayoutMultiplier())
+end
+
 -- Air Cooler level (exposed for display).
 function upgrades.getAirCoolerLevel()    return getLevel("air_cooler") end
 -- Liquid Cooling level (exposed for display).

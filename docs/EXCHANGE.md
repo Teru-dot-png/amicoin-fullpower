@@ -48,16 +48,10 @@ wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/h
 3. On the main screen press `` ` `` (backtick) and enter the password.
 4. `[N]` Node manager: add your node.
 5. `[T]` Safety test (see below). Trading stays closed until it passes.
-6. Give the exchange a reserve so it can pay for coins players sell. Either
-   send it AMI from a wallet (its name is registered in Ami-DNS), or mint new
-   AMI straight into it: on the node press `[A]`, enter the setup password,
-   choose `[6] Mint new AMI`, and give `The Great Ami Exchange` and an amount.
-   AMI that players pay when buying coins stays in the exchange and adds to
-   the reserve.
-
-Minting creates new coins on that node's ledger, so use the node the exchange is
-connected to. It is a local, password-gated action on the node itself and is
-written to `/data/admin.log`; no network command can trigger it.
+6. Give the exchange a reserve so it can pay for coins players sell: send it
+   AMI from a wallet (its name is registered in Ami-DNS), on the node the
+   exchange is connected to. AMI that players pay when buying coins stays in
+   the exchange and adds to the reserve.
 
 ## How a trade works
 

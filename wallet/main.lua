@@ -616,13 +616,29 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances, d
             banner("Consolidate Balances")
             pmsg(string.format("Target: %s", targetNode.name), 5, colors.lime)
             local moved, errs, row = 0, 0, 7
+            -- Nodes only accept each other's receipts when they share a
+            -- consolidation link; check before draining so coins never get
+            -- stranded between two nodes that would reject each other.
+            local function linkId(node)
+                local ok, st = comms.getStats(secretKey, node.key, address)
+                return ok and st and st.consolidate_id or nil
+            end
+            local targetLink = linkId(targetNode)
+            if not targetLink then
+                pmsg("  Target node has consolidation off.", row, colors.red); row = row + 1
+            end
             for i, node in ipairs(nodes) do
-                if i ~= targetIdx then
+                if i ~= targetIdx and targetLink then
                     local bal = math.floor(nodeBalances[i] or 0)
-                    if bal > 0 then
+                    local link = bal > 0 and linkId(node) or nil
+                    if bal > 0 and link ~= targetLink then
+                        errs = errs + 1
+                        pmsg(string.format("  %-14s not linked, skip", node.name:sub(1,14)),
+                            row, colors.orange); row = row + 1
+                    elseif bal > 0 then
                         pmsg(string.format("  DRAIN  %-10s %duAMI...", node.name:sub(1,10), bal),
                             row, colors.yellow); row = row + 1
-                        local dok, ddata, derr = comms.consolidateOut(secretKey, node.key, address, bal)
+                        local dok, ddata, derr = comms.consolidateOut(secretKey, node.key, address, bal, targetNode.key)
                         if not dok then
                             errs = errs + 1
                             pmsg("    DRAIN FAILED: " .. (derr or "?"), row, colors.red); row = row + 1
@@ -640,6 +656,17 @@ local function screenCommandCenter(nodes, secretKey, address, perNodeBalances, d
                             else
                                 errs = errs + 1
                                 pmsg("    CREDIT FAILED: " .. (cerr or "?"), row, colors.red)
+                                -- Keep the receipt: it is the only proof of the drain,
+                                -- so an admin can settle it by hand.
+                                if type(receipt) == "string" then
+                                    local rf = fs.open("/wallet_data/pending_receipts.txt", "a")
+                                    if rf then
+                                        rf.writeLine(targetNode.name .. " " .. receipt)
+                                        rf.close()
+                                    end
+                                    row = row + 1
+                                    pmsg("    Receipt saved: pending_receipts.txt", row, colors.yellow)
+                                end
                             end
                             row = row + 1
                         end

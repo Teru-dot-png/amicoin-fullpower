@@ -174,7 +174,7 @@ function MonitorUI.drawStats(mon, _callerW, data)
     local tempCol, tempStr
     local nt = data.netTemp or 0
     if data.thermalShutoff then
-        tempCol, tempStr = colors.red,    string.format('%dC THROTTLED', nt)
+        tempCol, tempStr = colors.red,    string.format('%dC HALTED', nt)
     elseif nt >= 200 then
         tempCol, tempStr = colors.orange, string.format('%dC HOT', nt)
     elseif nt >= 100 then

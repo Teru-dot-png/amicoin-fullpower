@@ -149,8 +149,10 @@ This means a malicious wallet cannot send `GOSSIP_DNS {name="alice", address=att
 
 Consolidation moves a wallet's balance from one node (the source) to another (the target). It is **off** on a node until an admin links it:
 
-1. On one node, open the admin menu (`[A]`, master password), choose `[7] Consolidation link`, then `[G]` to generate a secret.
-2. On every other node you run, choose `[7]`, then `[E]` and type the same secret.
+1. Pick a secret of exactly 32 hex characters (0-9, a-f).
+2. On every node you run, stop the node program (Ctrl+T), run `edit /data/mesh_secret.txt`, type the secret, save, and reboot.
+
+The secret is never set or sent over the network, and nothing in the admin menu shows it.
 
 Each node then shows the same **link ID** (also returned by `STATS` as `consolidate_id`). The ID is derived from the secret but does not reveal it. Only give the secret to nodes you run: any node holding it can issue receipts.
 

@@ -253,8 +253,9 @@ local OWNER_ONLY = {
 }
 
 -- ── Consolidation secret ─────────────────────────────────────────────────────
--- Nodes that trust each other's consolidation receipts share one secret, set
--- in the admin menu ([7]).  The source node seals each receipt with an XTEA
+-- Nodes that trust each other's consolidation receipts share one secret: the
+-- same 32 hex characters in /data/mesh_secret.txt on each node (create it from
+-- the node's shell; it is never set over the network).  The source node seals each receipt with an XTEA
 -- CBC-MAC under that secret; the target node only credits receipts whose MAC
 -- checks out, so a wallet cannot invent an amount and a node run by someone
 -- else cannot issue receipts.  No secret = consolidation is off on this node.
@@ -267,15 +268,6 @@ local function loadMeshSecret()
     f.close()
     if #s == 32 and not s:find("[^0-9a-f]") then return s end
     return nil
-end
-
-local function saveMeshSecret(hex)
-    if not fs.exists("/data") then fs.makeDir("/data") end
-    if hex then
-        local f = fs.open(MESH_SECRET_FILE, "w"); f.write(hex); f.close()
-    elseif fs.exists(MESH_SECRET_FILE) then
-        fs.delete(MESH_SECRET_FILE)
-    end
 end
 
 -- 64-bit XTEA CBC-MAC over a length-prefixed, zero-padded message.
@@ -1237,12 +1229,12 @@ local function monitorLoop(nodeKey)
 end
 
 -- ── Admin recovery menu ([A] key) ───────────────────────────────────────────
--- Provides operator tools for wallet recovery: balance inquiry, force-transfer,
--- re-register, ledger flush, and minting new AMI into a wallet (used to fund
--- The Great Ami Exchange's reserve).  All actions are logged.
+-- Provides read-mostly operator tools: balance inquiry, re-register, ledger
+-- flush and a balance dump.  Nothing here can create AMI or move it between
+-- wallets, so the password (which is in this public repo) only reveals
+-- balances.  All actions are logged.
 -- Gated by ADMIN_MASTER_PASSWORD only.  The node setup password deliberately
--- does NOT open this menu: it is shared for wallet key auto-fetch, and knowing
--- it must never grant the ability to mint or force-transfer.
+-- does NOT open this menu: it is shared for wallet key auto-fetch.
 local ADMIN_LOG = "/data/admin.log"
 local ADMIN_MASTER_PASSWORD = "booboohappend"
 local function adminLog(msg)
@@ -1296,12 +1288,9 @@ local function adminMenu()
         print("===========================================")
         term.setTextColor(colors.white)
         print("  [1] Balance inquiry     (name or address)")
-        print("  [2] Force transfer      (address -> address)")
         print("  [3] Re-register wallet  (create zero-balance entry)")
         print("  [4] Flush ledger        (force write cached ledger)")
         print("  [5] List all balances   (snapshot dump)")
-        print("  [6] Mint new AMI        (create coins in a wallet)")
-        print("  [7] Consolidation link  (secret shared by your nodes)")
         print("  [B] Exit admin menu")
         term.setTextColor(colors.gray)
         print("")
@@ -1327,43 +1316,6 @@ local function adminMenu()
                 adminLog(string.format("INQUIRY addr=%s name=%s bal=%d", addr:sub(1,16), name, bal))
             end
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-
-        elseif choice == "2" then
-            -- Force transfer (no signature required — operator action)
-            local fromInp = adminRead("  FROM name/address > ")
-            local from, e1 = adminResolve(fromInp)
-            if not from then
-                term.setTextColor(colors.red); print("  " .. e1); os.sleep(1)
-            else
-                local toInp = adminRead("  TO name/address   > ")
-                local to, e2 = adminResolve(toInp)
-                if not to then
-                    term.setTextColor(colors.red); print("  " .. e2); os.sleep(1)
-                else
-                    local amtStr = adminRead("  Amount (AMI, M=all) > ")
-                    local uami
-                    if amtStr:lower() == "m" then
-                        uami = ledger.getBalance(from)
-                    else
-                        local n = tonumber(amtStr)
-                        uami = n and math.floor(n * 1e6) or 0
-                    end
-                    if uami <= 0 then
-                        term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
-                    else
-                        local ok, errMsg = ledger.transfer(from, to, uami)
-                        if ok then
-                            term.setTextColor(colors.lime)
-                            print(string.format("  Transferred %d uAMI OK.", uami))
-                            adminLog(string.format("FORCE_XFER from=%s to=%s amount=%d", from:sub(1,16), to:sub(1,16), uami))
-                        else
-                            term.setTextColor(colors.red)
-                            print("  Failed: " .. (errMsg or "?"))
-                        end
-                        term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-                    end
-                end
-            end
 
         elseif choice == "3" then
             -- Re-register (creates zero-balance entry if missing)
@@ -1410,83 +1362,6 @@ local function adminMenu()
             end
             term.setTextColor(colors.gray); print("  [Enter] continue"); read()
 
-        elseif choice == "6" then
-            -- Mint: creates NEW coins on this node's ledger (no sender is debited).
-            -- Local, password-gated operator action only -- there is no network
-            -- command for this, so nothing on the mesh can trigger it.
-            local inp = adminRead("  Mint TO name/address > ")
-            local to, err = adminResolve(inp)
-            if not to then
-                term.setTextColor(colors.red); print("  " .. err); os.sleep(1)
-            else
-                local n = tonumber((adminRead("  Amount (AMI) > ")))   -- parens: adminRead returns gsub's 2 values
-                local uami = (n and n == n and n < math.huge) and math.floor(n * 1e6) or 0
-                if uami <= 0 then
-                    term.setTextColor(colors.red); print("  Zero or invalid amount."); os.sleep(1)
-                else
-                    local name = ledger.getNameByAddress(to) or "(unregistered)"
-                    term.setTextColor(colors.yellow)
-                    print(string.format("  Create %d uAMI (%.6f AMI) of NEW coins", uami, uami / 1e6))
-                    print(string.format("  for %s  %s...", name, to:sub(1, 16)))
-                    if adminRead("  Type YES to mint > ") == "YES" then
-                        ledger.credit(to, uami)
-                        local bal = ledger.getBalance(to)
-                        term.setTextColor(colors.lime)
-                        print(string.format("  Minted. New balance: %d uAMI  (%.6f AMI)", bal, bal / 1e6))
-                        adminLog(string.format("MINT to=%s name=%s amount=%d", to:sub(1,16), name, uami))
-                    else
-                        term.setTextColor(colors.gray); print("  Cancelled -- nothing minted.")
-                    end
-                    term.setTextColor(colors.gray); print("  [Enter] continue"); read()
-                end
-            end
-
-        elseif choice == "7" then
-            -- Consolidation link: nodes holding the same secret accept each
-            -- other's consolidation receipts. Give it only to nodes you run.
-            local cur = loadMeshSecret()
-            term.setTextColor(colors.white)
-            if cur then
-                print("  Status: ON   link ID " .. meshId(cur))
-            else
-                print("  Status: OFF  (wallets cannot consolidate to or from this node)")
-            end
-            term.setTextColor(colors.gray)
-            print("  Every node you want linked needs the same secret.")
-            print("  [G] Generate new  [E] Enter existing  [S] Show  [C] Clear  [B] Back")
-            local sub = adminRead("  > "):upper()
-            if sub == "G" then
-                math.randomseed(os.epoch("utc") + os.getComputerID() * 7919)
-                local hex = ""
-                for _ = 1, 32 do hex = hex .. string.format("%x", math.random(0, 15)) end
-                saveMeshSecret(hex)
-                term.setTextColor(colors.lime)
-                print("  New secret: " .. hex)
-                print("  Link ID:    " .. meshId(hex))
-                term.setTextColor(colors.yellow)
-                print("  Enter this secret with [E] on your other nodes.")
-                adminLog("MESH secret generated id=" .. meshId(hex))
-            elseif sub == "E" then
-                local hex = adminRead("  32-hex secret > "):lower()
-                if #hex == 32 and not hex:find("[^0-9a-f]") then
-                    saveMeshSecret(hex)
-                    term.setTextColor(colors.lime)
-                    print("  Saved. Link ID " .. meshId(hex))
-                    adminLog("MESH secret set id=" .. meshId(hex))
-                else
-                    term.setTextColor(colors.red); print("  Must be exactly 32 hex characters.")
-                end
-            elseif sub == "S" and cur then
-                term.setTextColor(colors.yellow); print("  Secret: " .. cur)
-                adminLog("MESH secret shown id=" .. meshId(cur))
-            elseif sub == "C" then
-                if adminRead("  Type YES to turn consolidation off > ") == "YES" then
-                    saveMeshSecret(nil)
-                    term.setTextColor(colors.lime); print("  Cleared. Consolidation is off.")
-                    adminLog("MESH secret cleared")
-                end
-            end
-            term.setTextColor(colors.gray); print("  [Enter] continue"); read()
         end
     end
 

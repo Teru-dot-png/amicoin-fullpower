@@ -48,11 +48,10 @@ local src = io.open("node/startup.lua"):read("a")
 local a = src:find("-- ── CONSOLIDATE_IN receipt log", 1, true)
 local b = src:find("-- ── Self-update", 1, true)
 local chunk = src:sub(a, b - 1) .. [[
-return { handle = handlePacket, deriveAddress = deriveAddress,
-         saveMeshSecret = saveMeshSecret, meshId = meshId }]]
+return { handle = handlePacket, deriveAddress = deriveAddress, meshId = meshId }]]
 
 local function newNode(nodeKey)
-  local fs = newFs()
+  local fs, files = newFs()
   local bal, names, beats, log = {}, {}, {}, {}
   local ledger = {
     getBalance = function(ad) return bal[ad] or 0 end,
@@ -93,6 +92,7 @@ local function newNode(nodeKey)
   }, { __index = _G })
   local api = assert(load(chunk, "node", "t", env))()
   local node = { key = nodeKey, bal = bal, beats = beats, log = log, api = api }
+  function node.setSecret(hex) files["/data/mesh_secret.txt"] = hex end
   function node.send(senderKey, pkt)
     local reply
     local router = { transmit = function(_, _, msg) reply = msg end }
@@ -134,8 +134,8 @@ r = A.send(ALICE, { cmd = "STATS", from = alice })
 check(r.consolidate_id == nil, "STATS shows consolidation off")
 
 local SECRET = "00112233445566778899aabbccddeeff"
-A.api.saveMeshSecret(SECRET); B.api.saveMeshSecret(SECRET)
-C.api.saveMeshSecret("ffeeddccbbaa99887766554433221100")
+A.setSecret(SECRET); B.setSecret(SECRET)
+C.setSecret("ffeeddccbbaa99887766554433221100")
 local idA = A.send(ALICE, { cmd = "STATS", from = alice }).consolidate_id
 local idB = B.send(ALICE, { cmd = "STATS", from = alice }).consolidate_id
 local idC = C.send(ALICE, { cmd = "STATS", from = alice }).consolidate_id

@@ -115,11 +115,11 @@ function daemon.run()
         local rewarded = 0
 
         local ttl  = upgrades.getHeartbeatTTL()  -- 90s baseline + Heartbeat Extender
-        local mult = upgrades.getMinerMultiplier() -- 1.0 baseline + Overclocked Miner
-
-        -- AMIdecode: multiply effective rate by active boost (1.0 if none).
-        -- Boost is applied after Overclock in the pipeline.
-        local amdBoost = upgrades.getAmdBoostMultiplier()  -- 1.0 baseline; max 3.0x
+        -- Overclock x thermal factor x AMIdecode boost; 0 at 300C+ (shutoff).
+        local mult = upgrades.getPayoutMultiplier()
+        if mult == 0 then
+            print("[Miner] Node at 300C+ -- mining halted. Add Air Cooler levels.")
+        end
 
         -- Mint Surge: fire a bonus 2x tick when the cooldown has elapsed
         local surgeCooldown = upgrades.getMintSurgeCooldown()  -- 0 = disabled
@@ -139,17 +139,14 @@ function daemon.run()
         local surgeBonus = surging and 2 or 1
 
         -- \u2500\u2500 Compute pre-Overclock rate incorporating Mega Burn \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        -- Stage 3 will prepend mega_burn before Overclock. Applied here already so Stage 3
-        -- only needs to add thermal factor without rewriting the pipeline.
         local megaMult  = upgrades.getMegaBurnMultiplier()   -- 1.0 if Lv0
         local baseRate  = math.floor(rate * megaMult)        -- post-mega_burn base
 
         for address, lastSeen in pairs(activeWallets) do
             if (now - lastSeen) <= ttl then
-                -- Pipeline: mega_burn -> overclock -> surge
-                -- Thermal factor (Stage 3) will be inserted here.
-                -- MAX EFFECT COMMENT: overclock lv10 + mega_burn lv10 = floor(25*1.63)*3.0 = 122 uAMI/tick/wallet
-                ledger.credit(address, math.floor(baseRate * mult * surgeBonus))
+                -- Pipeline: mega_burn -> overclock x thermal x AMIdecode -> surge
+                local payout = math.floor(baseRate * mult * surgeBonus)
+                if payout > 0 then ledger.credit(address, payout) end   -- 0 during shutoff
                 rewarded = rewarded + 1
             else
                 activeWallets[address] = nil  -- evict stale wallet

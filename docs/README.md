@@ -165,7 +165,7 @@ Press **`[N]`** to open the Command Center — a full Opus UI page with a live n
 | `[D]` | Remove a node |
 | `[I]` | **Integrity Handshake** — fetch & compare each node's file fingerprint. Shows `OK` / `TOFC` / `MISMATCH` (tamper alert) |
 | `[G]` | **Gossip DNS** — push your entire local name cache to all nodes |
-| `[C]` | **Consolidate** — sweep balances from all nodes into a single target node |
+| `[C]` | **Consolidate** — sweep balances from all nodes into a single target node (the nodes must share a consolidation link, see [SECURITY.md](SECURITY.md#consolidation-security)) |
 | `[B]` | Back to Dashboard |
 
 ### AmiVault
@@ -200,8 +200,8 @@ Press **`[U]`** from the Dashboard to pull the latest wallet files from GitHub. 
 | `STATS` | Returns active-wallet count, total supply, base and effective mint rates, tick count, TPS lag factor, node fingerprint, and whether Priority Ping is active |
 | `FINGERPRINT` | Returns the node's current FNV-1a file fingerprint for tamper detection |
 | `GOSSIP_DNS` | Accepts a name↔address mapping and persists it to the node's name registry |
-| `CONSOLIDATE_OUT` | Drains a wallet's balance from this node and returns a signed receipt |
-| `CONSOLIDATE_IN` | Credits a wallet on this node from a receipt (Fee Snatcher upgrade skims a routing fee) |
+| `CONSOLIDATE_OUT` | Drains a wallet's balance from this node and returns a receipt sealed for one named target node |
+| `CONSOLIDATE_IN` | Credits a wallet on this node with the amount in a valid sealed receipt (Fee Snatcher upgrade skims a routing fee) |
 
 ### Monitor Display
 
@@ -227,7 +227,7 @@ If an Advanced Monitor is attached, the node renders a live status board. Stats 
 | Active Upgrades (black) | 11–end | Auto-scrolling upgrade list with `[N/total]` counter; rows above the fan use the full width, rows that overlap the fan are clipped to the left column |
 | Cooling Fan (bottom-right) | last 11 rows | Theme-colored header · 9-row animated fan graphic · status badge (`SPINNING` / `IDLE`) |
 
-- **Temperature colour** — lime below 100°C, yellow 100–199°C, orange 200–299°C, red at throttle.
+- **Temperature colour** — lime below 100°C, yellow 100–199°C, orange 200–299°C, red when mining is halted (300°C+).
 - **Fan animation speed** scales with cooling level and backs off when TPS lag is detected.
 - **Upgrade list auto-scrolls** every ~1.5 seconds when there are more upgrades than visible rows, so every upgrade is always eventually on screen.
 - **Colour theme** changes per `matrix_ui` level (green phosphor, amber, ice blue, void red, crown gold, and more).

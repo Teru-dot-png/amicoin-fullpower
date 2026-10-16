@@ -371,13 +371,15 @@ function comms.sendPaymentAck(buyerAddr, txId)
 end
 
 -- Drain alice's balance from a source node as the first half of consolidation.
+-- targetNodeKey: the node that will redeem the receipt (only it can).
 -- Returns: ok, {amount, receipt, nonce}, errMsg
 -- The `receipt` field must be passed to consolidateIn on the target node.
-function comms.consolidateOut(secretKey, nodeKey, address, amount)
+function comms.consolidateOut(secretKey, nodeKey, address, amount, targetNodeKey)
     return send(secretKey, nodeKey, {
         cmd    = "CONSOLIDATE_OUT",
         from   = address,
         amount = math.floor(amount or 0),
+        target = targetNodeKey and targetNodeKey:sub(1, 8),
         nonce  = os.epoch("utc"),
     }, true)
 end

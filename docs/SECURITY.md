@@ -23,6 +23,12 @@ Each AmiCoin packet is serialised as JSON, XTEA-encrypted with the sender's 128-
 
 > **Important:** The full 32-character Secret Key is transmitted in plaintext as the prefix of every packet. This is by architectural design — the node must know which key to use for decryption. It means that **any observer on the Ender Router mesh can read all packet contents and impersonate any wallet whose traffic they have seen.** AmiCoin's encryption provides privacy against passive third-party eavesdroppers on *other* channels, but not against an active attacker monitoring channel 1337. In the friendly Minecraft server context this is an accepted trade-off. Do not rely on XTEA for strong identity guarantees.
 
+### Address Ownership
+
+A wallet's address is derived from its Secret Key. For commands that move money or claim an address (`HEARTBEAT`, `TRANSFER`, `REGISTER`, `VAULT_LOCK`, `VAULT_UNLOCK`, `CONSOLIDATE_OUT`, `CONSOLIDATE_IN`) the node derives the address from the key the packet arrived with and drops the packet if it does not match `from`. Read-only commands (`BALANCE`, `LOOKUP`, `STATS`, ...) may still name any address.
+
+This stops anyone spending from an address with a key of their own. It does not stop someone who has captured that address's real key from the mesh (see the note above).
+
 ### Targeted Routing
 
 Every packet includes a `targetKey` hint containing the first 8 characters of the intended node's key. Nodes drop packets whose key does not start with that prefix. This prevents nodes from attempting to decrypt packets meant for other nodes on the same mesh.
@@ -33,7 +39,7 @@ Every packet includes a `targetKey` hint containing the first 8 characters of th
 |--------|-----------|-------|
 | Passive eavesdropping on the mesh | ⚠️ Partial | Full secret key travels in plaintext wire prefix; determined attacker on ch 1337 can read all traffic |
 | Replay attacks | ⚠️ Partial | Nonce fields in BALANCE/TRANSFER packets help; the node does not maintain a full nonce log |
-| Forged transactions by third parties | ✅ Yes | Requires the sender's key, which they must capture from live traffic |
+| Forged transactions by third parties | ⚠️ Partial | Nodes reject money-moving commands unless the sending key owns the `from` address, but a key captured from live traffic still works |
 | Node key compromise | ⚠️ Partial | An attacker with the node key can read replies but cannot forge wallet transactions |
 | Packet routing misdirection | ✅ Yes | `targetKey` hint + node-side prefix check prevents cross-node confusion |
 
@@ -141,13 +147,30 @@ This means a malicious wallet cannot send `GOSSIP_DNS {name="alice", address=att
 
 ## Consolidation Security
 
-### CONSOLIDATE_IN Receipt Tracking
+Consolidation moves a wallet's balance from one node (the source) to another (the target). It is **off** on a node until an admin links it:
 
-When a wallet consolidates funds from one node to another (CONSOLIDATE_OUT → CONSOLIDATE_IN), the source node issues a **receipt token** (an FNV-1a hash of the drained amount, nonce, and source node key prefix). The target node now **records every receipt it has processed** in `/data/consolidate_receipts.json`.
+1. On one node, open the admin menu (`[A]`, master password), choose `[7] Consolidation link`, then `[G]` to generate a secret.
+2. On every other node you run, choose `[7]`, then `[E]` and type the same secret.
 
-If the same receipt arrives a second time — whether from a replay attack or from the wallet mistakenly re-submitting — the node rejects it with `"Receipt already redeemed on this node"` and does not credit any funds.
+Each node then shows the same **link ID** (also returned by `STATS` as `consolidate_id`). The ID is derived from the secret but does not reveal it. Only give the secret to nodes you run: any node holding it can issue receipts.
 
-> **Residual risk:** The receipt does not cryptographically commit to a specific amount on the target node. The first use of a receipt is trusted to carry the correct amount (as reported by the source node in the CONSOLIDATE_OUT response). A wallet that fabricated an inflated amount in its CONSOLIDATE_IN packet on first use would be cheating, but this would require the wallet to have been modified to lie about the drained amount. Receipt replay (sending the same receipt to multiple nodes) is fully prevented.
+### Sealed receipts
+
+`CONSOLIDATE_OUT` must name the target node (`target` = first 8 hex of its key). The source node drains the balance and returns a receipt:
+
+```
+c2:<address>:<amount>:<sourceKey8>:<targetKey8>:<epoch>:<nonce>:<mac>
+```
+
+`<mac>` is a 64-bit XTEA CBC-MAC of everything before it, keyed with the shared secret. The target node credits a receipt only if:
+
+- the MAC checks out (so the amount was not edited and the receipt was issued by a linked node),
+- the receipt's address is the sender's address and its target is this node,
+- it was not issued by this node, and it has not been redeemed here before.
+
+The amount credited comes from the receipt, never from the packet. Used receipts are recorded in `/data/consolidate_receipts.json` before the credit is applied.
+
+Wallets check that the source and target report the same link ID before draining, so coins are not stranded between nodes that would reject each other. If a credit still fails, the wallet appends the receipt to `/wallet_data/pending_receipts.txt` so an admin can settle it by hand.
 
 ---
 

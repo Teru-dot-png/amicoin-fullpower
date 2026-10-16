@@ -50,7 +50,7 @@ wget run https://raw.githubusercontent.com/Teru-dot-png/amicoin-fullpower/refs/h
 5. `[T]` Safety test (see below). Trading stays closed until it passes.
 6. Give the exchange a reserve so it can pay for coins players sell. Either
    send it AMI from a wallet (its name is registered in Ami-DNS), or mint new
-   AMI straight into it: on the node press `[A]`, enter the setup password,
+   AMI straight into it: on the node press `[A]`, enter the admin master password,
    choose `[6] Mint new AMI`, and give `The Great Ami Exchange` and an amount.
    AMI that players pay when buying coins stays in the exchange and adds to
    the reserve.

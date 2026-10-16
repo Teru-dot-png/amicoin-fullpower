@@ -169,6 +169,22 @@ r = C.send(MAL, { cmd = "CONSOLIDATE_OUT", from = mal, amount = 5000000, target 
 r = B.send(MAL, { cmd = "CONSOLIDATE_IN", from = mal, amount = 5000000, receipt = r.receipt })
 check(not r.ok and B.bal[mal] == 0, "receipt from an unlinked node rejected")
 
+print("automatic link")
+local function stats(n) return n.send(ALICE, { cmd = "STATS", from = alice }).consolidate_id end
+A.send(C.key, { cmd = "MESH_HELLO", from = A.api.deriveAddress(C.key), secret = "ffeeddccbbaa99887766554433221100" })
+check(stats(A) == idA, "a node keeps its secret when it hears a higher one")
+C.send(A.key, { cmd = "MESH_HELLO", from = A.api.deriveAddress(A.key), secret = SECRET })
+check(stats(C) == idA, "a node switches to a lower secret it hears")
+local D = newNode("dddddddd111111112222222233333333")
+D.send(A.key, { cmd = "MESH_HELLO", from = A.api.deriveAddress(A.key), secret = "not-a-secret" })
+check(stats(D) == nil, "a malformed secret is ignored")
+D.send(A.key, { cmd = "MESH_HELLO", from = A.api.deriveAddress(A.key), secret = SECRET })
+check(stats(D) == idA, "a node with no secret adopts the first one it hears")
+C.bal[alice] = 300
+r = C.send(ALICE, { cmd = "CONSOLIDATE_OUT", from = alice, amount = 300, target = "bbbbbbbb" })
+r = B.send(ALICE, { cmd = "CONSOLIDATE_IN", from = alice, amount = 300, receipt = r.receipt })
+check(r.ok and B.bal[alice] == 250300, "once linked, consolidation between them works")
+
 ----------------------------------------------------------------------
 -- Part 2: payout multiplier (real node/upgrades.lua)
 ----------------------------------------------------------------------

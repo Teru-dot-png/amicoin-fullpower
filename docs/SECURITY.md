@@ -147,14 +147,15 @@ This means a malicious wallet cannot send `GOSSIP_DNS {name="alice", address=att
 
 ## Consolidation Security
 
-Consolidation moves a wallet's balance from one node (the source) to another (the target). It is **off** on a node until an admin links it:
+Consolidation moves a wallet's balance from one node (the source) to another (the target). Nodes link themselves with no admin step:
 
-1. Pick a secret of exactly 32 hex characters (0-9, a-f).
-2. On every node you run, stop the node program (Ctrl+T), run `edit /data/mesh_secret.txt`, type the secret, save, and reboot.
+- A node with no secret generates one at boot (`/data/mesh_secret.txt`).
+- Every node broadcasts its secret on the mesh once a minute (`MESH_HELLO`).
+- A node that hears a lower secret than its own switches to it, so all nodes settle on the same one within about a minute, even when several update at once.
 
-The secret is never set or sent over the network, and nothing in the admin menu shows it.
+Each node reports a **link ID** derived from the secret (`STATS` → `consolidate_id`); wallets compare it before draining.
 
-Each node then shows the same **link ID** (also returned by `STATS` as `consolidate_id`). The ID is derived from the secret but does not reveal it. Only give the secret to nodes you run: any node holding it can issue receipts.
+> **Trade-off, chosen on purpose:** the secret travels in the open, so any node anyone builds joins the link and can issue receipts. Sealed receipts still stop a wallet from inventing an amount, and a receipt still works only once, on the one node it names. To lock the link down later, stop the gossip and set `/data/mesh_secret.txt` by hand on your own nodes.
 
 ### Sealed receipts
 

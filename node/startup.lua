@@ -253,9 +253,14 @@ local OWNER_ONLY = {
 }
 
 -- ── Consolidation secret ─────────────────────────────────────────────────────
--- Nodes that trust each other's consolidation receipts share one secret: the
--- same 32 hex characters in /data/mesh_secret.txt on each node (create it from
--- the node's shell; it is never set over the network).  The source node seals each receipt with an XTEA
+-- Nodes that trust each other's consolidation receipts share one secret, kept
+-- in /data/mesh_secret.txt.  It sets itself up with no admin: a node without
+-- one generates one at boot, every node gossips its secret on the mesh once a
+-- minute (MESH_HELLO), and a node that hears a lower secret than its own
+-- switches to it, so all nodes settle on the lowest one within about a minute.
+-- Trade-off (chosen on purpose): the secret travels in the open, so any node
+-- anyone builds joins the link.  It still stops a wallet from inventing an
+-- amount, and a receipt still works once, on one named node.  The source node seals each receipt with an XTEA
 -- CBC-MAC under that secret; the target node only credits receipts whose MAC
 -- checks out, so a wallet cannot invent an amount and a node run by someone
 -- else cannot issue receipts.  No secret = consolidation is off on this node.
@@ -268,6 +273,26 @@ local function loadMeshSecret()
     f.close()
     if #s == 32 and not s:find("[^0-9a-f]") then return s end
     return nil
+end
+
+local function writeMeshSecret(hex)
+    if not fs.exists("/data") then fs.makeDir("/data") end
+    local f = fs.open(MESH_SECRET_FILE, "w"); f.write(hex); f.close()
+end
+
+local function isMeshSecret(s)
+    return type(s) == "string" and #s == 32 and not s:find("[^0-9a-f]")
+end
+
+-- Generate a secret if this node has none yet.  Returns the secret.
+local function ensureMeshSecret()
+    local cur = loadMeshSecret()
+    if cur then return cur end
+    math.randomseed(os.epoch("utc") + os.getComputerID() * 7919)
+    local hex = ""
+    for _ = 1, 32 do hex = hex .. string.format("%x", math.random(0, 15)) end
+    writeMeshSecret(hex)
+    return hex
 end
 
 -- 64-bit XTEA CBC-MAC over a length-prefixed, zero-padded message.
@@ -600,6 +625,18 @@ local function handlePacket(nodeKey, setupPassword, router, senderKey, cipherhex
         router.transmit(replyChannel, MESH_CHANNEL,
             xtea.encrypt(textutils.serialiseJSON(payload), nodeKey))
 
+
+    elseif cmd == "MESH_HELLO" then
+        -- Another node gossiping its consolidation secret (see ensureMeshSecret).
+        -- Adopt it if we have none or it is lower than ours; no reply.
+        local theirs = pkt.secret
+        if isMeshSecret(theirs) then
+            local mine = loadMeshSecret()
+            if not mine or theirs < mine then
+                writeMeshSecret(theirs)
+                print("[Mesh] Joined consolidation link " .. meshId(theirs))
+            end
+        end
 
     elseif cmd == "CONSOLIDATE_OUT" then
         -- Drain alice's balance from this node.  The wallet carries the returned
@@ -1401,6 +1438,7 @@ local function main()
     print("[Net] Ender Router opened on channel " .. MESH_CHANNEL)
     router.open(SHOP_CHANNEL)
     print("[Net] Shop channel (" .. SHOP_CHANNEL .. ") opened for upgrade invoices.")
+    print("[Mesh] Consolidation link " .. meshId(ensureMeshSecret()))
 
     -- Genesis Protocol: broadcast boot signature if upgrade is purchased
     local genSig = upgrades.getGenesisSignature()
@@ -1461,6 +1499,16 @@ local function main()
         -- Live stats refresh (drives updateDashboard every 30s)
         function()
             statusLoop(false, nodeKey)
+        end,
+        -- Consolidation link gossip: share our secret with the mesh every 60s
+        function()
+            local selfAddr = deriveAddress(nodeKey)
+            while true do
+                local secret = loadMeshSecret() or ensureMeshSecret()
+                local pkt = textutils.serialiseJSON({ cmd = "MESH_HELLO", from = selfAddr, secret = secret })
+                router.transmit(MESH_CHANNEL, MESH_CHANNEL, nodeKey .. "|" .. xtea.encrypt(pkt, nodeKey))
+                os.sleep(60)
+            end
         end,
         -- Mint countdown bar (~1Hz; just the infoPanel, cheap)
         function()
